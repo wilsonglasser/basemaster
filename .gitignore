@@ -29,6 +29,9 @@ Thumbs.db
 # Tauri
 src-tauri/gen/schemas/
 src-tauri/target/
+# Não fazemos build mobile — `tauri icon` gera essas pastas mas são lixo.
+src-tauri/icons/ios/
+src-tauri/icons/android/
 
 # Locais
 _check.bat
