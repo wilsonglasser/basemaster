@@ -440,8 +440,7 @@ pub async fn rename_schema(
     // 2. Lista tabelas do schema antigo.
     let tables = d.list_tables(&from).await.map_err(err)?;
     let total = tables.len() as u32;
-    let mut done: u32 = 0;
-    for t in &tables {
+    for (idx, t) in tables.iter().enumerate() {
         let sql = format!(
             "RENAME TABLE {}.{} TO {}.{}",
             d.quote_ident(&from),
@@ -450,11 +449,10 @@ pub async fn rename_schema(
             d.quote_ident(&t.name),
         );
         d.execute(None, &sql).await.map_err(err)?;
-        done += 1;
         let _ = app.emit(
             "schema_rename:progress",
             &Progress {
-                done,
+                done: idx as u32 + 1,
                 total,
                 current: t.name.clone(),
             },
@@ -659,7 +657,6 @@ pub struct QueryRunBatch {
 
 fn looks_like_select(sql: &str) -> bool {
     let first = sql
-        .trim_start()
         .split_whitespace()
         .next()
         .unwrap_or("")

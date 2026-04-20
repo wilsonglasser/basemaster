@@ -375,8 +375,7 @@ impl Driver for SqliteDriver {
             .map(|(c, _)| self.quote_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
-        let placeholders = std::iter::repeat("?")
-            .take(values.len())
+        let placeholders = std::iter::repeat_n("?", values.len())
             .collect::<Vec<_>>()
             .join(", ");
         let sql = format!(

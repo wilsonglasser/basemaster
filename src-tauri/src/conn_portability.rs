@@ -72,7 +72,7 @@ pub fn decrypt_navicat_password(hex_str: &str) -> Option<String> {
     let mut out = vec![0u8; cipher_bytes.len()];
     let blocks_in = cipher_bytes
         .chunks_exact(8)
-        .map(|c| cipher::generic_array::GenericArray::clone_from_slice(c))
+        .map(cipher::generic_array::GenericArray::clone_from_slice)
         .collect::<Vec<_>>();
     let mut blocks_out: Vec<cipher::generic_array::GenericArray<u8, cipher::consts::U8>> =
         vec![cipher::generic_array::GenericArray::default(); blocks_in.len()];
@@ -236,7 +236,7 @@ mod tests {
         let mut cipher = BfEnc::new_from_slice(NAVICAT_KEY).unwrap();
         // Null-pad pro múltiplo de 8 bytes.
         let mut bytes = plain.as_bytes().to_vec();
-        while bytes.len() % 8 != 0 {
+        while !bytes.len().is_multiple_of(8) {
             bytes.push(0);
         }
         let blocks_in = bytes

@@ -60,3 +60,7 @@ CLAUDE.md
 # Vite cache
 .vite/
 
+# TypeScript incremental build info
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+

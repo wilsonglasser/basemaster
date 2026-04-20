@@ -1,18 +1,13 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TlsMode {
     Disabled,
+    #[default]
     Preferred,
     Required,
-}
-
-impl Default for TlsMode {
-    fn default() -> Self {
-        Self::Preferred
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

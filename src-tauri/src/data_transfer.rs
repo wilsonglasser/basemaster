@@ -71,21 +71,16 @@ impl Default for TransferControl {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InsertMode {
     /// `INSERT INTO ... VALUES ...` — falha se PK duplicada.
+    #[default]
     Insert,
     /// `INSERT IGNORE INTO ...` — pula linhas com PK duplicada.
     InsertIgnore,
     /// `REPLACE INTO ...` — substitui linhas com PK duplicada.
     Replace,
-}
-
-impl Default for InsertMode {
-    fn default() -> Self {
-        Self::Insert
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -276,7 +271,7 @@ pub async fn run_transfer(
     control: Arc<TransferControl>,
 ) -> Result<TransferDone, String> {
     let total_started = Instant::now();
-    let concurrency = opts.concurrency.max(1).min(16) as usize;
+    let concurrency = opts.concurrency.clamp(1, 16) as usize;
 
     // Cria o schema/database de destino. MySQL: CREATE DATABASE;
     // PostgreSQL: CREATE SCHEMA (schemas ≠ databases em PG).
@@ -1227,7 +1222,7 @@ async fn run_table_copy_ranges(
     let (min_v, max_v) = mm
         .rows
         .first()
-        .and_then(|r| Some((r.get(0)?.clone(), r.get(1)?.clone())))
+        .and_then(|r| Some((r.first()?.clone(), r.get(1)?.clone())))
         .ok_or_else(|| format!("minmax {}: sem linhas", table))?;
     let (min_i, max_i) = match (value_to_i128(&min_v), value_to_i128(&max_v)) {
         (Some(a), Some(b)) => (a, b),

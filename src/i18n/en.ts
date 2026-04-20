@@ -277,8 +277,10 @@ export const en: Dict = {
     newConnTitle: "New MySQL connection",
     newConnHint: "Connect to a local or remote server",
     importTitle: "Import connections",
-    importHint: "Load a JSON exported from BaseMaster (soon)",
-    docsTitle: "Project docs",
-    docsHint: "Conventions, shortcuts and roadmap (soon)",
+    importHint: "Load a .bmconn or Navicat .ncx file",
+    dockerTitle: "Detect Docker containers",
+    dockerHint: "Scan for MySQL/Postgres containers running locally",
+    githubTitle: "Source on GitHub",
+    githubHint: "wilsonglasser/basemaster — issues, releases, docs",
   },
 };

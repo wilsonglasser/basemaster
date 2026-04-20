@@ -97,7 +97,7 @@ fn sql_literal_opts(v: &basemaster_core::Value, hex_blob: bool) -> String {
 
 // ---------------------------------------------------------------- types
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DumpContent {
     /// Só CREATE TABLE/VIEW — sem INSERTs.
@@ -105,13 +105,8 @@ pub enum DumpContent {
     /// Só INSERTs — assume que a estrutura já existe no destino.
     Data,
     /// Estrutura + dados.
+    #[default]
     Both,
-}
-
-impl Default for DumpContent {
-    fn default() -> Self {
-        Self::Both
-    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,19 +118,14 @@ pub enum DumpFormat {
     Zip,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DumpCompression {
     /// Sem compressão — só empacota. Mais rápido.
+    #[default]
     Stored,
     /// Deflate padrão (zlib).
     Deflate,
-}
-
-impl Default for DumpCompression {
-    fn default() -> Self {
-        Self::Stored
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -213,6 +203,9 @@ pub struct DumpDone {
 
 /// Abstração de escrita — esconde se é SQL único ou ZIP. O caller
 /// chama `begin_file`/`write`/`end_file` e o writer roteia pro destino.
+// Uma única instância por dump; não vai pra Vec nem hot loop — o
+// overhead de 377 bytes não justifica Box (clippy::large_enum_variant).
+#[allow(clippy::large_enum_variant)]
 enum DumpSink {
     /// Tudo num único arquivo.
     Sql(std::fs::File),

@@ -24,10 +24,6 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin"
-          - name: macOS (Intel)
-            os: macos-latest
-            target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin"
           - name: Linux x64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -74,16 +70,14 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Sentry DSN (opcional) — injete em Settings → Secrets.
-          VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          # Apple signing (opcional, só em macOS).
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Sentry e Apple signing: *não* passar envs aqui. Secrets não
+          # criados viram strings vazias, e tanto o tauri-action (Apple)
+          # quanto o binário (Sentry empty DSN) podem quebrar no release
+          # com LTO. Quando tiver as contas, re-adicione:
+          #   VITE_SENTRY_DSN, SENTRY_DSN,
+          #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+          #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD,
+          #   APPLE_TEAM_ID
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "BaseMaster ${{ github.ref_name }}"

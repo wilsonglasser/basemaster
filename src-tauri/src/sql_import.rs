@@ -269,7 +269,7 @@ async fn process_sql(
                 }
             }
         }
-        if *total_stmts % opts.emit_every as u64 == 0 {
+        if (*total_stmts).is_multiple_of(opts.emit_every as u64) {
             let _ = app.emit(
                 "sql_import:progress",
                 &ImportProgress {

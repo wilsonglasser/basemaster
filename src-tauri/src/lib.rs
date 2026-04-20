@@ -14,6 +14,8 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_panic_hook();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -21,17 +23,20 @@ pub fn run() {
         )
         .init();
 
-    // Sentry: só ativa se SENTRY_DSN setado. Guard precisa viver até o fim
-    // da main — guardamos no escopo da função.
-    let _sentry_guard = std::env::var("SENTRY_DSN").ok().map(|dsn| {
-        sentry::init(sentry::ClientOptions {
-            dsn: dsn.parse().ok(),
-            release: sentry::release_name!(),
-            attach_stacktrace: true,
-            send_default_pii: false,
-            ..Default::default()
-        })
-    });
+    // Sentry: só ativa se SENTRY_DSN setado e NÃO vazio. String vazia
+    // (secret sem valor no CI) cai no mesmo caminho que "não setado".
+    let _sentry_guard = std::env::var("SENTRY_DSN")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|dsn| {
+            sentry::init(sentry::ClientOptions {
+                dsn: dsn.parse().ok(),
+                release: sentry::release_name!(),
+                attach_stacktrace: true,
+                send_default_pii: false,
+                ..Default::default()
+            })
+        });
 
     // prevent-default: desabilita shortcuts nativos do WebView2 (zoom,
     // reload, find, etc) pra chegarem no JS. `browser_accelerator_keys =
@@ -121,4 +126,62 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar BaseMaster");
+}
+
+/// Captura panics em release pra arquivo em `%LOCALAPPDATA%\BaseMaster\panic.log`
+/// (ou `$TEMP/basemaster-panic.log` como fallback). Necessário porque o
+/// release build roda com windows_subsystem="windows" e `panic=abort`, então
+/// stderr fica desanexado e o crash vira só `0xc0000409` no Event Viewer
+/// sem contexto.
+fn install_panic_hook() {
+    // Backtrace só sai se essa env for setada; força ligado antes de qualquer panic.
+    if std::env::var_os("RUST_BACKTRACE").is_none() {
+        std::env::set_var("RUST_BACKTRACE", "1");
+    }
+
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = payload_to_string(info.payload());
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".into());
+        let backtrace = std::backtrace::Backtrace::force_capture();
+
+        let log = format!(
+            "[{}] PANIC at {}\n{}\n\nBacktrace:\n{}\n\n",
+            chrono::Utc::now().to_rfc3339(),
+            location,
+            msg,
+            backtrace,
+        );
+
+        let dir = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("BaseMaster");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("panic.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+        {
+            use std::io::Write;
+            let _ = f.write_all(log.as_bytes());
+        }
+
+        // Em dev (stderr anexado) também queremos ver no terminal.
+        default_hook(info);
+    }));
+}
+
+fn payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "panic payload não-string".to_string()
+    }
 }

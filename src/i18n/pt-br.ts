@@ -279,9 +279,11 @@ export const ptBR = {
     newConnTitle: "Nova conexão MySQL",
     newConnHint: "Conecte a um servidor local ou remoto",
     importTitle: "Importar conexões",
-    importHint: "Carregue um JSON exportado do BaseMaster (em breve)",
-    docsTitle: "Documentação do projeto",
-    docsHint: "Convenções, atalhos e roadmap (em breve)",
+    importHint: "Carregue um arquivo .bmconn ou .ncx do Navicat",
+    dockerTitle: "Detectar containers Docker",
+    dockerHint: "Varre containers MySQL/Postgres rodando localmente",
+    githubTitle: "Código no GitHub",
+    githubHint: "wilsonglasser/basemaster — issues, releases, docs",
   },
 };
 

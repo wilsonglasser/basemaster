@@ -599,8 +599,7 @@ impl Driver for MysqlDriver {
             .map(|(c, _)| self.quote_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
-        let placeholders = std::iter::repeat("?")
-            .take(values.len())
+        let placeholders = std::iter::repeat_n("?", values.len())
             .collect::<Vec<_>>()
             .join(", ");
         let sql = format!(
@@ -653,7 +652,7 @@ impl Driver for MysqlDriver {
         .fetch_all(&pool);
 
         let (tables, col_rows) = tokio::try_join!(
-            async { tables_fut.await },
+            tables_fut,
             async { cols_fut.await.map_err(|e| Error::Sql(e.to_string())) }
         )?;
 
@@ -819,7 +818,7 @@ fn in_list_clause(col: &str, f: &Filter, not: bool) -> String {
     if n == 0 {
         return if not { "1=1".into() } else { "1=0".into() };
     }
-    let placeholders = std::iter::repeat("?").take(n).collect::<Vec<_>>().join(", ");
+    let placeholders = std::iter::repeat_n("?", n).collect::<Vec<_>>().join(", ");
     let kw = if not { "NOT IN" } else { "IN" };
     format!("{} {} ({})", col, kw, placeholders)
 }
