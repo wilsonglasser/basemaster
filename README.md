@@ -5,7 +5,7 @@
 <h1 align="center">BaseMaster</h1>
 
 <p align="center">
-  Gerenciador de banco de dados desktop — Rust + Tauri, rápido e nativo.
+  A modern desktop database manager built in Rust — fast, native, multi-driver.
 </p>
 
 <p align="center">
@@ -19,85 +19,85 @@
 </p>
 
 <p align="center">
-  🌐 Português · English
+  🌐 English · Português
 </p>
 
 ---
 
 ## Download
 
-Binários pré-compilados ficam disponíveis na [página de Releases](https://github.com/wilsonglasser/basemaster/releases/latest):
+Pre-built binaries are available on the [Releases](https://github.com/wilsonglasser/basemaster/releases/latest) page:
 
-| Plataforma | Arquitetura | Formato |
-|-----------|-------------|---------|
-| Windows | x86_64 | `.msi` (instalador) / `.exe` (portátil) |
+| Platform | Architecture | Format |
+|----------|--------------|--------|
+| Windows | x86_64 | `.msi` (installer) / `.exe` (portable) |
 | macOS | Apple Silicon | `.dmg` |
 | macOS | Intel | `.dmg` |
 | Linux | x86_64 | `.deb` / `.rpm` / `.AppImage` |
 
 ---
 
-## O que é o BaseMaster?
+## What is BaseMaster?
 
-Um cliente desktop moderno de banco de dados — alternativa open-source ao Navicat, DBeaver e TablePlus. Multi-driver, editor SQL completo, grid editável tipo planilha, data transfer entre conexões, integração com IA e servidor MCP. Tudo em um único binário nativo, sem Electron.
+BaseMaster is an open-source desktop database client — an alternative to Navicat, DBeaver and TablePlus. Multi-driver, full SQL editor, spreadsheet-style editable grid, data transfer between connections, built-in AI agent and MCP server. All shipped as a single native binary, no Electron.
 
-### Por quê?
+### Why?
 
-As alternativas existentes são pagas e closed-source (Navicat, TablePlus), ou baseadas em Electron e pesadas (DBeaver), ou só CLI (`psql`, `mysql`). O BaseMaster busca ser **rápido, nativo e com a UX que um DBA/dev profissional espera**.
+Existing alternatives are either paid and closed-source (Navicat, TablePlus), Electron-based and heavy (DBeaver), or terminal-only (`psql`, `mysql`). BaseMaster aims to be **fast, native, and have the UX a professional DBA or dev expects**.
 
 ## Features
 
-### Conectividade
-- **Multi-driver** — MySQL, MariaDB, PostgreSQL, SQLite (com suporte opcional a SQLCipher).
-- **SSH tunnel** — Tunelamento via [russh 0.60](https://github.com/warp-tech/russh), suporte a chave + passphrase.
-- **SSL/TLS** — Configurável por conexão.
-- **Docker auto-discovery** — Detecta containers MySQL/Postgres rodando no host e sugere conexão.
+### Connectivity
+- **Multi-driver** — MySQL, MariaDB, PostgreSQL, SQLite (with optional SQLCipher).
+- **SSH tunnel** — Tunneling via [russh 0.60](https://github.com/warp-tech/russh), key + passphrase auth.
+- **SSL/TLS** — Configurable per connection.
+- **Docker auto-discovery** — Detects MySQL/Postgres containers running on the host and suggests connections.
 
-### Editor SQL
-- **CodeMirror 6** — Editor moderno com autocomplete baseado no schema ativo.
-- **Format SQL** — `Ctrl+Shift+F` pra reformatar a query.
-- **Execução granular** — `Ctrl+Enter` executa a statement sob o cursor, ou a seleção.
-- **Histórico + queries salvas** — Persistidas localmente em SQLite.
+### SQL Editor
+- **CodeMirror 6** — Modern editor with schema-aware autocomplete.
+- **Format SQL** — `Ctrl+Shift+F` reformats the current query.
+- **Granular execution** — `Ctrl+Enter` runs the statement under the cursor, or the selection.
+- **History & saved queries** — Persisted locally in SQLite.
 
-### Grid Editável
-- **[Glide Data Grid](https://github.com/glideapps/glide-data-grid)** — Renderer canvas, suporta 100k+ linhas sem travar.
-- **UX tipo Navicat** — Multi-fill, paste multi-row/multi-col, edições vão pra pending e só comitam com apply explícito.
-- **Tipos fortes** — Bytes (hex/utf-8 preview), JSON formatado, datas, enums, arrays, UUID.
+### Editable Grid
+- **[Glide Data Grid](https://github.com/glideapps/glide-data-grid)** — Canvas renderer, scales to 100k+ rows without lag.
+- **Navicat-style UX** — Multi-fill, paste multi-row/multi-col, edits stay in pending and only commit on explicit apply.
+- **Strong types** — Bytes (hex / utf-8 preview), formatted JSON, dates, enums, arrays, UUID.
 
 ### Schema Editor
-- **UI completa** — Cria e edita tabelas, colunas, índices, foreign keys e triggers via formulário.
-- **Sub-abas por tabela** — Dados, Estrutura, DDL, Índices, Gatilhos.
-- **Atalhos** — `F2` pra rename, `Ctrl+D` abre estrutura da tabela ativa.
+- **Full UI** — Create and edit tables, columns, indexes, foreign keys and triggers through forms.
+- **Per-table tabs** — Data, Structure, DDL, Indexes, Triggers.
+- **Shortcuts** — `F2` to rename, `Ctrl+D` opens the active table's structure.
 
-### Data Transfer (entre conexões)
-- **Paralelismo intra-tabela** — Copia chunks em paralelo, configurável por job.
-- **Copy de FKs** — Recria relacionamentos no destino quando `create_tables=true`.
-- **Copy de triggers** — `SHOW TRIGGERS` + `SHOW CREATE TRIGGER` no MySQL.
-- **Progress em tempo real** — Linhas/segundo, ETA, pausar e cancelar.
+### Data Transfer (between connections)
+- **Intra-table parallelism** — Chunked copy in parallel, configurable per job.
+- **Copy FKs** — Recreates relationships on the destination when `create_tables=true`.
+- **Copy triggers** — `SHOW TRIGGERS` + `SHOW CREATE TRIGGER` for MySQL.
+- **Live progress** — Rows/second, ETA, pause and cancel.
 
 ### Import / Export
-- **`.bmconn`** — Formato próprio, exporta conexões + queries salvas.
-- **`.ncx`** — Import de conexões do Navicat, com descriptografia Blowfish-ECB nativa.
-- **Dados** — CSV, JSON e Excel com auto-map fuzzy entre colunas de origem e destino.
+- **`.bmconn`** — Our own format, exports connections + saved queries.
+- **`.ncx`** — Import Navicat connections, with native Blowfish-ECB decryption.
+- **Data** — CSV, JSON and Excel with fuzzy auto-mapping between source and destination columns.
 
-### Integração com IA
-- **Agente embutido** — 19 ferramentas pra inspecionar schema, executar queries, explicar planos e editar dados.
+### AI Integration
+- **Built-in agent** — 19 tools to inspect schemas, run queries, explain plans and edit data.
 - **12 providers** — Anthropic, OpenAI, Gemini, OpenRouter, Groq, DeepSeek, Mistral, xAI, Perplexity, Together, Fireworks, Cerebras.
-- **MCP server** — Expõe suas conexões a clientes AI externos (Claude Code, Cursor) via JSON-RPC sobre stdio.
+- **MCP server** — Expose your connections to external AI clients (Claude Code, Cursor) via JSON-RPC over stdio.
 
 ### UX
-- **Sidebar resizível** — Ajustável com drag, estado persistido.
-- **Command palette** — `Ctrl+K` pra qualquer ação.
-- **Cheat-sheet completa** — `Ctrl+/` lista todos os atalhos.
-- **Temas** — Dark / Light.
-- **i18n** — Português (Brasil) e English.
+- **Resizable sidebar** — Drag to adjust, state persisted.
+- **Command palette** — `Ctrl+K` for any action.
+- **Full cheat-sheet** — `Ctrl+/` lists every shortcut.
+- **Themes** — Dark / Light.
+- **i18n** — English and Portuguese (Brazil).
 
-### Storage & Privacidade
-- **SQLite local** — Perfis, queries salvas, histórico, settings, tudo offline.
-- **Keyring OS** — Senhas de conexão no Credential Manager (Windows) / Keychain (macOS) / libsecret (Linux).
-- **Sem telemetria** — Nenhum dado sai da sua máquina, exceto nas chamadas pros providers de IA que você explicitamente configurar.
+### Storage & Privacy
+- **Local SQLite** — Profiles, saved queries, history, settings — all offline.
+- **OS keyring** — Connection passwords stored in Credential Manager (Windows) / Keychain (macOS) / libsecret (Linux).
+- **No telemetry** — No data leaves your machine, except the calls you explicitly make to AI providers you configure.
 
-## Arquitetura
+## Architecture
 
 ```
 +----- Tauri 2 Application (WebView) ---------------------------+
@@ -109,48 +109,48 @@ As alternativas existentes são pagas e closed-source (Navicat, TablePlus), ou b
 |  src-tauri (Rust backend, Tauri commands, MCP server)         |
 +---------------------------------------------------------------+
 |  driver-mysql   |  driver-postgres  |  driver-sqlite          |
-|  (sqlx, cobre   |  (sqlx)           |  (sqlx + SQLCipher opt) |
+|  (sqlx, covers  |  (sqlx)           |  (sqlx + SQLCipher opt) |
 |   MariaDB)      |                   |                         |
 +-----------------+-------------------+-------------------------+
 |  core           |  store                                      |
-|  (trait Driver +|  (SQLite local: perfis, queries,            |
-|   Value, tipos) |   histórico, settings)                      |
+|  (trait Driver +|  (local SQLite: profiles, queries,          |
+|   Value, types) |   history, settings)                        |
 +---------------------------------------------------------------+
 ```
 
-| Crate | Propósito |
-|-------|-----------|
-| `basemaster` (src-tauri) | App Tauri, comandos, MCP server, data transfer, import/export |
-| `core` | Trait `Driver`, enum `Value`, tipos compartilhados entre drivers |
-| `driver-mysql` | Driver MySQL / MariaDB via sqlx |
-| `driver-postgres` | Driver PostgreSQL via sqlx |
-| `driver-sqlite` | Driver SQLite via sqlx (+ SQLCipher opcional) |
-| `store` | Store SQLite local pra perfis, queries salvas, settings |
+| Crate | Purpose |
+|-------|---------|
+| `basemaster` (src-tauri) | Tauri app, commands, MCP server, data transfer, import/export |
+| `core` | `Driver` trait, `Value` enum, types shared across drivers |
+| `driver-mysql` | MySQL / MariaDB driver via sqlx |
+| `driver-postgres` | PostgreSQL driver via sqlx |
+| `driver-sqlite` | SQLite driver via sqlx (+ optional SQLCipher) |
+| `store` | Local SQLite store for profiles, saved queries, settings |
 
-## Stack Técnica
+## Tech Stack
 
-| Camada | Tecnologia |
-|--------|-----------|
-| Shell desktop | Tauri 2 (WebView2 / WebKit / WebKitGTK) |
+| Layer | Technology |
+|-------|------------|
+| Desktop shell | Tauri 2 (WebView2 / WebKit / WebKitGTK) |
 | Frontend | React 18 + TypeScript + Vite |
 | UI | shadcn/ui + Radix + Tailwind |
 | Grid | Glide Data Grid |
-| Editor SQL | CodeMirror 6 |
+| SQL editor | CodeMirror 6 |
 | AI SDK | Vercel AI SDK (12 providers) |
 | Backend | Rust stable + Tokio |
 | DB clients | sqlx (MySQL, Postgres, SQLite) |
 | SSH | russh 0.60 |
 | Navicat decrypt | `blowfish` + `ecb` + `quick-xml` |
-| Storage local | SQLite |
+| Local storage | SQLite |
 | Keyring | `keyring` crate (OS-native) |
-| Error reporting | Sentry (opcional, via env var) |
+| Error reporting | Sentry (optional, via env var) |
 
-## Setup de Desenvolvimento
+## Building from Source
 
-### Requisitos
+### Prerequisites
 
 - Rust stable ([rustup](https://rustup.rs/))
-- Node 20+ e [pnpm 10](https://pnpm.io/)
+- Node 20+ and [pnpm 10](https://pnpm.io/)
 
 **Linux:**
 ```bash
@@ -159,7 +159,7 @@ sudo apt install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patc
 
 **macOS:** `xcode-select --install`
 
-**Windows:** Visual Studio Build Tools com workload C++ + WebView2 runtime.
+**Windows:** Visual Studio Build Tools with the C++ workload + WebView2 runtime.
 
 ### Build & Run
 
@@ -167,55 +167,55 @@ sudo apt install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patc
 git clone https://github.com/wilsonglasser/basemaster.git
 cd basemaster
 pnpm install
-pnpm tauri dev            # Dev com hot reload
+pnpm tauri dev            # Dev with hot reload
 pnpm tauri build          # Release → src-tauri/target/release/bundle/
-cargo check --workspace   # Check Rust
-pnpm tsc --noEmit         # Check TS
+cargo check --workspace   # Rust check
+pnpm tsc --noEmit         # TS check
 ```
 
-Detalhes de code signing (SignPath Foundation pra Windows, Apple Developer pra macOS) e publicação no winget em [`docs/RELEASE.md`](docs/RELEASE.md).
+Code signing details (SignPath Foundation for Windows, Apple Developer for macOS) and winget publishing are documented in [`docs/RELEASE.md`](docs/RELEASE.md).
 
-## Uso
+## Usage
 
-1. **Primeira execução** — Perfil vazio, sem master password.
-2. **Nova conexão** — Botão `+`, escolhe driver, preenche host/porta/credenciais. Testa antes de salvar.
-3. **Query** — `Ctrl+T` nova aba SQL, `Ctrl+Enter` executa.
-4. **Editar tabela** — Duplo-click na tabela → aba Dados. Edições ficam em pending, `Ctrl+S` aplica.
-5. **Transfer** — Menu conexão → Data Transfer. Seleciona origem/destino e tabelas, configura paralelismo.
-6. **AI** — Settings → AI, configura provider e API key. Botão de chat abre na sidebar.
-7. **Import Navicat** — File → Import `.ncx`, preenche master password se o arquivo tiver uma.
+1. **First launch** — Empty profile, no master password.
+2. **New connection** — `+` button, pick a driver, fill host/port/credentials. Test before saving.
+3. **Query** — `Ctrl+T` opens a new SQL tab, `Ctrl+Enter` runs.
+4. **Edit table** — Double-click a table → Data tab. Edits stay pending, `Ctrl+S` applies.
+5. **Transfer** — Connection menu → Data Transfer. Pick source/destination and tables, configure parallelism.
+6. **AI** — Settings → AI, configure provider and API key. Chat button appears in the sidebar.
+7. **Import Navicat** — File → Import `.ncx`, enter the master password if the file has one.
 
-### Atalhos
+### Shortcuts
 
-| Atalho | Ação |
-|--------|------|
+| Shortcut | Action |
+|----------|--------|
 | `Ctrl+K` | Command palette |
-| `Ctrl+T` | Nova aba SQL |
-| `Ctrl+W` | Fecha aba |
-| `Ctrl+Enter` | Executa query |
-| `Ctrl+Shift+F` | Formata SQL |
-| `Ctrl+D` | Estrutura da tabela ativa |
-| `F2` | Rename (coluna, tabela, conexão) |
-| `Ctrl+/` | Cheat-sheet completa |
+| `Ctrl+T` | New SQL tab |
+| `Ctrl+W` | Close tab |
+| `Ctrl+Enter` | Run query |
+| `Ctrl+Shift+F` | Format SQL |
+| `Ctrl+D` | Structure of the active table |
+| `F2` | Rename (column, table, connection) |
+| `Ctrl+/` | Full cheat-sheet |
 
 ## Roadmap
 
-| Versão | Status | Escopo |
-|--------|--------|--------|
-| **v0.1** | **Em progresso** | Drivers MySQL/MariaDB/Postgres/SQLite, SQL editor, grid editável, schema editor, data transfer V1.2, import/export, AI chat, MCP server, Docker discovery |
-| **v0.2** | Planejado | Visualizador de `EXPLAIN`, diff de schemas, biometric unlock, jump hosts SSH encadeados |
-| **v0.3** | Planejado | ER diagram, refactor visual de schema, sync entre instalações via QUIC |
+| Version | Status | Scope |
+|---------|--------|-------|
+| **v0.1** | **In Progress** | MySQL/MariaDB/Postgres/SQLite drivers, SQL editor, editable grid, schema editor, data transfer V1.2, import/export, AI chat, MCP server, Docker discovery |
+| **v0.2** | Planned | `EXPLAIN` visualizer, schema diff, biometric unlock, chained SSH jump hosts |
+| **v0.3** | Planned | ER diagram, visual schema refactor, cross-install sync over QUIC |
 
-## Contribuindo
+## Contributing
 
-PRs são bem-vindas. Abra uma issue antes de mudanças grandes pra alinhar escopo.
+PRs welcome. Open an issue before large changes so we can align on scope.
 
-## Licença
+## License
 
-[MIT](LICENSE) — Free e open-source.
+[MIT](LICENSE) — Free and open-source.
 
 ---
 
 <p align="center">
-  Feito com Rust e SQL pra quem vive em bancos de dados.
+  Built with Rust and SQL, for people who live in databases.
 </p>
