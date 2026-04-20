@@ -222,3 +222,183 @@ pub fn load_secrets_into(
         conn.ssh_key_passphrase = Some(pp);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cipher::BlockEncryptMut;
+
+    /// Cifra um plaintext com Blowfish-ECB e a chave do Navicat, retornando
+    /// hex ASCII (formato esperado pelo parser). Usado só pra gerar
+    /// fixtures — o produto decripta, nunca cifra.
+    fn encrypt_with_navicat_key(plain: &str) -> String {
+        type BfEnc = ecb::Encryptor<blowfish::Blowfish>;
+        let mut cipher = BfEnc::new_from_slice(NAVICAT_KEY).unwrap();
+        // Null-pad pro múltiplo de 8 bytes.
+        let mut bytes = plain.as_bytes().to_vec();
+        while bytes.len() % 8 != 0 {
+            bytes.push(0);
+        }
+        let blocks_in = bytes
+            .chunks_exact(8)
+            .map(cipher::generic_array::GenericArray::clone_from_slice)
+            .collect::<Vec<_>>();
+        let mut blocks_out: Vec<cipher::generic_array::GenericArray<u8, cipher::consts::U8>> =
+            vec![cipher::generic_array::GenericArray::default(); blocks_in.len()];
+        cipher
+            .encrypt_blocks_b2b_mut(&blocks_in, &mut blocks_out)
+            .unwrap();
+        let mut out = Vec::with_capacity(bytes.len());
+        for b in &blocks_out {
+            out.extend_from_slice(b);
+        }
+        hex::encode_upper(out)
+    }
+
+    #[test]
+    fn decrypt_rejects_non_hex() {
+        assert!(decrypt_navicat_password("zzz not hex zzz").is_none());
+    }
+
+    #[test]
+    fn decrypt_rejects_wrong_block_size() {
+        // 7 bytes hex = 14 chars, mas Blowfish precisa múltiplo de 8 bytes.
+        let hex = "AABBCCDDEEFF11"; // 7 bytes
+        assert!(decrypt_navicat_password(hex).is_none());
+    }
+
+    #[test]
+    fn decrypt_roundtrip_short_password() {
+        let hex = encrypt_with_navicat_key("hunter2");
+        assert_eq!(decrypt_navicat_password(&hex).as_deref(), Some("hunter2"));
+    }
+
+    #[test]
+    fn decrypt_roundtrip_empty_string() {
+        // Plaintext vazio não passa pelo caminho real (password_hex.is_empty()
+        // antes de chamar), mas garante que cipher vazio retorna None.
+        assert!(decrypt_navicat_password("").is_none());
+    }
+
+    #[test]
+    fn decrypt_trims_whitespace() {
+        let hex = encrypt_with_navicat_key("pg-secret");
+        let padded = format!("  {hex}\n");
+        assert_eq!(
+            decrypt_navicat_password(&padded).as_deref(),
+            Some("pg-secret")
+        );
+    }
+
+    #[test]
+    fn parse_empty_xml_returns_no_connections() {
+        let r = parse_navicat_ncx("<?xml version=\"1.0\"?><Connections/>").unwrap();
+        assert_eq!(r.version, 1);
+        assert!(r.connections.is_empty());
+    }
+
+    #[test]
+    fn parse_mysql_connection_with_password() {
+        let pw_hex = encrypt_with_navicat_key("s3cret");
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+            <Connections>
+              <Connection ConnectionName="prod-db"
+                          ConnType="MYSQL"
+                          Host="db.example.com"
+                          Port="3307"
+                          UserName="admin"
+                          DatabaseName="shop"
+                          Password="{pw_hex}"/>
+            </Connections>"#
+        );
+        let r = parse_navicat_ncx(&xml).unwrap();
+        assert_eq!(r.connections.len(), 1);
+        let c = &r.connections[0];
+        assert_eq!(c.name, "prod-db");
+        assert_eq!(c.driver, "mysql");
+        assert_eq!(c.host, "db.example.com");
+        assert_eq!(c.port, 3307);
+        assert_eq!(c.user, "admin");
+        assert_eq!(c.default_database.as_deref(), Some("shop"));
+        assert_eq!(c.password.as_deref(), Some("s3cret"));
+    }
+
+    #[test]
+    fn parse_postgres_default_port() {
+        let xml = r#"<?xml version="1.0"?>
+            <Connections>
+              <Connection ConnectionName="pg" ConnType="PGSQL"
+                          Host="localhost" UserName="postgres"/>
+            </Connections>"#;
+        let r = parse_navicat_ncx(xml).unwrap();
+        assert_eq!(r.connections.len(), 1);
+        assert_eq!(r.connections[0].driver, "postgres");
+        assert_eq!(r.connections[0].port, 5432);
+    }
+
+    #[test]
+    fn parse_mysql_default_port() {
+        let xml = r#"<?xml version="1.0"?>
+            <Connections>
+              <Connection ConnectionName="m" ConnType="MARIADB"
+                          Host="localhost" UserName="root"/>
+            </Connections>"#;
+        let r = parse_navicat_ncx(xml).unwrap();
+        assert_eq!(r.connections.len(), 1);
+        assert_eq!(r.connections[0].driver, "mysql");
+        assert_eq!(r.connections[0].port, 3306);
+    }
+
+    #[test]
+    fn parse_skips_unsupported_drivers() {
+        let xml = r#"<?xml version="1.0"?>
+            <Connections>
+              <Connection ConnectionName="oracle-thing" ConnType="ORACLE"
+                          Host="x" UserName="y"/>
+              <Connection ConnectionName="good" ConnType="MYSQL"
+                          Host="h" UserName="u"/>
+            </Connections>"#;
+        let r = parse_navicat_ncx(xml).unwrap();
+        assert_eq!(r.connections.len(), 1);
+        assert_eq!(r.connections[0].name, "good");
+    }
+
+    #[test]
+    fn parse_bad_password_hex_keeps_connection_without_password() {
+        let xml = r#"<?xml version="1.0"?>
+            <Connections>
+              <Connection ConnectionName="c" ConnType="MYSQL" Host="h"
+                          UserName="u" Password="not-a-valid-hex-string"/>
+            </Connections>"#;
+        let r = parse_navicat_ncx(xml).unwrap();
+        assert_eq!(r.connections.len(), 1);
+        assert!(r.connections[0].password.is_none());
+    }
+
+    #[test]
+    fn parse_file_content_detects_xml_by_content() {
+        let xml = "<?xml version=\"1.0\"?><Connections/>";
+        let r = parse_file_content(xml, "whatever.txt").unwrap();
+        assert!(r.connections.is_empty());
+    }
+
+    #[test]
+    fn parse_file_content_detects_xml_by_extension() {
+        let r = parse_file_content("<Connections/>", "export.ncx").unwrap();
+        assert!(r.connections.is_empty());
+    }
+
+    #[test]
+    fn parse_file_content_detects_json() {
+        let json = r#"{"version":1,"folders":[],"connections":[]}"#;
+        let r = parse_file_content(json, "export.bmconn").unwrap();
+        assert_eq!(r.version, 1);
+    }
+
+    #[test]
+    fn parse_file_content_rejects_invalid_json() {
+        let err = parse_file_content("{not json", "export.bmconn").unwrap_err();
+        assert!(err.contains("JSON"));
+    }
+}

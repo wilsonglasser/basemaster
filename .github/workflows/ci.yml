@@ -59,6 +59,9 @@ jobs:
       - name: Cargo check (workspace)
         run: cargo check --workspace --all-targets
 
+      - name: Cargo test (workspace, unit tests)
+        run: cargo test --workspace --lib --locked
+
       - name: Cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
         continue-on-error: true

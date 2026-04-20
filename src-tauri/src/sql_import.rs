@@ -496,3 +496,99 @@ fn at_word_ci(bytes: &[u8], i: usize, needle: &[u8]) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_two_statements() {
+        let out = split_statements("SELECT 1; SELECT 2;");
+        assert_eq!(out, vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn split_trailing_without_semicolon() {
+        let out = split_statements("SELECT 1; SELECT 2");
+        assert_eq!(out, vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn split_ignores_semicolons_inside_single_quotes() {
+        let out = split_statements("INSERT INTO t VALUES ('a;b'); SELECT 2;");
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains("'a;b'"));
+    }
+
+    #[test]
+    fn split_ignores_semicolons_inside_backticks() {
+        let out = split_statements("SELECT `col;with;semi` FROM t; SELECT 1;");
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains("`col;with;semi`"));
+    }
+
+    #[test]
+    fn split_strips_line_comments() {
+        let out = split_statements("-- comentário\nSELECT 1;\n-- outro\nSELECT 2;");
+        assert_eq!(out.len(), 2);
+        assert!(!out.iter().any(|s| s.contains("comentário")));
+    }
+
+    #[test]
+    fn split_strips_hash_comments() {
+        let out = split_statements("# mysql-style\nSELECT 1;");
+        assert_eq!(out, vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn split_strips_block_comments() {
+        let out = split_statements("/* multiline\ncomment */ SELECT 1;");
+        assert_eq!(out, vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn split_handles_delimiter_directive() {
+        let src = "DELIMITER $$\nCREATE TRIGGER foo BEGIN SELECT 1; END$$\nDELIMITER ;\nSELECT 2;";
+        let out = split_statements(src);
+        // Um trigger inteiro + um SELECT. A separação interna por `;` não
+        // fragmenta o bloco dentro do DELIMITER $$.
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains("CREATE TRIGGER"));
+        assert!(out[0].contains("END"));
+        assert_eq!(out[1], "SELECT 2");
+    }
+
+    #[test]
+    fn split_empty_input_returns_empty() {
+        assert!(split_statements("").is_empty());
+        assert!(split_statements("   \n\t  ").is_empty());
+        assert!(split_statements(";;;").is_empty());
+    }
+
+    #[test]
+    fn split_handles_escaped_quotes() {
+        // `\'` dentro de string MySQL — splitter não pode fechar ali.
+        let out = split_statements("INSERT INTO t VALUES ('it\\'s; a test'); SELECT 1;");
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains("it\\'s; a test"));
+    }
+
+    #[test]
+    fn at_str_matches_exact_slice() {
+        assert!(at_str(b"hello world", 0, b"hello"));
+        assert!(at_str(b"hello world", 6, b"world"));
+        assert!(!at_str(b"hello", 0, b"hello!"));
+    }
+
+    #[test]
+    fn at_word_ci_matches_case_insensitive() {
+        assert!(at_word_ci(b"DELIMITER $$", 0, b"DELIMITER"));
+        assert!(at_word_ci(b"delimiter $$", 0, b"DELIMITER"));
+    }
+
+    #[test]
+    fn at_word_ci_rejects_prefix_of_longer_word() {
+        assert!(!at_word_ci(b"DELIMITERED", 0, b"DELIMITER"));
+        assert!(!at_word_ci(b"DELIMITER_FOO", 0, b"DELIMITER"));
+    }
+}
