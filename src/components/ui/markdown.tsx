@@ -6,6 +6,7 @@ import rehypeHighlight from "rehype-highlight";
 
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useQueryTabBridge } from "@/state/query-tab-bridge";
 import { useTabs } from "@/state/tabs";
 
@@ -142,6 +143,7 @@ function CodeBlock({
   /** Children JSX já highlighted (spans coloridos) — renderiza direto. */
   highlighted: ReactNode;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const copy = () => {
     void navigator.clipboard.writeText(text);
@@ -175,13 +177,11 @@ function CodeBlock({
         ? (active.kind as { connectionId?: string }).connectionId
         : undefined);
     if (!connId) {
-      alert(
-        "Nenhuma conexão ativa pra rodar esse SQL — abra uma conexão primeiro.",
-      );
+      alert(t("markdown.noActiveConnection"));
       return;
     }
     tabs.open({
-      label: "Query (IA)",
+      label: t("markdown.aiQueryLabel"),
       kind: { kind: "query", connectionId: connId, initialSql: text },
     });
   };
@@ -189,31 +189,31 @@ function CodeBlock({
   return (
     <div className="group relative my-2 overflow-hidden rounded-md border border-border bg-muted/30">
       <div className="flex items-center justify-between border-b border-border/60 bg-card/40 px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-        <span>{language || "code"}</span>
+        <span>{language || t("markdown.code")}</span>
         <div className="flex items-center gap-1">
           {isSql && (
             <button
               type="button"
               onClick={runInActiveOrNewTab}
               className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] normal-case text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="Abrir/adicionar em query editor"
+              title={t("markdown.editorTitle")}
             >
               <Play className="h-3 w-3 fill-current" />
-              editor
+              {t("markdown.editorLabel")}
             </button>
           )}
           <button
             type="button"
             onClick={copy}
             className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] normal-case text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="Copiar"
+            title={t("markdown.copyTitle")}
           >
             {copied ? (
               <Check className="h-3 w-3 text-conn-accent" />
             ) : (
               <Copy className="h-3 w-3" />
             )}
-            {copied ? "copiado" : "copiar"}
+            {copied ? t("markdown.copied") : t("markdown.copy")}
           </button>
         </div>
       </div>

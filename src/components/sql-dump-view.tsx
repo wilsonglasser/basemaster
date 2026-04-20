@@ -25,6 +25,7 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
 
 interface Props {
@@ -34,6 +35,7 @@ interface Props {
 }
 
 export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
+  const t = useT();
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === sourceConnectionId),
   );
@@ -106,10 +108,14 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
   // Dirty + label.
   useEffect(() => {
     patchTab(tabId, {
-      label: running ? `Dump · em andamento` : done ? `Dump · pronto` : `Dump`,
+      label: running
+        ? t("sqlDump.labelRunning")
+        : done
+          ? t("sqlDump.labelDone")
+          : t("sqlDump.labelIdle"),
       dirty: running,
     });
-  }, [running, done, tabId, patchTab]);
+  }, [running, done, tabId, patchTab, t]);
 
   // Ao mudar o formato, atualiza a extensão do path já escolhido
   // (troca .sql <-> .zip). Se não havia path, nada acontece.
@@ -127,7 +133,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
     const ext = format === "zip" ? "zip" : "sql";
     const label = format === "zip" ? "ZIP" : "SQL";
     const p = await save({
-      title: "Salvar dump",
+      title: t("sqlDump.saveTitle"),
       defaultPath: `${defaultName}.${ext}`,
       filters: [{ name: label, extensions: [ext] }],
     });
@@ -140,7 +146,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
       const ext = format === "zip" ? "zip" : "sql";
       const label = format === "zip" ? "ZIP" : "SQL";
       const p = await save({
-        title: "Salvar dump",
+        title: t("sqlDump.saveTitle"),
         defaultPath: `${defaultName}.${ext}`,
         filters: [{ name: label, extensions: [ext] }],
       });
@@ -175,11 +181,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
   };
 
   const handleStop = async () => {
-    if (
-      !window.confirm(
-        "Parar o dump? O arquivo fica incompleto — você pode começar de novo.",
-      )
-    ) {
+    if (!window.confirm(t("sqlDump.stopConfirm"))) {
       return;
     }
     try {
@@ -228,7 +230,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
     <div className="flex h-full flex-col overflow-hidden">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-card/30 px-6 text-sm">
         <FileText className="h-4 w-4 text-muted-foreground" />
-        <h2 className="font-semibold">SQL Dump</h2>
+        <h2 className="font-semibold">{t("sqlDump.header")}</h2>
         <span className="text-muted-foreground">·</span>
         <span className="text-muted-foreground">{conn?.name}</span>
         <span className="text-muted-foreground">·</span>
@@ -240,20 +242,20 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-3xl space-y-4">
           {/* Formato */}
-          <Card title="Formato do arquivo">
+          <Card title={t("sqlDump.section.format")}>
             <div className="grid grid-cols-2 gap-2">
               <FormatCard
                 active={format === "sql"}
                 icon={<FileText className="h-4 w-4" />}
-                label="SQL único"
-                hint="Um .sql com tudo."
+                label={t("sqlDump.formatSqlLabel")}
+                hint={t("sqlDump.formatSqlHint")}
                 onClick={() => setFormat("sql")}
               />
               <FormatCard
                 active={format === "zip"}
                 icon={<FolderArchive className="h-4 w-4" />}
-                label="ZIP"
-                hint="Um .sql por tabela dentro do .zip."
+                label={t("sqlDump.formatZipLabel")}
+                hint={t("sqlDump.formatZipHint")}
                 onClick={() => setFormat("zip")}
               />
             </div>
@@ -262,15 +264,15 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
                 <FormatCard
                   compact
                   active={compression === "stored"}
-                  label="Sem compressão"
-                  hint="Mais rápido."
+                  label={t("sqlDump.compressionStoredLabel")}
+                  hint={t("sqlDump.compressionStoredHint")}
                   onClick={() => setCompression("stored")}
                 />
                 <FormatCard
                   compact
                   active={compression === "deflate"}
-                  label="Deflate"
-                  hint="Arquivo menor."
+                  label={t("sqlDump.compressionDeflateLabel")}
+                  hint={t("sqlDump.compressionDeflateHint")}
                   onClick={() => setCompression("deflate")}
                 />
               </div>
@@ -278,52 +280,52 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
           </Card>
 
           {/* Conteúdo */}
-          <Card title="Conteúdo">
+          <Card title={t("sqlDump.section.content")}>
             <div className="grid grid-cols-3 gap-2">
               <FormatCard
                 compact
                 active={content === "structure"}
-                label="Só estrutura"
+                label={t("sqlDump.contentStructure")}
                 onClick={() => setContent("structure")}
               />
               <FormatCard
                 compact
                 active={content === "data"}
-                label="Só dados"
+                label={t("sqlDump.contentData")}
                 onClick={() => setContent("data")}
               />
               <FormatCard
                 compact
                 active={content === "both"}
-                label="Tudo"
+                label={t("sqlDump.contentBoth")}
                 onClick={() => setContent("both")}
               />
             </div>
           </Card>
 
           {/* Opções */}
-          <Card title="Opções">
+          <Card title={t("sqlDump.section.options")}>
             <Toggle
-              label="DROP TABLE IF EXISTS antes de CREATE"
+              label={t("sqlDump.optDrop")}
               value={dropBeforeCreate}
               onChange={setDropBeforeCreate}
               disabled={content === "data"}
             />
             <Toggle
-              label="Extended INSERTs (multi-row)"
+              label={t("sqlDump.optExtended")}
               value={extendedInserts}
               onChange={setExtendedInserts}
               disabled={content === "structure"}
             />
             <Toggle
-              label="Complete INSERTs (com lista de colunas)"
+              label={t("sqlDump.optComplete")}
               value={completeInserts}
               onChange={setCompleteInserts}
               disabled={content === "structure"}
             />
             {conn?.driver !== "postgres" && (
               <Toggle
-                label="BLOB em hex (0xAABB…)"
+                label={t("sqlDump.optHexBlob")}
                 value={hexBlob}
                 onChange={setHexBlob}
                 disabled={content === "structure"}
@@ -332,8 +334,8 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
             <Toggle
               label={
                 conn?.driver === "postgres"
-                  ? "Incluir CREATE SCHEMA"
-                  : "Incluir CREATE DATABASE"
+                  ? t("sqlDump.optCreateSchemaPg")
+                  : t("sqlDump.optCreateSchemaMysql")
               }
               value={createSchema}
               onChange={setCreateSchema}
@@ -341,17 +343,17 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
           </Card>
 
           {/* Destino */}
-          <Card title="Destino">
+          <Card title={t("sqlDump.section.dest")}>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={pickPath}
                 className="rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
               >
-                Escolher arquivo…
+                {t("sqlDump.pickFile")}
               </button>
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-                {path ?? "(será escolhido ao iniciar)"}
+                {path ?? t("sqlDump.pickFilePending")}
               </span>
             </div>
           </Card>
@@ -366,13 +368,13 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
           )}
 
           {(running || done) && (
-            <Card title="Progresso">
+            <Card title={t("sqlDump.section.progress")}>
               <div className="flex items-baseline justify-between text-xs">
                 <span className="tabular-nums text-muted-foreground">
-                  {tablesDone} / {totalTables} tabelas
+                  {t("sqlDump.tablesProgress", { done: tablesDone, total: totalTables })}
                 </span>
                 <span className="tabular-nums text-muted-foreground">
-                  {totalRows.toLocaleString()} linhas
+                  {t("sqlDump.rowsCount", { n: totalRows.toLocaleString() })}
                 </span>
               </div>
               <div className="space-y-1 text-xs">
@@ -388,7 +390,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
                   ))
                 ) : (
                   <div className="text-muted-foreground">
-                    Descobrindo tabelas dos schemas selecionados…
+                    {t("sqlDump.discoveringTables")}
                   </div>
                 )}
               </div>
@@ -401,9 +403,14 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
                       : "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
                   )}
                 >
-                  {done.failed > 0 ? "Concluído com erros" : "Concluído"} ·{" "}
-                  {done.total_rows.toLocaleString()} linhas em{" "}
-                  {(done.elapsed_ms / 1000).toFixed(1)}s
+                  {t("sqlDump.doneSummary", {
+                    status:
+                      done.failed > 0
+                        ? t("sqlDump.doneWithErrors")
+                        : t("sqlDump.doneOk"),
+                    rows: done.total_rows.toLocaleString(),
+                    seconds: (done.elapsed_ms / 1000).toFixed(1),
+                  })}
                 </div>
               )}
             </Card>
@@ -419,7 +426,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
             className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20"
           >
             <Square className="h-3 w-3" />
-            Parar
+            {t("sqlDump.stopBtn")}
           </button>
         ) : (
           <button
@@ -428,7 +435,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
             className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
           >
             <Play className="h-3 w-3" />
-            {done ? "Rodar de novo" : "Iniciar dump"}
+            {done ? t("sqlDump.runAgainBtn") : t("sqlDump.startBtn")}
           </button>
         )}
       </footer>

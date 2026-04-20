@@ -4,6 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useShortcut } from "@/lib/shortcuts/use-shortcuts";
 import { useAiAgent } from "@/state/ai-agent";
 import { useConnections } from "@/state/connections";
+import { useI18n } from "@/state/i18n";
 import { useSidebarSelection } from "@/state/sidebar-selection";
 import { useTableViewBridge } from "@/state/table-view-bridge";
 import { useTabs } from "@/state/tabs";
@@ -73,7 +74,7 @@ export function ShortcutBindings() {
         : null;
       if (!conn) return;
       useTabs.getState().open({
-        label: "Query",
+        label: useI18n.getState().t("shortcuts.queryLabel"),
         kind: {
           kind: "query",
           connectionId: conn.id,
@@ -129,11 +130,12 @@ export function ShortcutBindings() {
     useCallback(async () => {
       const sel = useSidebarSelection.getState().selected;
       if (!sel) return;
+      const t = useI18n.getState().t;
       const { ipc } = await import("@/lib/ipc");
       try {
         if (sel.kind === "table") {
           const next = window.prompt(
-            `Renomear tabela "${sel.table}":`,
+            t("shortcuts.renameTablePrompt", { name: sel.table }),
             sel.table,
           );
           if (!next || !next.trim() || next === sel.table) return;
@@ -152,7 +154,7 @@ export function ShortcutBindings() {
             .ensureSnapshot(sel.connectionId, sel.schema);
         } else if (sel.kind === "schema") {
           const next = window.prompt(
-            `Renomear schema "${sel.schema}":`,
+            t("shortcuts.renameSchemaPrompt", { name: sel.schema }),
             sel.schema,
           );
           if (!next || !next.trim() || next === sel.schema) return;
@@ -160,11 +162,11 @@ export function ShortcutBindings() {
         } else if (sel.kind === "connection") {
           // Abre tab de edit da conexão.
           useTabs.getState().openOrFocus(
-            (t) =>
-              t.kind.kind === "edit-connection" &&
-              t.kind.connectionId === sel.connectionId,
+            (tab) =>
+              tab.kind.kind === "edit-connection" &&
+              tab.kind.connectionId === sel.connectionId,
             () => ({
-              label: "Editar conexão",
+              label: t("shortcuts.editConnectionLabel"),
               kind: {
                 kind: "edit-connection",
                 connectionId: sel.connectionId,
@@ -176,14 +178,17 @@ export function ShortcutBindings() {
           const cache = useSavedQueries.getState().cache[sel.connectionId];
           const q = cache?.find((x) => x.id === sel.savedQueryId);
           if (!q) return;
-          const next = window.prompt(`Renomear query "${q.name}":`, q.name);
+          const next = window.prompt(
+            t("shortcuts.renameSavedQueryPrompt", { name: q.name }),
+            q.name,
+          );
           if (!next || !next.trim() || next === q.name) return;
           await useSavedQueries
             .getState()
             .update(q.id, { name: next.trim(), sql: q.sql, schema: q.schema });
         }
       } catch (e) {
-        alert(`Falha ao renomear: ${e}`);
+        alert(t("shortcuts.renameFailed", { error: String(e) }));
       }
     }, []),
   );
@@ -193,8 +198,11 @@ export function ShortcutBindings() {
     "global.settings",
     useCallback(() => {
       useTabs.getState().openOrFocus(
-        (t) => t.kind.kind === "settings",
-        () => ({ label: "Configurações", kind: { kind: "settings" } }),
+        (tab) => tab.kind.kind === "settings",
+        () => ({
+          label: useI18n.getState().t("shortcuts.settingsLabel"),
+          kind: { kind: "settings" },
+        }),
       );
     }, []),
   );

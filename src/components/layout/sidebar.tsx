@@ -172,7 +172,7 @@ export function Sidebar({ className }: SidebarProps) {
               type="button"
               onClick={() => setSearch("")}
               className="absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="Limpar"
+              title={t("sidebar.clearSearch")}
             >
               <X className="h-3 w-3" />
             </button>
@@ -217,7 +217,7 @@ export function Sidebar({ className }: SidebarProps) {
           "transition-colors hover:bg-conn-accent/40",
           dragging && "bg-conn-accent/60",
         )}
-        title="Arrasta para redimensionar · duplo-click para resetar"
+        title={t("sidebar.resizeHint")}
       />
     </aside>
   );
@@ -262,13 +262,13 @@ function AddConnectionMenu() {
     );
 
   const newFolder = async () => {
-    const name = window.prompt("Nome da nova pasta:");
+    const name = window.prompt(t("sidebar.newFolderPrompt"));
     if (!name || !name.trim()) return;
     try {
       await ipc.folders.create({ name: name.trim() });
       await refreshFolders();
     } catch (e) {
-      alert(`Falha: ${e}`);
+      alert(t("common.failure", { error: String(e) }));
     }
   };
 
@@ -280,13 +280,13 @@ function AddConnectionMenu() {
     },
     {
       icon: <FolderIcon className="h-3.5 w-3.5" />,
-      label: "Nova pasta…",
+      label: t("sidebar.newFolder"),
       onClick: newFolder,
     },
     { separator: true },
     {
       icon: <Container className="h-3.5 w-3.5" />,
-      label: "Detectar do Docker…",
+      label: t("sidebar.dockerDetect"),
       onClick: () => openDockerDiscover(true),
     },
   ];
@@ -297,7 +297,7 @@ function AddConnectionMenu() {
         type="button"
         onClick={(e) => menu.openAt(e)}
         className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title="Adicionar"
+        title={t("sidebar.addMenuTitle")}
       >
         <Plus className="h-3.5 w-3.5" />
       </button>
@@ -327,13 +327,13 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
     );
 
   const newFolder = async () => {
-    const name = window.prompt("Nome da nova pasta:");
+    const name = window.prompt(t("sidebar.newFolderPrompt"));
     if (!name || !name.trim()) return;
     try {
       await ipc.folders.create({ name: name.trim() });
       await refreshFolders();
     } catch (e) {
-      alert(`Falha: ${e}`);
+      alert(t("common.failure", { error: String(e) }));
     }
   };
 
@@ -343,7 +343,7 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
         multiple: false,
         filters: [
           {
-            name: "Conexões",
+            name: t("sidebar.filterConnectionsName"),
             extensions: ["bmconn", "json", "ncx", "xml"],
           },
         ],
@@ -351,17 +351,20 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
       if (!path || Array.isArray(path)) return;
       const payload = await ipc.portability.importParse(path);
       if (payload.connections.length === 0) {
-        alert("Arquivo não contém conexões.");
+        alert(t("welcome.fileHasNoConnections"));
         return;
       }
       const ok = window.confirm(
-        `Importar ${payload.connections.length} conexão(ões)?`,
+        t("welcome.confirmImport", {
+          count: payload.connections.length,
+          folders: "",
+        }),
       );
       if (!ok) return;
       await ipc.portability.importApply(payload);
       await refresh();
     } catch (e) {
-      alert(`Falha: ${e}`);
+      alert(t("common.failure", { error: String(e) }));
     }
   };
 
@@ -373,18 +376,18 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
     },
     {
       icon: <FolderIcon className="h-3.5 w-3.5" />,
-      label: "Nova pasta…",
+      label: t("sidebar.newFolder"),
       onClick: newFolder,
     },
     { separator: true },
     {
       icon: <Upload className="h-3.5 w-3.5" />,
-      label: "Importar arquivo…",
+      label: t("sidebar.importFile"),
       onClick: runImport,
     },
     {
       icon: <Container className="h-3.5 w-3.5" />,
-      label: "Detectar do Docker…",
+      label: t("sidebar.dockerDetect"),
       onClick: () => openDockerDiscover(true),
     },
   ]);
@@ -402,14 +405,15 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
 
 function NewFolderButton() {
   const refreshFolders = useConnections((s) => s.refreshFolders);
+  const t = useT();
   const run = async () => {
-    const name = window.prompt("Nome da nova pasta:");
+    const name = window.prompt(t("sidebar.newFolderPrompt"));
     if (!name || !name.trim()) return;
     try {
       await ipc.folders.create({ name: name.trim() });
       await refreshFolders();
     } catch (e) {
-      alert(`Falha: ${e}`);
+      alert(t("common.failure", { error: String(e) }));
     }
   };
   return (
@@ -417,7 +421,7 @@ function NewFolderButton() {
       type="button"
       onClick={() => void run()}
       className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      title="Nova pasta"
+      title={t("sidebar.newFolderTitle")}
     >
       <FolderIcon className="h-3.5 w-3.5" />
     </button>
@@ -426,6 +430,7 @@ function NewFolderButton() {
 
 function ImportConnectionsButton() {
   const refresh = useConnections((s) => s.refresh);
+  const t = useT();
 
   const run = async () => {
     try {
@@ -433,7 +438,7 @@ function ImportConnectionsButton() {
         multiple: false,
         filters: [
           {
-            name: "Conexões",
+            name: t("sidebar.filterConnectionsName"),
             extensions: ["bmconn", "json", "ncx", "xml"],
           },
         ],
@@ -442,20 +447,21 @@ function ImportConnectionsButton() {
       const payload = await ipc.portability.importParse(path);
       const count = payload.connections.length;
       if (count === 0) {
-        alert("Arquivo não contém conexões.");
+        alert(t("welcome.fileHasNoConnections"));
         return;
       }
+      const folders = payload.folders.length
+        ? t("welcome.foldersSuffix", { n: payload.folders.length })
+        : "";
       const ok = window.confirm(
-        `Importar ${count} conexão(ões)${
-          payload.folders.length ? ` + ${payload.folders.length} pasta(s)` : ""
-        }?`,
+        t("welcome.confirmImport", { count, folders }),
       );
       if (!ok) return;
       const applied = await ipc.portability.importApply(payload);
-      alert(`${applied} conexão(ões) importada(s).`);
+      alert(t("welcome.imported", { count: applied }));
       await refresh();
     } catch (e) {
-      alert(`Falha ao importar: ${e}`);
+      alert(t("welcome.importFailed", { error: String(e) }));
     }
   };
 
@@ -464,7 +470,7 @@ function ImportConnectionsButton() {
       type="button"
       onClick={() => void run()}
       className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      title="Importar conexões (.bmconn / .ncx)"
+      title={t("sidebar.importTitle")}
     >
       <Upload className="h-3.5 w-3.5" />
     </button>
@@ -477,13 +483,14 @@ function ZoomIndicator() {
   const zoomOut = useUiZoom((s) => s.zoomOut);
   const reset = useUiZoom((s) => s.zoomReset);
   const pct = Math.round(zoom * 100);
+  const t = useT();
   return (
     <div className="flex items-center rounded-md border border-border/40">
       <button
         type="button"
         onClick={zoomOut}
         className="grid h-6 w-5 place-items-center text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground"
-        title="Zoom out (Ctrl+-)"
+        title={t("sidebar.zoomOutTitle")}
       >
         −
       </button>
@@ -491,7 +498,7 @@ function ZoomIndicator() {
         type="button"
         onClick={reset}
         className="min-w-[36px] px-1 font-mono text-[10px] tabular-nums text-muted-foreground hover:text-foreground"
-        title={`Zoom ${pct}% — click pra resetar (Ctrl+0)`}
+        title={t("sidebar.zoomResetTitle", { pct })}
       >
         {pct}%
       </button>
@@ -499,7 +506,7 @@ function ZoomIndicator() {
         type="button"
         onClick={zoomIn}
         className="grid h-6 w-5 place-items-center text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground"
-        title="Zoom in (Ctrl+=)"
+        title={t("sidebar.zoomInTitle")}
       >
         +
       </button>

@@ -14,6 +14,7 @@ import { ipc } from "@/lib/ipc";
 import type { QueryHistoryEntry, Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
 
 interface Props {
@@ -31,6 +32,7 @@ function truncate(s: string, n: number): string {
 }
 
 export function QueryHistoryView({ connectionId }: Props) {
+  const t = useT();
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === connectionId),
   );
@@ -81,9 +83,7 @@ export function QueryHistoryView({ connectionId }: Props) {
   };
 
   const clearAll = async () => {
-    if (
-      !window.confirm("Limpar todo o histórico desta conexão? Irreversível.")
-    ) {
+    if (!window.confirm(t("queryHistory.clearConfirm"))) {
       return;
     }
     await ipc.queryHistory.clear(connectionId);
@@ -101,12 +101,12 @@ export function QueryHistoryView({ connectionId }: Props) {
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-card/30 px-3 text-xs">
         <History className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="font-medium">
-          Histórico · {conn?.name}
+          {t("tree.historyLabel", { name: conn?.name ?? "" })}
         </span>
         <span className="tabular-nums text-muted-foreground">
           ({filtered.length}
           {entries && filtered.length !== entries.length &&
-            ` de ${entries.length}`})
+            t("queryHistory.countSuffix", { total: entries.length })})
         </span>
         <div className="relative ml-3">
           <Search className="pointer-events-none absolute left-1.5 top-1.5 h-3 w-3 text-muted-foreground" />
@@ -114,7 +114,7 @@ export function QueryHistoryView({ connectionId }: Props) {
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filtrar pelo SQL…"
+            placeholder={t("queryHistory.filterPlaceholder")}
             className="h-6 w-64 rounded border border-border bg-background pl-6 pr-2 text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
           />
         </div>
@@ -123,7 +123,7 @@ export function QueryHistoryView({ connectionId }: Props) {
             type="button"
             onClick={load}
             className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="Recarregar"
+            title={t("common.refresh")}
           >
             <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
           </button>
@@ -132,10 +132,10 @@ export function QueryHistoryView({ connectionId }: Props) {
             onClick={clearAll}
             disabled={!entries || entries.length === 0}
             className="inline-flex h-6 items-center gap-1 rounded-md border border-destructive/30 px-2 text-[11px] text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
-            title="Limpar tudo"
+            title={t("queryHistory.clearAllTitle")}
           >
             <Trash2 className="h-3 w-3" />
-            Limpar tudo
+            {t("queryHistory.clearAll")}
           </button>
         </div>
       </header>
@@ -145,13 +145,13 @@ export function QueryHistoryView({ connectionId }: Props) {
         <div className="min-h-0 overflow-auto border-r border-border">
           {entries === null ? (
             <div className="grid h-full place-items-center text-xs text-muted-foreground">
-              Carregando…
+              {t("common.loading")}
             </div>
           ) : filtered.length === 0 ? (
             <div className="grid h-full place-items-center text-xs italic text-muted-foreground">
               {entries.length === 0
-                ? "Nenhuma query executada ainda."
-                : "Nada bate com o filtro."}
+                ? t("queryHistory.noneYet")
+                : t("queryHistory.noMatch")}
             </div>
           ) : (
             <ul>
@@ -228,7 +228,7 @@ export function QueryHistoryView({ connectionId }: Props) {
                     className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] hover:bg-accent"
                   >
                     <FileCode2 className="h-3 w-3" />
-                    Abrir no editor
+                    {t("queryHistory.openInEditor")}
                   </button>
                   <button
                     type="button"
@@ -236,13 +236,13 @@ export function QueryHistoryView({ connectionId }: Props) {
                     className="inline-flex h-6 items-center gap-1 rounded bg-conn-accent px-2 text-[11px] font-medium text-conn-accent-foreground hover:opacity-90"
                   >
                     <FileCode2 className="h-3 w-3" />
-                    Rodar
+                    {t("queryHistory.run")}
                   </button>
                   <button
                     type="button"
                     onClick={() => deleteOne(current.id)}
                     className="grid h-6 w-6 place-items-center rounded text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-                    title="Deletar do histórico"
+                    title={t("queryHistory.deleteFromHistoryTitle")}
                   >
                     <Trash2 className="h-3 w-3" />
                   </button>
@@ -253,7 +253,7 @@ export function QueryHistoryView({ connectionId }: Props) {
               </pre>
               {current.error_msg && (
                 <div className="shrink-0 border-t border-destructive/30 bg-destructive/5 p-3 text-[11px] text-destructive">
-                  <div className="mb-1 font-medium">Erro</div>
+                  <div className="mb-1 font-medium">{t("queryHistory.errorLabel")}</div>
                   <pre className="whitespace-pre-wrap break-all font-mono">
                     {current.error_msg}
                   </pre>
@@ -262,7 +262,7 @@ export function QueryHistoryView({ connectionId }: Props) {
             </>
           ) : (
             <div className="grid h-full place-items-center text-xs italic text-muted-foreground">
-              Selecione um item pra ver o SQL.
+              {t("queryHistory.pickHint")}
             </div>
           )}
         </div>

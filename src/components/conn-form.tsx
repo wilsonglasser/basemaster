@@ -14,6 +14,7 @@ import { parseDsn } from "@/lib/dsn";
 import type { ConnectionDraft, TlsMode, Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
 
 interface ConnFormProps {
@@ -24,6 +25,7 @@ interface ConnFormProps {
 type TestState = null | "loading" | "ok" | "err";
 
 export function ConnForm({ tabId, editingId }: ConnFormProps) {
+  const t = useT();
   const [name, setName] = useState("");
   const [color, setColor] = useState<string | null>(CONN_COLORS[0].hex);
   const [driver, setDriver] = useState<
@@ -109,9 +111,11 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
   }, [editingId]);
 
   useEffect(() => {
-    const label = name.trim() || (editingId ? "Editar conexão" : "Nova conexão");
+    const label =
+      name.trim() ||
+      (editingId ? t("connForm.editTitle") : t("sidebar.newConnection"));
     patchTab(tabId, { label, accentColor: color });
-  }, [name, color, tabId, editingId, patchTab]);
+  }, [name, color, tabId, editingId, patchTab, t]);
 
   const draft: ConnectionDraft = {
     name: name.trim(),
@@ -156,7 +160,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
 
   const handleTest = async () => {
     setTest("loading");
-    setTestMsg("Testando…");
+    setTestMsg(t("connForm.testing"));
     try {
       // Teste usa o valor digitado direto (não passa pelo keyring).
       await ipc.connections.test(
@@ -166,7 +170,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
         sshEnabled && sshAuth === "key" ? sshKeyPassphrase || null : null,
       );
       setTest("ok");
-      setTestMsg("Conectou e respondeu ao ping.");
+      setTestMsg(t("connForm.testOk"));
     } catch (e) {
       setTest("err");
       setTestMsg(String(e));
@@ -211,33 +215,33 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
         </div>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">
-            {editingId ? "Editar conexão" : "Nova conexão MySQL"}
+            {editingId ? t("connForm.editTitle") : t("connForm.newTitle")}
           </h1>
           <p className="text-sm text-muted-foreground">
-            Senha vai pro Windows Credential Manager.
+            {t("connForm.subtitle")}
           </p>
         </div>
       </header>
 
       <div className="grid gap-5">
-        <Section title="Identidade">
-          <Field label="Nome">
+        <Section title={t("connForm.sectionIdentity")}>
+          <Field label={t("connForm.name")}>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Ex.: Local — Sis Regional"
+              placeholder={t("connForm.namePlaceholder")}
               className={INPUT}
               autoFocus
             />
           </Field>
-          <Field label="Cor">
+          <Field label={t("connForm.color")}>
             <ColorPicker value={color} onChange={setColor} />
           </Field>
         </Section>
 
-        <Section title="Servidor">
-          <Field label="Driver">
+        <Section title={t("connForm.sectionServer")}>
+          <Field label={t("connForm.driver")}>
             <div className="inline-flex rounded-md border border-border p-0.5">
               <button
                 type="button"
@@ -291,7 +295,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
           </Field>
           {driver === "sqlite" ? (
             <>
-              <Field label="Arquivo do banco">
+              <Field label={t("connForm.sqliteFile")}>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -322,22 +326,22 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                     }}
                     className="shrink-0 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
                   >
-                    Escolher…
+                    {t("connForm.choose")}
                   </button>
                 </div>
               </Field>
               <Field
                 label={
                   editingId
-                    ? "Senha (SQLCipher — em branco mantém atual)"
-                    : "Senha (SQLCipher — opcional)"
+                    ? t("connForm.sqlitePasswordEdit")
+                    : t("connForm.sqlitePasswordNew")
                 }
               >
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="deixe em branco se não criptografado"
+                  placeholder={t("connForm.sqlitePasswordPlaceholder")}
                   className={INPUT}
                 />
               </Field>
@@ -345,7 +349,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
           ) : (
             <>
               <div className="grid grid-cols-[1fr_140px] gap-3">
-                <Field label="Host">
+                <Field label={t("connForm.host")}>
                   <input
                     type="text"
                     value={host}
@@ -363,11 +367,11 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                       }
                       setHost(v);
                     }}
-                    placeholder="localhost ou postgres://user:pass@host:port/db"
+                    placeholder={t("connForm.hostPlaceholder")}
                     className={INPUT}
                   />
                 </Field>
-                <Field label="Porta">
+                <Field label={t("connForm.port")}>
                   <input
                     type="number"
                     value={port}
@@ -380,7 +384,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Usuário">
+                <Field label={t("connForm.user")}>
                   <input
                     type="text"
                     value={user}
@@ -389,7 +393,11 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                   />
                 </Field>
                 <Field
-                  label={editingId ? "Senha (em branco mantém atual)" : "Senha"}
+                  label={
+                    editingId
+                      ? t("connForm.passwordEdit")
+                      : t("connForm.password")
+                  }
                 >
                   <input
                     type="password"
@@ -400,17 +408,17 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                 </Field>
               </div>
 
-              <Field label="Banco padrão (opcional)">
+              <Field label={t("connForm.defaultDb")}>
                 <input
                   type="text"
                   value={defaultDb}
                   onChange={(e) => setDefaultDb(e.target.value)}
-                  placeholder="ex.: sis_regional"
+                  placeholder={t("connForm.defaultDbPlaceholder")}
                   className={INPUT}
                 />
               </Field>
 
-              <Field label="TLS">
+              <Field label={t("connForm.tls")}>
                 <div className="inline-flex items-stretch rounded-md border border-border p-0.5">
                   {(["disabled", "preferred", "required"] as TlsMode[]).map(
                     (m) => (
@@ -426,10 +434,10 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                         )}
                       >
                         {m === "disabled"
-                          ? "Off"
+                          ? t("connForm.tlsOff")
                           : m === "preferred"
-                            ? "Preferred"
-                            : "Required"}
+                            ? t("connForm.tlsPreferred")
+                            : t("connForm.tlsRequired")}
                       </button>
                     ),
                   )}
@@ -441,8 +449,8 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
 
         {driver !== "sqlite" && (
         <Section
-          title="SSH Tunnel"
-          subtitle={sshEnabled ? undefined : "opcional"}
+          title={t("connForm.sectionSsh")}
+          subtitle={sshEnabled ? undefined : t("connForm.optional")}
         >
           <label className="mb-3 inline-flex cursor-pointer items-center gap-2 text-sm">
             <input
@@ -451,21 +459,21 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
               onChange={(e) => setSshEnabled(e.target.checked)}
               className="h-3.5 w-3.5"
             />
-            <span>Conectar via SSH tunnel</span>
+            <span>{t("connForm.sshToggle")}</span>
           </label>
           {sshEnabled && (
             <>
               <div className="grid grid-cols-[1fr_auto] gap-3">
-                <Field label="SSH host">
+                <Field label={t("connForm.sshHost")}>
                   <input
                     type="text"
                     value={sshHost}
                     onChange={(e) => setSshHost(e.target.value)}
-                    placeholder="ssh.example.com"
+                    placeholder={t("connForm.sshHostPlaceholder")}
                     className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
                   />
                 </Field>
-                <Field label="Porta">
+                <Field label={t("connForm.port")}>
                   <input
                     type="number"
                     value={sshPort}
@@ -474,16 +482,16 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                   />
                 </Field>
               </div>
-              <Field label="SSH user">
+              <Field label={t("connForm.sshUser")}>
                 <input
                   type="text"
                   value={sshUser}
                   onChange={(e) => setSshUser(e.target.value)}
-                  placeholder="ubuntu"
+                  placeholder={t("connForm.sshUserPlaceholder")}
                   className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
                 />
               </Field>
-              <Field label="Autenticação">
+              <Field label={t("connForm.sshAuth")}>
                 <div className="inline-flex rounded-md border border-border p-0.5">
                   {(["password", "key"] as const).map((m) => (
                     <button
@@ -497,32 +505,36 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                           : "text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      {m === "password" ? "Password" : "Private key"}
+                      {m === "password"
+                        ? t("connForm.sshAuthPassword")
+                        : t("connForm.sshAuthKey")}
                     </button>
                   ))}
                 </div>
               </Field>
               {sshAuth === "password" ? (
-                <Field label="SSH password">
+                <Field label={t("connForm.sshPassword")}>
                   <input
                     type="password"
                     value={sshPassword}
                     onChange={(e) => setSshPassword(e.target.value)}
                     placeholder={
-                      editingId ? "(manter atual — digite pra mudar)" : "••••••••"
+                      editingId
+                        ? t("connForm.sshPasswordKeepPlaceholder")
+                        : "••••••••"
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
                   />
                 </Field>
               ) : (
                 <>
-                  <Field label="Private key path">
+                  <Field label={t("connForm.sshKeyPath")}>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={sshKeyPath}
                         onChange={(e) => setSshKeyPath(e.target.value)}
-                        placeholder="C:\Users\you\.ssh\id_rsa"
+                        placeholder={t("connForm.sshKeyPlaceholder")}
                         className="flex-1 rounded-md border border-border bg-background px-3 py-2 font-mono text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
                       />
                       <button
@@ -532,13 +544,16 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                             const picked = await openDialog({
                               multiple: false,
                               directory: false,
-                              title: "Selecione a chave privada SSH",
+                              title: t("connForm.pickKeyTitle"),
                               filters: [
                                 {
-                                  name: "Chave privada",
+                                  name: t("connForm.keyFilter"),
                                   extensions: ["", "pem", "key", "ppk"],
                                 },
-                                { name: "Todos os arquivos", extensions: ["*"] },
+                                {
+                                  name: t("connForm.allFilesFilter"),
+                                  extensions: ["*"],
+                                },
                               ],
                             });
                             if (typeof picked === "string" && picked) {
@@ -549,22 +564,22 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                           }
                         }}
                         className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                        title="Escolher arquivo"
+                        title={t("connForm.browseTitle")}
                       >
                         <FolderOpen className="h-3.5 w-3.5" />
-                        Procurar
+                        {t("connForm.browse")}
                       </button>
                     </div>
                   </Field>
-                  <Field label="Passphrase (opcional)">
+                  <Field label={t("connForm.passphrase")}>
                     <input
                       type="password"
                       value={sshKeyPassphrase}
                       onChange={(e) => setSshKeyPassphrase(e.target.value)}
                       placeholder={
                         editingId
-                          ? "(manter atual — digite pra mudar)"
-                          : "em branco se a chave não tiver"
+                          ? t("connForm.passphraseKeepPlaceholder")
+                          : t("connForm.passphraseNewPlaceholder")
                       }
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
                     />
@@ -572,8 +587,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                 </>
               )}
               <div className="text-[11px] text-muted-foreground">
-                Secrets SSH vão pro keyring do SO (Credential Manager no Windows).
-                Host key atualmente é aceito sem verificação (V3 adicionará known_hosts).
+                {t("connForm.sshNote")}
               </div>
             </>
           )}
@@ -609,7 +623,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
           onClick={() => closeTab(tabId)}
           className="rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
         >
-          Cancelar
+          {t("connForm.cancel")}
         </button>
         <button
           type="button"
@@ -617,7 +631,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
           disabled={!valid || test === "loading"}
           className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Testar
+          {t("connForm.test")}
         </button>
         <button
           type="button"
@@ -625,7 +639,11 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
           disabled={!valid || saving}
           className="rounded-md bg-conn-accent px-4 py-2 text-sm font-medium text-conn-accent-foreground shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {saving ? "Salvando…" : editingId ? "Salvar alterações" : "Criar conexão"}
+          {saving
+            ? t("connForm.saving")
+            : editingId
+              ? t("connForm.saveEdit")
+              : t("connForm.saveNew")}
         </button>
       </footer>
     </div>
@@ -684,6 +702,7 @@ function ColorPicker({
   value: string | null;
   onChange: (hex: string | null) => void;
 }) {
+  const t = useT();
   const colorInputRef = useRef<HTMLInputElement>(null);
   // Value que não bate com nenhum preset é uma cor custom — mostra
   // como swatch ativo com o ícone "custom".
@@ -715,7 +734,7 @@ function ColorPicker({
           onClick={() => colorInputRef.current?.click()}
           className="h-7 w-7 scale-110 rounded-md border-2 border-foreground"
           style={{ backgroundColor: customValue }}
-          title={`Custom · ${customValue}`}
+          title={t("connForm.customColorTitle", { hex: customValue })}
         />
       )}
       {/* Botão "outra cor" — abre o picker nativo do SO. */}
@@ -725,7 +744,7 @@ function ColorPicker({
         className={cn(
           "relative grid h-7 w-7 place-items-center overflow-hidden rounded-md border-2 border-border hover:bg-accent",
         )}
-        title="Outra cor"
+        title={t("connForm.otherColor")}
       >
         <Pipette className="h-3.5 w-3.5 text-muted-foreground" />
         <span
@@ -755,7 +774,7 @@ function ColorPicker({
             ? "border-foreground"
             : "border-border hover:bg-accent",
         )}
-        title="Sem cor"
+        title={t("connForm.noColor")}
       >
         <X className="h-3 w-3" />
       </button>

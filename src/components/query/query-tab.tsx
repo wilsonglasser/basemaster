@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { useActiveInfo } from "@/state/active-info";
 import { useTabState } from "@/state/tab-state";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useQueryTabBridge } from "@/state/query-tab-bridge";
 import { useSavedQueries } from "@/state/saved-queries";
 import { useSchemaCache } from "@/state/schema-cache";
@@ -73,6 +74,7 @@ export function QueryTab({
   savedQueryId,
   savedQueryName,
 }: QueryTabProps) {
+  const t = useT();
   const { theme } = useTheme();
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === connectionId),
@@ -212,7 +214,7 @@ export function QueryTab({
   const handleStop = () => {
     // Invalida o run em voo — backend segue até terminar, mas ignoramos.
     runTokenRef.current++;
-    setRun({ kind: "error", message: "Cancelado pelo usuário" });
+    setRun({ kind: "error", message: t("query.cancelledByUser") });
   };
 
   const handleExplain = () => {
@@ -234,13 +236,13 @@ export function QueryTab({
     const sqlNow = sqlRef.current;
     const schemaNow = schemaRef.current;
     if (!sqlNow.trim()) {
-      alert("Nada pra salvar — query vazia.");
+      alert(t("query.nothingToSaveEmpty"));
       return;
     }
     try {
       if (currentSavedId) {
         const saved = await updateSaved(currentSavedId, {
-          name: currentSavedName ?? "Sem nome",
+          name: currentSavedName ?? t("query.savedQueryFallbackName"),
           sql: sqlNow,
           schema: schemaNow,
         });
@@ -260,8 +262,8 @@ export function QueryTab({
         });
       } else {
         const name = window.prompt(
-          "Nome da query salva:",
-          "Nova query",
+          t("query.savedQueryNamePrompt"),
+          t("query.savedQueryDefaultName"),
         );
         if (!name || !name.trim()) return;
         const saved = await createSaved(connectionId, {
@@ -285,7 +287,7 @@ export function QueryTab({
         });
       }
     } catch (e) {
-      alert(`Falha ao salvar: ${e}`);
+      alert(t("query.saveFailed", { error: String(e) }));
     }
   };
 
@@ -318,15 +320,15 @@ export function QueryTab({
     const base = currentSavedName
       ? currentSavedName
       : schema
-        ? `Query · ${schema}`
-        : "Query";
+        ? t("tree.queryLabel", { name: schema })
+        : t("shortcuts.queryLabel");
     const label = dirty ? `* ${base}` : base;
     patchTab(tabId, {
       label,
       accentColor: conn?.color,
       dirty,
     });
-  }, [schema, tabId, conn?.color, patchTab, currentSavedName, dirty]);
+  }, [schema, tabId, conn?.color, patchTab, currentSavedName, dirty, t]);
 
   // Auto-run quando vem de double-click etc.
   useEffect(() => {
@@ -475,7 +477,7 @@ export function QueryTab({
           onClose={() => setExportOpen(false)}
           columns={focusedResult.columns}
           rowCount={focusedResult.rows.length}
-          defaultName={currentSavedName ?? "query-result"}
+          defaultName={currentSavedName ?? t("query.defaultResultName")}
           onExport={async ({ format, columns, path }) => {
             if (focusedResult.kind !== "select") return;
             // Fatia colunas + rows no cliente.
@@ -593,13 +595,14 @@ function Toolbar({
   /** Dispara o fluxo de export — undefined = sem result-set exportável. */
   onExport?: () => void;
 }) {
+  const t = useT();
   return (
     <div className="flex h-10 items-center gap-3 border-b border-border bg-card/30 px-3">
       <button
         type="button"
         onClick={onToggleEditor}
         className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title={editorCollapsed ? "Expandir editor" : "Colapsar editor"}
+        title={editorCollapsed ? t("query.toolbarExpand") : t("query.toolbarCollapse")}
       >
         {editorCollapsed ? (
           <ChevronDown className="h-3.5 w-3.5" />
@@ -613,7 +616,7 @@ function Toolbar({
         onChange={(e) => onSchema(e.target.value || null)}
         className="rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring/30"
       >
-        <option value="">— sem schema —</option>
+        <option value="">{t("query.noSchema")}</option>
         {schemas.map((s) => (
           <option key={s} value={s}>
             {s}
@@ -625,7 +628,7 @@ function Toolbar({
         type="button"
         onClick={onFormat}
         className="ml-auto grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title="Formatar SQL (Ctrl+Shift+F)"
+        title={t("query.toolbarFormat")}
       >
         <Wand2 className="h-3.5 w-3.5" />
       </button>
@@ -642,17 +645,17 @@ function Toolbar({
         title={
           isLinkedSavedQuery
             ? dirty
-              ? "Salvar alterações (Ctrl+S)"
-              : "Salvar (Ctrl+S) — sem mudanças"
-            : "Salvar como query nova (Ctrl+S)"
+              ? t("query.toolbarSaveLinkedDirty")
+              : t("query.toolbarSaveLinkedClean")
+            : t("query.toolbarSaveNew")
         }
       >
         <Save className="h-3.5 w-3.5" />
         {isLinkedSavedQuery
           ? dirty
-            ? "Salvar*"
-            : "Salvo"
-          : "Salvar"}
+            ? t("query.toolbarSaveDirty")
+            : t("query.toolbarSaveClean")
+          : t("query.toolbarSave")}
       </button>
 
       {onExport && (
@@ -660,7 +663,7 @@ function Toolbar({
           type="button"
           onClick={onExport}
           className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="Exportar resultado"
+          title={t("query.toolbarExport")}
         >
           <Download className="h-3.5 w-3.5" />
         </button>
@@ -669,7 +672,7 @@ function Toolbar({
         type="button"
         onClick={onOpenSearch}
         className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title="Buscar no resultado (Ctrl+F)"
+        title={t("query.toolbarSearch")}
       >
         <Search className="h-3.5 w-3.5" />
       </button>
@@ -679,10 +682,10 @@ function Toolbar({
           type="button"
           onClick={onStop}
           className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground shadow-sm transition-opacity hover:opacity-90"
-          title="Abortar query em execução"
+          title={t("query.toolbarStopTitle")}
         >
           <Square className="h-3 w-3 fill-current" />
-          Stop
+          {t("query.toolbarStop")}
         </button>
       ) : (
         <div className="inline-flex rounded-md bg-conn-accent text-conn-accent-foreground shadow-sm">
@@ -692,7 +695,7 @@ function Toolbar({
             className="inline-flex items-center gap-1.5 rounded-l-md px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
           >
             <Play className="h-3 w-3 fill-current" />
-            Run
+            {t("query.toolbarRun")}
             <kbd className="ml-1 rounded bg-black/20 px-1 py-px text-[9px] font-mono tracking-wider">
               Ctrl ↵
             </kbd>
@@ -702,10 +705,10 @@ function Toolbar({
             type="button"
             onClick={onExplain}
             className="inline-flex items-center gap-1 rounded-r-md px-2 py-1 text-xs font-medium transition-opacity hover:opacity-90"
-            title="EXPLAIN ANALYZE na query atual"
+            title={t("query.toolbarExplainTitle")}
           >
             <Gauge className="h-3 w-3" />
-            Explain
+            {t("query.toolbarExplain")}
           </button>
         </div>
       )}
@@ -736,15 +739,12 @@ function ResultArea({
   onSelectView: (view: ResultView) => void;
   onCellSelect: (cell: readonly [number, number] | undefined) => void;
 }) {
+  const t = useT();
   if (state.kind === "idle") {
     return (
       <Centered>
         <p className="text-sm text-muted-foreground">
-          Pressione{" "}
-          <kbd className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-mono">
-            Ctrl + Enter
-          </kbd>{" "}
-          para executar.
+          {t("query.idleHint", { kbd: "Ctrl + Enter" })}
         </p>
       </Centered>
     );
@@ -753,7 +753,7 @@ function ResultArea({
     return (
       <Centered>
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        <span className="ml-2 text-sm text-muted-foreground">Executando…</span>
+        <span className="ml-2 text-sm text-muted-foreground">{t("query.runningLabel")}</span>
       </Centered>
     );
   }
@@ -812,6 +812,7 @@ function ResultTabs({
   view: ResultView;
   onSelect: (view: ResultView) => void;
 }) {
+  const t = useT();
   return (
     <div className="flex h-7 shrink-0 items-stretch overflow-x-auto border-b border-border bg-card/30">
       {batch.results.map((r, i) => {
@@ -838,13 +839,13 @@ function ResultTabs({
         active={view === "messages"}
         onClick={() => onSelect("messages")}
         icon={<FileText className="h-3 w-3" />}
-        label="Mensagens"
+        label={t("query.messagesTab")}
       />
       <FixedTab
         active={view === "summary"}
         onClick={() => onSelect("summary")}
         icon={<Inbox className="h-3 w-3" />}
-        label="Resumo"
+        label={t("query.summaryTab")}
       />
     </div>
   );
@@ -885,11 +886,12 @@ function ResultBadge({
   result: QueryRunResult;
   index: number;
 }) {
+  const t = useT();
   if (result.kind === "select") {
     return (
       <>
         <span className="font-medium">#{index + 1}</span>
-        <span className="opacity-70">{result.rows.length} linhas</span>
+        <span className="opacity-70">{t("query.rowsBadge", { n: result.rows.length })}</span>
       </>
     );
   }
@@ -897,7 +899,7 @@ function ResultBadge({
     return (
       <>
         <span className="font-medium">#{index + 1}</span>
-        <span className="opacity-70">{result.rows_affected} afetadas</span>
+        <span className="opacity-70">{t("query.affectedBadge", { n: result.rows_affected })}</span>
       </>
     );
   }
@@ -905,7 +907,7 @@ function ResultBadge({
     <>
       <AlertCircle className="h-3 w-3 text-destructive" />
       <span className="font-medium">#{index + 1}</span>
-      <span className="text-destructive opacity-90">erro</span>
+      <span className="text-destructive opacity-90">{t("query.errorBadge")}</span>
     </>
   );
 }
@@ -931,6 +933,7 @@ function ResultPane({
   gridRef: React.RefObject<ResultGridHandle>;
   onCellSelect: (cell: readonly [number, number] | undefined) => void;
 }) {
+  const t = useT();
   if (result.kind === "error") {
     return (
       <div className="h-full overflow-auto p-4">
@@ -946,11 +949,12 @@ function ResultPane({
     );
   }
   if (result.kind === "modify") {
+    const n = result.rows_affected;
+    const text = t("query.rowsAffected", { n, s: n === 1 ? "" : "s" });
     return (
       <Centered>
         <span className="text-sm text-foreground">
-          {result.rows_affected} linha{result.rows_affected === 1 ? "" : "s"}{" "}
-          afetada{result.rows_affected === 1 ? "" : "s"}
+          {text}
           {result.last_insert_id
             ? ` · last_insert_id ${result.last_insert_id}`
             : ""}{" "}
@@ -963,7 +967,7 @@ function ResultPane({
     return (
       <Centered>
         <span className="text-sm text-muted-foreground">
-          Nenhuma linha retornada.
+          {t("query.noRows")}
         </span>
       </Centered>
     );
@@ -985,11 +989,12 @@ function ResultPane({
 }
 
 function MessagesPane({ batch }: { batch: QueryRunBatch }) {
+  const t = useT();
   if (batch.results.length === 0) {
     return (
       <Centered>
         <span className="text-sm text-muted-foreground">
-          Nenhuma query executada.
+          {t("query.noStatements")}
         </span>
       </Centered>
     );
@@ -1004,23 +1009,35 @@ function MessagesPane({ batch }: { batch: QueryRunBatch }) {
               r.kind === "error" ? "text-destructive" : "text-emerald-500",
             )}
           >
-            {r.kind === "error" ? `> ERROR: ${r.message}` : "> OK"}
+            {r.kind === "error"
+              ? t("query.errorMsg", { message: r.message })
+              : t("query.okLabel")}
           </div>
           {r.kind === "select" && (
             <div className="text-muted-foreground">
-              {`> ${r.rows.length} ${r.rows.length === 1 ? "linha" : "linhas"} retornada${r.rows.length === 1 ? "" : "s"}`}
+              {t("query.rowsReturned", {
+                n: r.rows.length,
+                word:
+                  r.rows.length === 1
+                    ? t("query.lineSingular")
+                    : t("query.linePlural"),
+                s: r.rows.length === 1 ? "" : "s",
+              })}
             </div>
           )}
           {r.kind === "modify" && (
             <div className="text-muted-foreground">
-              {`> ${r.rows_affected} linha${r.rows_affected === 1 ? "" : "s"} afetada${r.rows_affected === 1 ? "" : "s"}`}
+              {t("query.rowsAffectedMsg", {
+                n: r.rows_affected,
+                s: r.rows_affected === 1 ? "" : "s",
+              })}
               {r.last_insert_id != null
-                ? `, last_insert_id = ${r.last_insert_id}`
+                ? t("query.insertIdMsg", { id: r.last_insert_id })
                 : ""}
             </div>
           )}
           <div className="text-muted-foreground">
-            {`> Query Time: ${formatSeconds(r.elapsed_ms)}`}
+            {t("query.queryTime", { t: formatSeconds(r.elapsed_ms) })}
           </div>
         </div>
       ))}
@@ -1039,6 +1056,7 @@ function SummaryPane({
   batch: QueryRunBatch;
   onJumpTo: (view: ResultView) => void;
 }) {
+  const t = useT();
   const total = batch.results.length;
   const errors = batch.results.filter((r) => r.kind === "error").length;
   const success = total - errors;
@@ -1054,30 +1072,34 @@ function SummaryPane({
   return (
     <div className="h-full overflow-auto p-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 mb-5">
-        <Stat label="Statements" value={String(total)} />
-        <Stat label="Sucesso" value={String(success)} tone="ok" />
-        <Stat label="Erros" value={String(errors)} tone={errors > 0 ? "err" : "muted"} />
-        <Stat label="Tempo total" value={`${batch.total_ms} ms`} />
+        <Stat label={t("query.statStatements")} value={String(total)} />
+        <Stat label={t("query.statSuccess")} value={String(success)} tone="ok" />
+        <Stat label={t("query.statErrors")} value={String(errors)} tone={errors > 0 ? "err" : "muted"} />
+        <Stat label={t("query.statTotal")} value={`${batch.total_ms} ms`} />
       </div>
 
       <div className="mb-3 flex items-center justify-between text-[11px] text-muted-foreground">
         <span>
-          início {formatStamp(batch.started_at_ms)} · fim{" "}
-          {formatStamp(batch.finished_at_ms)}
+          {t("query.rangeStart", {
+            start: formatStamp(batch.started_at_ms),
+            end: formatStamp(batch.finished_at_ms),
+          })}
         </span>
-        {totalRows > 0 && <span>{totalRows} linhas retornadas</span>}
-        {totalAffected > 0 && <span>{totalAffected} linhas afetadas</span>}
+        {totalRows > 0 && <span>{t("query.totalRows", { n: totalRows })}</span>}
+        {totalAffected > 0 && (
+          <span>{t("query.totalAffected", { n: totalAffected })}</span>
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-card/40 text-muted-foreground">
-              <Th className="w-[50px]">#</Th>
-              <Th>SQL</Th>
-              <Th className="w-[100px]">Status</Th>
-              <Th className="w-[120px]">Retorno</Th>
-              <Th className="w-[80px] text-right">ms</Th>
+              <Th className="w-[50px]">{t("query.colNum")}</Th>
+              <Th>{t("query.colSql")}</Th>
+              <Th className="w-[100px]">{t("query.colStatus")}</Th>
+              <Th className="w-[120px]">{t("query.colReturn")}</Th>
+              <Th className="w-[80px] text-right">{t("query.colMs")}</Th>
             </tr>
           </thead>
           <tbody>
@@ -1097,19 +1119,19 @@ function SummaryPane({
                   {r.kind === "error" ? (
                     <span className="inline-flex items-center gap-1 text-destructive">
                       <AlertCircle className="h-3 w-3" />
-                      erro
+                      {t("query.errorShort")}
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 text-emerald-500">
                       <CheckCircle2 className="h-3 w-3" />
-                      ok
+                      {t("query.okShort")}
                     </span>
                   )}
                 </Td>
                 <Td className="tabular-nums text-muted-foreground">
-                  {r.kind === "select" && `${r.rows.length} linhas`}
+                  {r.kind === "select" && t("query.rowsBadge", { n: r.rows.length })}
                   {r.kind === "modify" &&
-                    `${r.rows_affected} afetadas${r.last_insert_id ? ` · id ${r.last_insert_id}` : ""}`}
+                    `${t("query.affectedBadge", { n: r.rows_affected })}${r.last_insert_id ? t("query.insertId", { id: r.last_insert_id }) : ""}`}
                   {r.kind === "error" && (
                     <span
                       className="line-clamp-2 break-words font-mono text-[11px] text-destructive"

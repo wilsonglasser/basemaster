@@ -21,6 +21,7 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
 import { useTabs } from "@/state/tabs";
 
@@ -31,6 +32,7 @@ interface Props {
 }
 
 export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
+  const t = useT();
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === targetConnectionId),
   );
@@ -79,17 +81,21 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
 
   useEffect(() => {
     patchTab(tabId, {
-      label: running ? "Import · em andamento" : done ? "Import · pronto" : "Import",
+      label: running
+        ? t("sqlImport.labelRunning")
+        : done
+          ? t("sqlImport.labelDone")
+          : t("sqlImport.labelIdle"),
       dirty: running,
     });
-  }, [running, done, tabId, patchTab]);
+  }, [running, done, tabId, patchTab, t]);
 
   const pickFile = async () => {
     const p = await openFileDialog({
-      title: "Selecionar arquivo SQL ou ZIP",
+      title: t("sqlImport.pickFileTitle"),
       filters: [
-        { name: "SQL / ZIP", extensions: ["sql", "zip"] },
-        { name: "Todos", extensions: ["*"] },
+        { name: t("sqlImport.pickFileFilterLabel"), extensions: ["sql", "zip"] },
+        { name: t("sqlImport.pickFileAllLabel"), extensions: ["*"] },
       ],
     });
     if (typeof p === "string") setPath(p);
@@ -129,11 +135,7 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
   };
 
   const handleStop = async () => {
-    if (
-      !window.confirm(
-        "Parar o import? Statements já executados ficam aplicados — pode deixar o banco em estado inconsistente.",
-      )
-    ) {
+    if (!window.confirm(t("sqlImport.stopConfirm"))) {
       return;
     }
     try {
@@ -160,7 +162,7 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
 
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-3xl space-y-4">
-          <Card title="Arquivo">
+          <Card title={t("sqlImport.cardFile")}>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -168,7 +170,7 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
                 className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-accent"
               >
                 <FolderOpen className="h-3 w-3" />
-                Escolher arquivo…
+                {t("sqlImport.pickFile")}
               </button>
               {path ? (
                 <div className="min-w-0 flex-1">
@@ -184,21 +186,21 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
                 </div>
               ) : (
                 <span className="text-xs italic text-muted-foreground">
-                  nenhum arquivo selecionado
+                  {t("sqlImport.noFile")}
                 </span>
               )}
             </div>
           </Card>
 
-          <Card title="Destino">
+          <Card title={t("sqlImport.cardDest")}>
             <label className="grid grid-cols-[160px_1fr] items-center gap-2 text-xs">
-              <span>Schema default</span>
+              <span>{t("sqlImport.defaultSchemaLabel")}</span>
               <select
                 value={targetSchema}
                 onChange={(e) => setTargetSchema(e.target.value)}
                 className="rounded-md border border-border bg-background px-2 py-1 text-xs"
               >
-                <option value="">(sem USE prévio)</option>
+                <option value="">{t("sqlImport.noUsePrev")}</option>
                 {(schemas ?? []).map((s) => (
                   <option key={s.name} value={s.name}>
                     {s.name}
@@ -207,12 +209,11 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
               </select>
             </label>
             <p className="text-[11px] text-muted-foreground">
-              Rodado como `USE schema;` antes do script. Use quando o dump
-              não qualifica os nomes de tabela.
+              {t("sqlImport.useHint")}
             </p>
           </Card>
 
-          <Card title="Opções">
+          <Card title={t("sqlImport.cardOptions")}>
             <label className="flex items-center gap-2 text-xs">
               <input
                 type="checkbox"
@@ -220,17 +221,13 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
                 onChange={(e) => setContinueOnError(e.target.checked)}
                 className="h-3.5 w-3.5 accent-conn-accent"
               />
-              Continuar em caso de erro
+              {t("sqlImport.continueOnError")}
             </label>
             <p className="text-[11px] text-muted-foreground">
-              Quando desativado, a primeira falha aborta o import. O banco
-              pode ficar em estado parcial — sem rollback automático.
+              {t("sqlImport.continueHint")}
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Dialeto da origem é detectado automaticamente (MySQL/PG).
-              Se for diferente do destino, statements são normalizados
-              antes de executar. Comandos sem análogo no destino (ex:
-              LOCK TABLES indo pra PG) são pulados silenciosamente.
+              {t("sqlImport.dialectHint")}
             </p>
           </Card>
 
@@ -243,15 +240,19 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
           )}
 
           {(running || done) && (
-            <Card title="Progresso">
+            <Card title={t("sqlImport.cardProgress")}>
               <div className="flex items-baseline justify-between text-xs">
                 <span className="tabular-nums">
-                  {(progress?.statements_done ?? 0).toLocaleString()} statement
-                  {(progress?.statements_done ?? 0) === 1 ? "" : "s"}
+                  {t("sqlImport.statementsLabel", {
+                    n: (progress?.statements_done ?? 0).toLocaleString(),
+                    plural: (progress?.statements_done ?? 0) === 1 ? "" : "s",
+                  })}
                 </span>
                 <span className="tabular-nums text-muted-foreground">
-                  {(progress?.errors ?? 0).toLocaleString()} erro
-                  {(progress?.errors ?? 0) === 1 ? "" : "s"}
+                  {t("sqlImport.errorsLabel", {
+                    n: (progress?.errors ?? 0).toLocaleString(),
+                    plural: (progress?.errors ?? 0) === 1 ? "" : "s",
+                  })}
                 </span>
               </div>
               {progress?.current_source && (
@@ -283,25 +284,23 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
                       : "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
                   )}
                 >
-                  {done.errors > 0 ? (
-                    <>
-                      Concluído com {done.errors} erro
-                      {done.errors === 1 ? "" : "s"} ·{" "}
-                    </>
-                  ) : (
-                    <>
-                      Concluído ·{" "}
-                    </>
-                  )}
-                  {done.statements_done.toLocaleString()} statements em{" "}
-                  {(done.elapsed_ms / 1000).toFixed(1)}s
+                  {done.errors > 0
+                    ? t("sqlImport.doneWithErrors", {
+                        n: done.errors,
+                        plural: done.errors === 1 ? "" : "s",
+                      })
+                    : t("sqlImport.doneOk")}
+                  {t("sqlImport.doneStatements", {
+                    n: done.statements_done.toLocaleString(),
+                    seconds: (done.elapsed_ms / 1000).toFixed(1),
+                  })}
                 </div>
               )}
             </Card>
           )}
 
           {errors.length > 0 && (
-            <Card title={`Erros (${errors.length})`}>
+            <Card title={t("sqlImport.cardErrors", { count: errors.length })}>
               <div className="max-h-64 space-y-1 overflow-auto">
                 {errors.slice(-50).map((err) => (
                   <div
@@ -310,7 +309,7 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
                   >
                     <div className="flex items-center gap-1.5 font-medium text-destructive">
                       <AlertCircle className="h-3 w-3" />
-                      <span>stmt #{err.index}</span>
+                      <span>{t("sqlImport.stmtLabel", { index: err.index })}</span>
                     </div>
                     <div className="mt-1 font-mono text-muted-foreground">
                       {err.message}
@@ -323,7 +322,7 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
                 ))}
                 {errors.length > 50 && (
                   <div className="text-[10px] italic text-muted-foreground">
-                    Mostrando os últimos 50 de {errors.length} erros.
+                    {t("sqlImport.showingLastN", { total: errors.length })}
                   </div>
                 )}
               </div>
@@ -340,7 +339,7 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
             className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20"
           >
             <Square className="h-3 w-3" />
-            Parar
+            {t("sqlImport.stopBtn")}
           </button>
         ) : (
           <button
@@ -350,7 +349,7 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
             className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {done ? <Check className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-            {done ? "Rodar de novo" : "Importar"}
+            {done ? t("sqlImport.runAgainBtn") : t("sqlImport.importBtn")}
           </button>
         )}
       </footer>

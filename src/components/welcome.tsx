@@ -31,27 +31,31 @@ export function Welcome() {
       const path = await openDialog({
         multiple: false,
         filters: [
-          { name: "Conexões", extensions: ["bmconn", "json", "ncx", "xml"] },
+          {
+            name: t("welcome.filterName"),
+            extensions: ["bmconn", "json", "ncx", "xml"],
+          },
         ],
       });
       if (!path || Array.isArray(path)) return;
       const payload = await ipc.portability.importParse(path);
       const count = payload.connections.length;
       if (count === 0) {
-        alert("Arquivo não contém conexões.");
+        alert(t("welcome.fileHasNoConnections"));
         return;
       }
+      const folders = payload.folders.length
+        ? t("welcome.foldersSuffix", { n: payload.folders.length })
+        : "";
       const ok = window.confirm(
-        `Importar ${count} conexão(ões)${
-          payload.folders.length ? ` + ${payload.folders.length} pasta(s)` : ""
-        }?`,
+        t("welcome.confirmImport", { count, folders }),
       );
       if (!ok) return;
       const applied = await ipc.portability.importApply(payload);
-      alert(`${applied} conexão(ões) importada(s).`);
+      alert(t("welcome.imported", { count: applied }));
       await refreshConnections();
     } catch (e) {
-      alert(`Falha ao importar: ${e}`);
+      alert(t("welcome.importFailed", { error: String(e) }));
     }
   };
 

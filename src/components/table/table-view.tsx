@@ -85,7 +85,7 @@ const LIMIT_OPTIONS: { label: string; value: number }[] = [
   { label: "200", value: 200 },
   { label: "500", value: 500 },
   { label: "1000", value: 1000 },
-  { label: "Tudo", value: 0 },
+  { label: "", value: 0 },
 ];
 
 type View = "data" | "structure";
@@ -1639,7 +1639,7 @@ function Toolbar({
             type="button"
             onClick={onExport}
             className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Exportar"
+            title={t("tableView.exportTitle")}
           >
             <Download className="h-3.5 w-3.5" />
           </button>
@@ -1649,7 +1649,7 @@ function Toolbar({
             type="button"
             onClick={() =>
               useTabs.getState().open({
-                label: `Import · ${table}`,
+                label: t("tree.importLabel", { name: table }),
                 kind: {
                   kind: "data-import",
                   connectionId,
@@ -1659,7 +1659,7 @@ function Toolbar({
               })
             }
             className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Importar dados (CSV/JSON/Excel)"
+            title={t("tableView.importTitle")}
           >
             <Upload className="h-3.5 w-3.5" />
           </button>
@@ -2000,11 +2000,12 @@ function EmptyTableState({
 }
 
 function LoadingOverlay() {
+  const t = useT();
   return (
     <div className="pointer-events-none absolute inset-0 grid place-items-center bg-background/40">
       <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-md">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        atualizando…
+        {t("tableView.loadingOverlay")}
       </div>
     </div>
   );
@@ -2021,6 +2022,7 @@ function ConnectingPlaceholder({
   errorMsg: string | null;
   onRetry: () => void;
 }) {
+  const t = useT();
   if (errorMsg) {
     return (
       <div className="grid h-full place-items-center p-6">
@@ -2029,7 +2031,7 @@ function ConnectingPlaceholder({
             !
           </div>
           <div className="text-sm font-medium text-foreground">
-            Falha ao conectar
+            {t("tableView.connectFailed")}
           </div>
           <div className="font-mono text-xs text-muted-foreground">{connName}</div>
           <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded border border-destructive/30 bg-destructive/5 p-2 text-left font-mono text-[11px] text-destructive">
@@ -2040,7 +2042,7 @@ function ConnectingPlaceholder({
             onClick={onRetry}
             className="mt-1 rounded-md bg-conn-accent px-3 py-1.5 text-xs font-medium text-conn-accent-foreground hover:opacity-90"
           >
-            Tentar novamente
+            {t("tableView.retry")}
           </button>
         </div>
       </div>
@@ -2051,13 +2053,13 @@ function ConnectingPlaceholder({
       <div className="flex flex-col items-center gap-3 text-center text-xs text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin text-conn-accent" />
         <div className="text-sm font-medium text-foreground">
-          {opening ? "Conectando…" : "Aguardando conexão"}
+          {opening ? t("tableView.connecting") : t("tableView.waitingConn")}
         </div>
         <div className="font-mono">{connName}</div>
         <div className="text-[11px] text-muted-foreground/80">
           {opening
-            ? "Estabelecendo link com o servidor."
-            : "A conexão vai abrir automaticamente."}
+            ? t("tableView.establishingLink")
+            : t("tableView.autoOpen")}
         </div>
       </div>
     </div>

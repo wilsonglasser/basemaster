@@ -242,7 +242,7 @@ function DetachedApp({ payload }: { payload: DetachedPayload }) {
       }, 80);
     } catch (e) {
       console.error("reattach:", e);
-      alert(`Falha ao devolver a aba: ${e}`);
+      alert(t("app.returnTabFailed", { error: String(e) }));
     }
   };
 

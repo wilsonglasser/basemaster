@@ -122,7 +122,10 @@ export function SavedQueriesListView({ connectionId, schema }: Props) {
   };
 
   const createBlank = async () => {
-    const name = window.prompt(t("savedQueriesList.newNamePrompt"), "Nova query");
+    const name = window.prompt(
+      t("savedQueriesList.newNamePrompt"),
+      t("query.savedQueryDefaultName"),
+    );
     if (!name || !name.trim()) return;
     try {
       const saved = await createQuery(connectionId, {
@@ -175,7 +178,8 @@ export function SavedQueriesListView({ connectionId, schema }: Props) {
         </span>
         <span className="tabular-nums text-muted-foreground">
           ({filtered.length}
-          {filtered.length !== scoped.length && ` de ${scoped.length}`})
+          {filtered.length !== scoped.length &&
+            ` ${t("savedQueriesListView.countSuffix", { total: scoped.length })}`})
         </span>
         <div className="relative ml-3">
           <Search className="pointer-events-none absolute left-1.5 top-1.5 h-3 w-3 text-muted-foreground" />

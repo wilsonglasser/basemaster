@@ -17,6 +17,7 @@ import { useShortcut } from "@/lib/shortcuts/use-shortcuts";
 import { cn } from "@/lib/utils";
 import { useAiAgent } from "@/state/ai-agent";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
 import { useShortcuts } from "@/state/shortcuts";
 import { useTabs } from "@/state/tabs";
@@ -45,6 +46,7 @@ export function CommandPalette() {
 }
 
 function Palette({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -99,7 +101,7 @@ function Palette({ onClose }: { onClose: () => void }) {
                 onClose();
               }
             }}
-            placeholder="Buscar comandos, tabelas, conexões…"
+            placeholder={t("commandPalette.placeholder")}
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
           <kbd className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
@@ -109,7 +111,7 @@ function Palette({ onClose }: { onClose: () => void }) {
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
           {filtered.length === 0 ? (
             <div className="py-12 text-center text-xs text-muted-foreground">
-              Nenhum resultado pra "{q}"
+              {t("commandPalette.noResults", { query: q })}
             </div>
           ) : (
             filtered.map((it, i) => (
@@ -148,6 +150,7 @@ function Palette({ onClose }: { onClose: () => void }) {
 }
 
 function useCommands(): CommandItem[] {
+  const t = useT();
   const connections = useConnections((s) => s.connections);
   const caches = useSchemaCache((s) => s.caches);
   const tabs = useTabs((s) => s.tabs);
@@ -175,7 +178,7 @@ function useCommands(): CommandItem[] {
     for (const c of connections) {
       out.push({
         id: `conn:${c.id}`,
-        label: `Abrir conexão: ${c.name}`,
+        label: t("commandPalette.openConnection", { name: c.name }),
         hint: `${c.driver} @ ${c.host}`,
         icon: <Plug className="h-3.5 w-3.5" />,
         run: async () => {
@@ -185,16 +188,16 @@ function useCommands(): CommandItem[] {
       });
       out.push({
         id: `procs:${c.id}`,
-        label: `Processos: ${c.name}`,
-        hint: "processlist / pg_stat_activity",
+        label: t("commandPalette.processes", { name: c.name }),
+        hint: t("commandPalette.processesHint"),
         icon: <Database className="h-3.5 w-3.5" />,
         run: () => {
           useTabs.getState().openOrFocus(
-            (t) =>
-              t.kind.kind === "processes" &&
-              t.kind.connectionId === c.id,
+            (tab) =>
+              tab.kind.kind === "processes" &&
+              tab.kind.connectionId === c.id,
             () => ({
-              label: `Processos · ${c.name}`,
+              label: t("commandPalette.processesLabel", { name: c.name }),
               kind: { kind: "processes", connectionId: c.id },
               accentColor: c.color ?? null,
             }),
@@ -210,10 +213,10 @@ function useCommands(): CommandItem[] {
       if (!cache) continue;
       for (const s of cache.schemas ?? []) {
         const tables = cache.tables?.[s.name] ?? [];
-        for (const t of tables) {
+        for (const tb of tables) {
           out.push({
-            id: `tbl:${c.id}:${s.name}:${t.name}`,
-            label: `${s.name}.${t.name}`,
+            id: `tbl:${c.id}:${s.name}:${tb.name}`,
+            label: `${s.name}.${tb.name}`,
             hint: c.name,
             icon: <TableIcon className="h-3.5 w-3.5" />,
             run: () => {
@@ -222,14 +225,14 @@ function useCommands(): CommandItem[] {
                   tab.kind.kind === "table" &&
                   tab.kind.connectionId === c.id &&
                   tab.kind.schema === s.name &&
-                  tab.kind.table === t.name,
+                  tab.kind.table === tb.name,
                 () => ({
-                  label: t.name,
+                  label: tb.name,
                   kind: {
                     kind: "table",
                     connectionId: c.id,
                     schema: s.name,
-                    table: t.name,
+                    table: tb.name,
                   },
                   accentColor: c.color ?? null,
                 }),
@@ -245,7 +248,7 @@ function useCommands(): CommandItem[] {
     for (const tab of tabs) {
       out.push({
         id: `tab:${tab.id}`,
-        label: `Focar aba: ${tab.label}`,
+        label: t("commandPalette.focusTab", { label: tab.label }),
         hint: tab.kind.kind,
         icon: <FileText className="h-3.5 w-3.5" />,
         run: () => useTabs.getState().setActive(tab.id),
@@ -256,45 +259,51 @@ function useCommands(): CommandItem[] {
     // Atalhos úteis
     out.push({
       id: "aux:settings",
-      label: "Abrir Configurações",
+      label: t("commandPalette.openSettings"),
       icon: <SettingsIcon className="h-3.5 w-3.5" />,
       run: () =>
         useTabs
           .getState()
           .openOrFocus(
-            (t) => t.kind.kind === "settings",
-            () => ({ label: "Configurações", kind: { kind: "settings" } }),
+            (tab) => tab.kind.kind === "settings",
+            () => ({
+              label: t("commandPalette.settingsLabel"),
+              kind: { kind: "settings" },
+            }),
           ),
       weight: 15,
     });
     out.push({
       id: "aux:ai",
-      label: "Toggle Agente de IA",
+      label: t("commandPalette.toggleAi"),
       icon: <Sparkles className="h-3.5 w-3.5" />,
       run: () => useAiAgent.getState().togglePanel(),
       weight: 15,
     });
     out.push({
       id: "aux:import",
-      label: "Importar dados (CSV / JSON / Excel)…",
+      label: t("commandPalette.importData"),
       icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
       run: () =>
         useTabs
           .getState()
-          .open({ label: "Importar dados", kind: { kind: "data-import" } }),
+          .open({
+            label: t("commandPalette.dataImportLabel"),
+            kind: { kind: "data-import" },
+          }),
       weight: 15,
     });
     out.push({
       id: "aux:newconn",
-      label: "Nova conexão",
+      label: t("commandPalette.newConnection"),
       icon: <Database className="h-3.5 w-3.5" />,
       run: () =>
         useTabs
           .getState()
           .openOrFocus(
-            (t) => t.kind.kind === "new-connection",
+            (tab) => tab.kind.kind === "new-connection",
             () => ({
-              label: "Nova conexão",
+              label: t("commandPalette.newConnectionLabel"),
               kind: { kind: "new-connection" },
             }),
           ),
@@ -302,7 +311,7 @@ function useCommands(): CommandItem[] {
     });
 
     return out;
-  }, [connections, caches, tabs, resolve]);
+  }, [connections, caches, tabs, resolve, t]);
 }
 
 function dispatchShortcutAction(_id: string) {

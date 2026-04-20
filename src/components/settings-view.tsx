@@ -58,28 +58,28 @@ export function SettingsView() {
 
         <Section
           icon={<Plug className="h-4 w-4" />}
-          title="Conexões (import/export)"
+          title={t("settings.sectionPortability")}
         >
           <ConnectionsPortabilityPanel />
         </Section>
 
         <Section
           icon={<Keyboard className="h-4 w-4" />}
-          title="Atalhos de teclado"
+          title={t("settings.sectionShortcuts")}
         >
           <ShortcutsPanel />
         </Section>
 
         <Section
           icon={<Sparkles className="h-4 w-4" />}
-          title="Agente de IA"
+          title={t("settings.sectionAi")}
         >
           <AiAgentPanel />
         </Section>
 
         <Section
           icon={<Server className="h-4 w-4" />}
-          title="MCP server"
+          title={t("settings.sectionMcp")}
         >
           <McpPanel />
         </Section>
@@ -137,6 +137,7 @@ function Section({
 }
 
 function AiAgentPanel() {
+  const t = useT();
   const apiKeys = useAiAgent((s) => s.apiKeys);
   const setApiKey = useAiAgent((s) => s.setApiKey);
   const modelSel = useAiAgent((s) => s.modelKey);
@@ -169,14 +170,13 @@ function AiAgentPanel() {
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Escolha o provider, cole a API key e informe o model ID (com
-        autocomplete). Chaves ficam só no localStorage deste app.
+        {t("settings.ai.intro")}
       </p>
 
       {/* Provider selector — select único */}
       <div className="grid gap-1.5">
         <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Provider
+          {t("settings.ai.providerLabel")}
         </label>
         <select
           value={activeProvider}
@@ -202,7 +202,7 @@ function AiAgentPanel() {
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
           >
-            obter chave <ExternalLink className="h-3 w-3" />
+            {t("settings.ai.getKey")} <ExternalLink className="h-3 w-3" />
           </a>
         </div>
 
@@ -214,7 +214,7 @@ function AiAgentPanel() {
 
         <div className="mt-3">
           <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Model ID
+            {t("settings.ai.modelIdLabel")}
           </label>
           <ModelCombobox
             provider={activeProvider}
@@ -223,16 +223,15 @@ function AiAgentPanel() {
             onCommit={commitModel}
           />
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Use um dos sugeridos ou digite qualquer ID que o provider aceite
-            (modelos novos funcionam sem atualizar o app).
+            {t("settings.ai.modelHint")}
           </p>
         </div>
       </div>
 
       <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span>Modelo ativo:</span>
+        <span>{t("settings.ai.activeModel")}</span>
         <code className="rounded bg-muted/40 px-1.5 py-0.5 font-mono">
-          {modelSel || "nenhum"}
+          {modelSel || t("settings.ai.none")}
         </code>
       </div>
     </div>
@@ -248,6 +247,7 @@ function ApiKeyInput({
   placeholder: string;
   onSave: (k: string | null) => void;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState(value);
   const [show, setShow] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -276,7 +276,7 @@ function ApiKeyInput({
         type="button"
         onClick={() => setShow((v) => !v)}
         className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-accent"
-        title={show ? "Ocultar" : "Mostrar"}
+        title={show ? t("common.hide") : t("common.show")}
       >
         {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
       </button>
@@ -291,7 +291,7 @@ function ApiKeyInput({
             : "border-border",
         )}
       >
-        {saved ? <Check className="h-3.5 w-3.5 text-conn-accent" /> : "Salvar"}
+        {saved ? <Check className="h-3.5 w-3.5 text-conn-accent" /> : t("common.save")}
       </button>
     </div>
   );
@@ -308,6 +308,7 @@ function ModelCombobox({
   onChange: (v: string) => void;
   onCommit: () => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const suggestions = useMemo(
     () => MODEL_CATALOG.filter((m) => m.provider === provider),
@@ -344,14 +345,14 @@ function ModelCombobox({
               setOpen(false);
             }
           }}
-          placeholder="gpt-4o, claude-sonnet-4-6, …"
+          placeholder={t("settings.ai.modelPlaceholder")}
           className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
         />
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
           className="rounded-md border border-border px-2 py-1.5 text-muted-foreground hover:bg-accent"
-          title="Sugestões"
+          title={t("settings.ai.suggestions")}
         >
           <ChevronDown className="h-3.5 w-3.5" />
         </button>
@@ -363,7 +364,7 @@ function ModelCombobox({
           }}
           className="rounded-md border border-conn-accent bg-conn-accent/10 px-3 py-1.5 text-xs text-foreground hover:bg-conn-accent/20"
         >
-          Usar
+          {t("settings.ai.use")}
         </button>
       </div>
       {open && filtered.length > 0 && (
@@ -401,6 +402,7 @@ function ModelCombobox({
 }
 
 function McpPanel() {
+  const t = useT();
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [port, setPort] = useState<number>(7424);
   const [loading, setLoading] = useState(false);
@@ -466,9 +468,7 @@ function McpPanel() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        Expõe as conexões do BaseMaster como um servidor MCP local (127.0.0.1).
-        Clientes de IA externos podem listar schemas, descrever tabelas e
-        rodar queries usando o token abaixo.
+        {t("settings.mcp.intro")}
       </p>
 
       <div className="flex items-center gap-2">
@@ -483,11 +483,11 @@ function McpPanel() {
               : "border-border hover:bg-accent",
           )}
         >
-          {running ? "Parar" : "Iniciar"}
+          {running ? t("settings.mcp.stop") : t("settings.mcp.start")}
         </button>
 
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          Porta
+          {t("settings.mcp.port")}
           <input
             type="number"
             min={1024}
@@ -513,7 +513,7 @@ function McpPanel() {
               running ? "bg-green-500" : "bg-muted-foreground/50",
             )}
           />
-          {running ? "rodando" : "parado"}
+          {running ? t("common.running") : t("common.stopped")}
         </span>
       </div>
 
@@ -527,7 +527,7 @@ function McpPanel() {
         <>
           <div className="grid gap-1.5">
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              URL
+              {t("settings.mcp.urlLabel")}
             </span>
             <code className="rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs">
               {url}
@@ -536,7 +536,7 @@ function McpPanel() {
 
           <div className="grid gap-1.5">
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Token
+              {t("settings.mcp.tokenLabel")}
             </span>
             <div className="flex items-center gap-1.5">
               <code className="flex-1 truncate rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs">
@@ -546,7 +546,7 @@ function McpPanel() {
                 type="button"
                 onClick={() => copy(token, "token")}
                 className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-accent"
-                title="Copiar token"
+                title={t("settings.mcp.copyToken")}
               >
                 {copied === "token" ? (
                   <Check className="h-3.5 w-3.5 text-conn-accent" />
@@ -560,7 +560,7 @@ function McpPanel() {
           <div className="grid gap-1.5">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Config de cliente (Claude Desktop, etc.)
+                {t("settings.mcp.configLabel")}
               </span>
               <button
                 type="button"
@@ -572,7 +572,7 @@ function McpPanel() {
                 ) : (
                   <Copy className="h-3 w-3" />
                 )}
-                copiar
+                {t("settings.mcp.copyInline")}
               </button>
             </div>
             <pre className="max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-2 text-[11px] leading-relaxed">
@@ -586,6 +586,7 @@ function McpPanel() {
 }
 
 function ConnectionsPortabilityPanel() {
+  const t = useT();
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -596,9 +597,9 @@ function ConnectionsPortabilityPanel() {
     try {
       const payload = await ipc.portability.export(includePasswords);
       const path = await saveDialog({
-        defaultPath: `basemaster-conexoes-${new Date()
-          .toISOString()
-          .slice(0, 10)}.bmconn`,
+        defaultPath: t("settings.portability.defaultFilename", {
+          date: new Date().toISOString().slice(0, 10),
+        }),
         filters: [{ name: "BaseMaster", extensions: ["bmconn", "json"] }],
       });
       if (!path) return;
@@ -607,7 +608,10 @@ function ConnectionsPortabilityPanel() {
       await invoke("save_file", { path, data: Array.from(bytes) });
       setMsg({
         kind: "ok",
-        text: `${payload.connections.length} conexão(ões) exportada(s) pra ${path}`,
+        text: t("settings.portability.exported", {
+          count: payload.connections.length,
+          path,
+        }),
       });
     } catch (e) {
       setMsg({ kind: "err", text: String(e) });
@@ -624,7 +628,7 @@ function ConnectionsPortabilityPanel() {
         multiple: false,
         filters: [
           {
-            name: "Conexões",
+            name: t("settings.portability.filterName"),
             extensions: ["bmconn", "json", "ncx", "xml"],
           },
         ],
@@ -633,15 +637,21 @@ function ConnectionsPortabilityPanel() {
       const payload = await ipc.portability.importParse(path);
       const count = payload.connections.length;
       if (count === 0) {
-        setMsg({ kind: "err", text: "Arquivo não contém conexões." });
+        setMsg({ kind: "err", text: t("settings.portability.noConnections") });
         return;
       }
+      const folders = payload.folders.length
+        ? t("settings.portability.foldersSuffix", { n: payload.folders.length })
+        : "";
       const ok = window.confirm(
-        `Importar ${count} conexão(ões)${payload.folders.length ? ` + ${payload.folders.length} pasta(s)` : ""}?`,
+        t("settings.portability.confirmImport", { count, folders }),
       );
       if (!ok) return;
       const applied = await ipc.portability.importApply(payload);
-      setMsg({ kind: "ok", text: `${applied} conexão(ões) importada(s).` });
+      setMsg({
+        kind: "ok",
+        text: t("settings.portability.imported", { count: applied }),
+      });
       // Recarrega a lista na sidebar.
       const { useConnections } = await import("@/state/connections");
       await useConnections.getState().refresh();
@@ -655,11 +665,7 @@ function ConnectionsPortabilityPanel() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        Exporta suas conexões em formato{" "}
-        <code className="rounded bg-muted/40 px-1">.bmconn</code> (JSON).
-        Importa esse formato ou{" "}
-        <code className="rounded bg-muted/40 px-1">.ncx</code> do Navicat
-        (decripta senhas quando a chave é a padrão; senão vem vazia).
+        {t("settings.portability.intro", { bmconn: ".bmconn", ncx: ".ncx" })}
       </p>
 
       <div className="grid grid-cols-2 gap-2">
@@ -670,23 +676,19 @@ function ConnectionsPortabilityPanel() {
           className="inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-xs hover:bg-accent disabled:opacity-50"
         >
           <Download className="h-3.5 w-3.5" />
-          Exportar (sem senhas)
+          {t("settings.portability.exportNoPasswords")}
         </button>
         <button
           type="button"
           onClick={() => {
-            const ok = window.confirm(
-              "Incluir senhas em TEXTO CLARO no arquivo exportado?\n\n" +
-                "Útil pra backup/sync mas qualquer pessoa com acesso ao\n" +
-                "arquivo verá as senhas. Recomendado só pra uso pessoal.",
-            );
+            const ok = window.confirm(t("settings.portability.confirmPasswords"));
             if (ok) void exportAll(true);
           }}
           disabled={exporting}
           className="inline-flex items-center justify-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 hover:bg-amber-500/10 dark:text-amber-400 disabled:opacity-50"
         >
           <Download className="h-3.5 w-3.5" />
-          Exportar (com senhas)
+          {t("settings.portability.exportWithPasswords")}
         </button>
       </div>
 
@@ -697,7 +699,7 @@ function ConnectionsPortabilityPanel() {
         className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-conn-accent px-3 py-2 text-xs font-medium text-conn-accent-foreground hover:opacity-90 disabled:opacity-50"
       >
         <Upload className="h-3.5 w-3.5" />
-        Importar arquivo (.bmconn, .json, .ncx)
+        {t("settings.portability.importFile")}
       </button>
 
       {msg && (

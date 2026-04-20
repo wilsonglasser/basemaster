@@ -3,6 +3,7 @@ import { Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useActiveInfo } from "@/state/active-info";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
 
 interface StatusBarProps {
@@ -10,6 +11,7 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ className }: StatusBarProps) {
+  const t = useT();
   const tabs = useTabs((s) => s.tabs);
   const activeId = useTabs((s) => s.activeId);
 
@@ -58,7 +60,7 @@ export function StatusBar({ className }: StatusBarProps) {
             ) : (
               <>
                 <Sep />
-                <span>desconectado</span>
+                <span>{t("statusBar.disconnected")}</span>
               </>
             )}
             {schema && (
@@ -69,7 +71,7 @@ export function StatusBar({ className }: StatusBarProps) {
             )}
           </>
         ) : (
-          <span>Sem conexão ativa</span>
+          <span>{t("statusBar.noActiveConnection")}</span>
         )}
       </span>
 
@@ -88,7 +90,7 @@ export function StatusBar({ className }: StatusBarProps) {
       <span className="ml-auto flex shrink-0 items-center gap-3">
         {live?.totalRows != null && (
           <>
-            <span className="tabular-nums">{live.totalRows} linhas</span>
+            <span className="tabular-nums">{live.totalRows} {t("statusBar.rowsSuffix")}</span>
             <Sep />
           </>
         )}

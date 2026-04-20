@@ -4,6 +4,7 @@ import { Download, Loader2, X } from "lucide-react";
 
 import { EXPORT_FORMATS, type ExportFormat } from "@/lib/export";
 import { cn } from "@/lib/utils";
+import { useT } from "@/state/i18n";
 
 /** Resultado do picker. O caller decide o que fazer com format + columns. */
 export interface ExportChoice {
@@ -47,6 +48,7 @@ export function ExportDialog({
   allowedFormats,
   onExport,
 }: Props) {
+  const t = useT();
   const formats = useMemo(
     () =>
       allowedFormats
@@ -106,7 +108,7 @@ export function ExportDialog({
 
   const handleExport = async () => {
     if (selected.size === 0) {
-      alert("Selecione pelo menos uma coluna.");
+      alert(t("exportDialog.selectAtLeastOneColumn"));
       return;
     }
     const meta = EXPORT_FORMATS.find((f) => f.id === format);
@@ -117,7 +119,7 @@ export function ExportDialog({
           ? "json"
           : "csv";
     const path = await save({
-      title: "Exportar",
+      title: t("exportDialog.title"),
       defaultPath: `${defaultName}.${ext}`,
       filters: [
         { name: meta?.label ?? ext.toUpperCase(), extensions: [ext] },
@@ -132,7 +134,7 @@ export function ExportDialog({
       await onExport({ format, columns: orderedCols, path }, setProgress);
       onClose();
     } catch (e) {
-      alert(`Falha ao exportar: ${e}`);
+      alert(t("exportDialog.exportFailed", { error: String(e) }));
     } finally {
       setRunning(false);
     }
@@ -156,13 +158,13 @@ export function ExportDialog({
       >
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
           <Download className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Exportar</h2>
+          <h2 className="text-sm font-semibold">{t("exportDialog.title")}</h2>
           <button
             type="button"
             onClick={onClose}
             disabled={running}
             className="ml-auto grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-            title="Fechar"
+            title={t("exportDialog.closeTitle")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -171,7 +173,7 @@ export function ExportDialog({
         <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
           <section>
             <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Formato
+              {t("exportDialog.formatLabel")}
             </label>
             <div className="grid grid-cols-2 gap-1.5">
               {formats.map((f) => (
@@ -200,7 +202,10 @@ export function ExportDialog({
           <section>
             <div className="mb-1.5 flex items-baseline justify-between gap-2">
               <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                Colunas ({selected.size} de {columns.length})
+                {t("exportDialog.columnsLabel", {
+                  selected: selected.size,
+                  total: columns.length,
+                })}
               </label>
               <div className="flex items-center gap-2 text-[11px]">
                 <button
@@ -208,7 +213,7 @@ export function ExportDialog({
                   onClick={selectAll}
                   className="text-muted-foreground hover:text-foreground"
                 >
-                  Todas
+                  {t("exportDialog.selectAll")}
                 </button>
                 <span className="text-muted-foreground/40">·</span>
                 <button
@@ -216,7 +221,7 @@ export function ExportDialog({
                   onClick={selectNone}
                   className="text-muted-foreground hover:text-foreground"
                 >
-                  Nenhuma
+                  {t("exportDialog.selectNone")}
                 </button>
               </div>
             </div>
@@ -224,13 +229,13 @@ export function ExportDialog({
               type="text"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filtrar colunas…"
+              placeholder={t("exportDialog.filterPlaceholder")}
               className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
             />
             <div className="max-h-[240px] overflow-auto rounded-md border border-border">
               {visibleColumns.length === 0 ? (
                 <div className="p-3 text-center text-[11px] italic text-muted-foreground">
-                  Nenhuma coluna bate com o filtro.
+                  {t("exportDialog.noColumnsMatch")}
                 </div>
               ) : (
                 <ul className="grid grid-cols-2 gap-0.5 p-1.5">
@@ -254,8 +259,14 @@ export function ExportDialog({
 
           {rowCount != null && (
             <div className="text-[11px] text-muted-foreground">
-              {rowCount.toLocaleString()} linha{rowCount === 1 ? "" : "s"} ·
-              exportação {rowCount > 100_000 ? "pode demorar" : "rápida"}.
+              {t("exportDialog.rowsCountLine", {
+                count: rowCount.toLocaleString(),
+                plural: rowCount === 1 ? "" : "s",
+                speed:
+                  rowCount > 100_000
+                    ? t("exportDialog.speedSlow")
+                    : t("exportDialog.speedFast"),
+              })}
             </div>
           )}
 
@@ -263,12 +274,18 @@ export function ExportDialog({
             <div className="rounded-md border border-border bg-card/40 p-3">
               <div className="flex items-baseline justify-between gap-2 text-xs">
                 <span className="font-medium">
-                  {progress?.message ?? "Exportando…"}
+                  {progress?.message ?? t("exportDialog.exporting")}
                 </span>
                 {progress && (
                   <span className="tabular-nums text-muted-foreground">
-                    {progress.done.toLocaleString()}
-                    {progress.total != null && ` / ${progress.total.toLocaleString()}`} linhas
+                    {progress.total != null
+                      ? t("exportDialog.rowsProgressTotal", {
+                          done: progress.done.toLocaleString(),
+                          total: progress.total.toLocaleString(),
+                        })
+                      : t("exportDialog.rowsProgress", {
+                          done: progress.done.toLocaleString(),
+                        })}
                   </span>
                 )}
               </div>
@@ -292,7 +309,7 @@ export function ExportDialog({
             disabled={running}
             className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Cancelar
+            {t("exportDialog.cancel")}
           </button>
           <button
             type="button"
@@ -305,7 +322,7 @@ export function ExportDialog({
             ) : (
               <Download className="h-3 w-3" />
             )}
-            Exportar
+            {t("exportDialog.exportBtn")}
           </button>
         </footer>
       </div>

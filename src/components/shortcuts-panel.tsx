@@ -5,6 +5,7 @@ import { displayBinding, eventToBinding } from "@/lib/shortcuts/match";
 import { SHORTCUTS } from "@/lib/shortcuts/registry";
 import type { ShortcutAction } from "@/lib/shortcuts/types";
 import { cn } from "@/lib/utils";
+import { useT } from "@/state/i18n";
 import { useShortcuts } from "@/state/shortcuts";
 
 export function ShortcutsPanel() {
@@ -94,6 +95,7 @@ function ShortcutRow({
   onChange: (b: string | null) => void;
   onReset: () => void;
 }) {
+  const t = useT();
   const [capturing, setCapturing] = useState(false);
 
   const onCaptureKey = (e: React.KeyboardEvent) => {
@@ -132,7 +134,7 @@ function ShortcutRow({
       {conflict && (
         <span
           className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] text-amber-600 dark:text-amber-400"
-          title="Outra ação usa o mesmo atalho"
+          title={t("shortcutsPanel.conflictTitle")}
         >
           conflito
         </span>

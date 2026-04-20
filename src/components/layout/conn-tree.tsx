@@ -97,7 +97,7 @@ function openDdlTemplate(
 ) {
   const sql = ddlTemplate(conn.driver, kind, schema);
   useTabs.getState().open({
-    label: `Novo ${kind} · ${schema}`,
+    label: `${kind} · ${schema}`,
     kind: {
       kind: "query",
       connectionId: conn.id,
@@ -160,6 +160,7 @@ function DriverIcon({
 }
 
 function RootDropZone() {
+  const t = useT();
   const refresh = useConnections((s) => s.refresh);
   const [over, setOver] = useState(false);
   return (
@@ -189,7 +190,7 @@ function RootDropZone() {
           await ipc.folders.move(id, null);
           await refresh();
         } catch (err) {
-          alert(`Falha ao mover: ${err}`);
+          alert(t("tree.moveFailed", { error: String(err) }));
         }
       }}
     />
@@ -203,39 +204,41 @@ function FolderNode({
   folder: import("@/lib/types").ConnectionFolder;
   connections: ConnectionProfile[];
 }) {
+  const t = useT();
   const refreshFolders = useConnections((s) => s.refreshFolders);
   const refresh = useConnections((s) => s.refresh);
   const [expanded, setExpanded] = useState(true);
   const [dragOver, setDragOver] = useState(false);
 
   const rename = async () => {
-    const next = window.prompt("Novo nome da pasta:", folder.name);
+    const next = window.prompt(t("tree.renameFolderPrompt"), folder.name);
     if (!next || !next.trim() || next === folder.name) return;
     try {
       await ipc.folders.rename(folder.id, next.trim());
       await refreshFolders();
     } catch (e) {
-      alert(`Falha ao renomear: ${e}`);
+      alert(t("tree.renameTableErr", { error: String(e) }));
     }
   };
 
   const remove = async () => {
     const hasConns = connections.length > 0;
     if (!hasConns) {
-      if (!window.confirm(`Apagar pasta vazia "${folder.name}"?`)) return;
+      if (!window.confirm(t("tree.deleteEmptyFolderConfirm", { name: folder.name }))) return;
       try {
         await ipc.folders.delete(folder.id);
         await refresh();
       } catch (e) {
-        alert(`Falha: ${e}`);
+        alert(t("common.failure", { error: String(e) }));
       }
       return;
     }
     // Tem conexões: 3 opções — cancelar, mover pro root, apagar junto.
     const choice = window.confirm(
-      `A pasta "${folder.name}" tem ${connections.length} conexão(ões).\n\n` +
-        `OK = apaga as conexões JUNTO\n` +
-        `Cancelar = só apaga a pasta (conexões voltam pro root)`,
+      t("tree.deleteFolderWithConnsConfirm", {
+        name: folder.name,
+        count: connections.length,
+      }),
     );
     try {
       if (choice) {
@@ -247,15 +250,17 @@ function FolderNode({
       await ipc.folders.delete(folder.id);
       await refresh();
     } catch (e) {
-      alert(`Falha: ${e}`);
+      alert(t("common.failure", { error: String(e) }));
     }
   };
 
   const exportConnections = async () => {
     try {
       const includePasswords = window.confirm(
-        `Exportar ${connections.length} conexão(ões) da pasta "${folder.name}" com senhas?\n\n` +
-          "OK = com senhas (texto claro) · Cancelar = sem senhas.",
+        t("tree.exportFolderPrompt", {
+          count: connections.length,
+          name: folder.name,
+        }),
       );
       const payload = await ipc.portability.export(includePasswords);
       const connNames = new Set(connections.map((c) => c.name));
@@ -265,7 +270,7 @@ function FolderNode({
         connections: payload.connections.filter((c) => connNames.has(c.name)),
       };
       if (filtered.connections.length === 0) {
-        alert("Nada pra exportar.");
+        alert(t("tree.nothingToExport"));
         return;
       }
       const { save } = await import("@tauri-apps/plugin-dialog");
@@ -278,7 +283,7 @@ function FolderNode({
       const { invoke: doInvoke } = await import("@tauri-apps/api/core");
       await doInvoke("save_file", { path, data: Array.from(bytes) });
     } catch (e) {
-      alert(`Falha: ${e}`);
+      alert(t("common.failure", { error: String(e) }));
     }
   };
 
@@ -291,26 +296,26 @@ function FolderNode({
       await ipc.folders.move(id, folder.id);
       await refresh();
     } catch (err) {
-      alert(`Falha ao mover: ${err}`);
+      alert(t("tree.moveFailed", { error: String(err) }));
     }
   };
 
   const menu = useContextMenu([
     {
       icon: <Pencil className="h-3.5 w-3.5" />,
-      label: "Renomear pasta",
+      label: t("tree.renameFolder"),
       onClick: rename,
     },
     {
       icon: <Download className="h-3.5 w-3.5" />,
-      label: `Exportar ${connections.length} conexão(ões)…`,
+      label: t("tree.exportFolderConnections", { count: connections.length }),
       onClick: exportConnections,
       disabled: connections.length === 0,
     },
     { separator: true },
     {
       icon: <Trash2 className="h-3.5 w-3.5" />,
-      label: "Apagar pasta…",
+      label: t("tree.deleteFolder"),
       onClick: remove,
       variant: "destructive",
     },
@@ -597,18 +602,18 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       await ipc.folders.move(conn.id, folderId);
       await refreshConns();
     } catch (e) {
-      alert(`Falha ao mover: ${e}`);
+      alert(t("tree.moveFailed", { error: String(e) }));
     }
   };
   const createFolderAndMove = async () => {
-    const name = window.prompt("Nome da nova pasta:");
+    const name = window.prompt(t("sidebar.newFolderPrompt"));
     if (!name || !name.trim()) return;
     try {
       const f = await ipc.folders.create({ name: name.trim() });
       await refreshFolders();
       await moveToFolder(f.id);
     } catch (e) {
-      alert(`Falha ao criar pasta: ${e}`);
+      alert(t("tree.createFolderFailed", { error: String(e) }));
     }
   };
 
@@ -632,7 +637,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
 
   const openSqlImport = (schemaOverride?: string) => {
     newTab({
-      label: `Import · ${conn.name}`,
+      label: t("tree.importLabel", { name: conn.name }),
       kind: {
         kind: "sql-import",
         targetConnectionId: conn.id,
@@ -648,7 +653,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
         tab.kind.kind === "query-history" &&
         tab.kind.connectionId === conn.id,
       () => ({
-        label: `Histórico · ${conn.name}`,
+        label: t("tree.historyLabel", { name: conn.name }),
         kind: { kind: "query-history", connectionId: conn.id },
         accentColor: conn.color,
       }),
@@ -660,8 +665,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   const exportConnection = async () => {
     try {
       const includePasswords = window.confirm(
-        `Exportar "${conn.name}" com senha em texto claro?\n\n` +
-          "OK = inclui senha · Cancelar = sem senha.",
+        t("tree.exportConnPrompt", { name: conn.name }),
       );
       const payload = await ipc.portability.export(includePasswords);
       // Filtra só a conexão clicada.
@@ -670,7 +674,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
         connections: payload.connections.filter((c) => c.name === conn.name),
       };
       if (filtered.connections.length === 0) {
-        alert("Conexão não encontrada no payload (bug).");
+        alert(t("tree.connNotFoundInPayload"));
         return;
       }
       const { save } = await import("@tauri-apps/plugin-dialog");
@@ -685,7 +689,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       const { invoke: doInvoke } = await import("@tauri-apps/api/core");
       await doInvoke("save_file", { path, data: Array.from(bytes) });
     } catch (e) {
-      alert(`Falha ao exportar: ${e}`);
+      alert(t("tree.exportFailed", { error: String(e) }));
     }
   };
 
@@ -694,18 +698,20 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       const payload = await ipc.portability.export(true);
       const src = payload.connections.find((c) => c.name === conn.name);
       if (!src) {
-        alert("Conexão não encontrada.");
+        alert(t("tree.connNotFound"));
         return;
       }
       const dup = {
         ...payload,
         folders: [],
-        connections: [{ ...src, name: `${src.name} (cópia)` }],
+        connections: [
+          { ...src, name: `${src.name} (${t("tree.duplicateCopySuffix")})` },
+        ],
       };
       const n = await ipc.portability.importApply(dup);
       if (n > 0) await refresh_();
     } catch (e) {
-      alert(`Falha ao duplicar: ${e}`);
+      alert(t("tree.duplicateFailed", { error: String(e) }));
     }
   };
 
@@ -753,9 +759,9 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
         }
         invalidateForConn(conn.id, tgtSchema);
         await ensureForConn(conn.id, tgtSchema);
-        if (failed.length > 0) alert(`Falhas:\n${failed.join("\n")}`);
+        if (failed.length > 0) alert(t("tree.pasteFailures", { list: failed.join("\n") }));
       } catch (e) {
-        alert(`Falha: ${e}`);
+        alert(t("tree.pasteFailed", { error: String(e) }));
       }
       return;
     }
@@ -780,20 +786,20 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   const moveItems: ContextEntry[] = [
     ...folders.map<ContextEntry>((f) => ({
       icon: <FolderIcon className="h-3.5 w-3.5" />,
-      label: `Mover pra "${f.name}"`,
+      label: t("tree.moveToFolder", { name: f.name }),
       onClick: () => moveToFolder(f.id),
       disabled: conn.folder_id === f.id,
     })),
     {
       icon: <FolderIcon className="h-3.5 w-3.5" />,
-      label: "Mover pra nova pasta…",
+      label: t("tree.moveToNewFolder"),
       onClick: createFolderAndMove,
     },
     ...(conn.folder_id
       ? [
           {
             icon: <FolderIcon className="h-3.5 w-3.5" />,
-            label: "Remover da pasta",
+            label: t("tree.removeFromFolder"),
             onClick: () => moveToFolder(null),
           } as ContextEntry,
         ]
@@ -801,8 +807,12 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   ];
 
   const createDatabaseOrSchema = () => {
-    const label = conn.driver === "postgres" ? "schema" : "database";
-    const name = window.prompt(`Nome do novo ${label}:`);
+    const label = conn.driver === "postgres" ? t("tree.dbLabelSchema") : t("tree.dbLabelDatabase");
+    const name = window.prompt(
+      conn.driver === "postgres"
+        ? t("tabs.newDatabasePromptPg")
+        : t("tabs.newDatabasePromptMysql"),
+    );
     if (!name || !name.trim()) return;
     const quoted =
       conn.driver === "postgres"
@@ -811,7 +821,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
     const keyword = conn.driver === "postgres" ? "SCHEMA" : "DATABASE";
     const sql = `CREATE ${keyword} ${quoted};`;
     newTab({
-      label: `Nova ${label} · ${name.trim()}`,
+      label: t("tree.newDbLabel", { kind: label, name: name.trim() }),
       kind: {
         kind: "query",
         connectionId: conn.id,
@@ -823,7 +833,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
 
   const openProcesses = () => {
     newTab({
-      label: `Processos · ${conn.name}`,
+      label: `${t("tree.processes")} · ${conn.name}`,
       kind: { kind: "processes", connectionId: conn.id },
       accentColor: conn.color,
     });
@@ -831,7 +841,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
 
   const openUsers = () => {
     newTab({
-      label: `Usuários · ${conn.name}`,
+      label: `${t("tree.users")} · ${conn.name}`,
       kind: { kind: "users", connectionId: conn.id },
       accentColor: conn.color,
     });
@@ -840,21 +850,21 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   const menuItems: ContextEntry[] = active
     ? [
         { icon: <FileCode2 className="h-3.5 w-3.5" />, label: t("tree.newQuery"), onClick: newQuery },
-        { icon: <Database className="h-3.5 w-3.5" />, label: conn.driver === "postgres" ? "Novo schema…" : "Nova database…", onClick: createDatabaseOrSchema },
+        { icon: <Database className="h-3.5 w-3.5" />, label: conn.driver === "postgres" ? t("tabs.newDatabaseLabelPg") : t("tabs.newDatabaseLabelMysql"), onClick: createDatabaseOrSchema },
         { icon: <ClipboardPaste className="h-3.5 w-3.5" />, label: t("tree.pasteTables"), onClick: pasteTables },
         { icon: <ArrowRightLeft className="h-3.5 w-3.5" />, label: t("tree.dataTransfer"), onClick: openDataTransfer },
         { icon: <Upload className="h-3.5 w-3.5" />, label: t("tree.sqlImport"), onClick: () => openSqlImport() },
         { icon: <History className="h-3.5 w-3.5" />, label: t("tree.queryHistory"), onClick: openHistory },
-        { icon: <Cog className="h-3.5 w-3.5" />, label: "Processos", onClick: openProcesses },
-        { icon: <Plug className="h-3.5 w-3.5" />, label: "Usuários", onClick: openUsers },
+        { icon: <Cog className="h-3.5 w-3.5" />, label: t("tree.processes"), onClick: openProcesses },
+        { icon: <Plug className="h-3.5 w-3.5" />, label: t("tree.users"), onClick: openUsers },
         { icon: <RefreshCw className="h-3.5 w-3.5" />, label: t("common.refresh"), onClick: refresh },
         { icon: <Unplug className="h-3.5 w-3.5" />, label: t("tree.disconnect"), onClick: disconnect },
         { separator: true },
         ...moveItems,
         { separator: true },
         { icon: <Pencil className="h-3.5 w-3.5" />, label: t("tree.editConnection"), onClick: editConn },
-        { icon: <Copy className="h-3.5 w-3.5" />, label: "Duplicar conexão", onClick: duplicateConnection },
-        { icon: <Download className="h-3.5 w-3.5" />, label: "Exportar conexão…", onClick: exportConnection },
+        { icon: <Copy className="h-3.5 w-3.5" />, label: t("tree.duplicateConnection"), onClick: duplicateConnection },
+        { icon: <Download className="h-3.5 w-3.5" />, label: t("tree.exportConnection"), onClick: exportConnection },
         { icon: <Trash2 className="h-3.5 w-3.5" />, label: t("tree.deleteConnection"), onClick: deleteConn, variant: "destructive" },
       ]
     : [
@@ -863,8 +873,8 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
         ...moveItems,
         { separator: true },
         { icon: <Pencil className="h-3.5 w-3.5" />, label: t("tree.editConnection"), onClick: editConn },
-        { icon: <Copy className="h-3.5 w-3.5" />, label: "Duplicar conexão", onClick: duplicateConnection },
-        { icon: <Download className="h-3.5 w-3.5" />, label: "Exportar conexão…", onClick: exportConnection },
+        { icon: <Copy className="h-3.5 w-3.5" />, label: t("tree.duplicateConnection"), onClick: duplicateConnection },
+        { icon: <Download className="h-3.5 w-3.5" />, label: t("tree.exportConnection"), onClick: exportConnection },
         { icon: <Trash2 className="h-3.5 w-3.5" />, label: t("tree.deleteConnection"), onClick: deleteConn, variant: "destructive" },
       ];
 
@@ -923,7 +933,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
           try {
             await reorderConnectionRelativeTo(draggedId, conn.id, wantAbove);
           } catch (err) {
-            alert(`Falha ao reordenar: ${err}`);
+            alert(t("tree.reorderFailed", { error: String(err) }));
           }
         }}
         onClick={() => {
@@ -987,7 +997,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
               setError(null);
             }}
             className="shrink-0 opacity-60 hover:opacity-100"
-            title="Dispensar"
+            title={t("common.dismiss")}
           >
             ×
           </button>
@@ -1085,6 +1095,7 @@ function EngineSchemasGroup({
   conn: ConnectionProfile;
   schemas: SchemaInfo[];
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const query = useSidebarFilter((s) => s.query);
   // Se filtro bate com algum nome interno, abre auto.
@@ -1110,7 +1121,7 @@ function EngineSchemasGroup({
           )}
         </span>
         <FolderIcon className="h-3 w-3 shrink-0" />
-        <span className="flex-1 truncate italic">Engine schemas</span>
+        <span className="flex-1 truncate italic">{t("tree.engineSchemas")}</span>
         <span className="text-[10px] tabular-nums text-muted-foreground/50">
           {schemas.length}
         </span>
@@ -1200,7 +1211,7 @@ function SchemaNode({
 
   const newQuery = () => {
     newTab({
-      label: `Query · ${schema.name}`,
+      label: t("tree.queryLabel", { name: schema.name }),
       kind: { kind: "query", connectionId: conn.id, schema: schema.name },
       accentColor: conn.color,
     });
@@ -1214,7 +1225,7 @@ function SchemaNode({
   const newDumpTab = useTabs((s) => s.open);
   const openSchemaDump = () => {
     newDumpTab({
-      label: `Dump · ${schema.name}`,
+      label: t("tree.dumpLabel", { name: schema.name }),
       kind: {
         kind: "sql-dump",
         sourceConnectionId: conn.id,
@@ -1228,13 +1239,13 @@ function SchemaNode({
   const invalidateConn = useSchemaCache((s) => s.invalidate);
   const renameSchema = async () => {
     const next = window.prompt(
-      `Novo nome do schema (ATENÇÃO: operação destrutiva — cria novo, move tabelas, dropa antigo).`,
+      t("tree.renameSchemaPrompt"),
       schema.name,
     );
     if (!next || !next.trim() || next === schema.name) return;
     if (
       !window.confirm(
-        `Renomear "${schema.name}" → "${next}"? MySQL não tem RENAME DATABASE; será feito via CREATE/RENAME TABLE/DROP.`,
+        t("tree.renameSchemaConfirm", { old: schema.name, next }),
       )
     ) {
       return;
@@ -1250,13 +1261,13 @@ function SchemaNode({
       );
       invalidateConn(conn.id);
     } catch (e) {
-      alert(`Falha ao renomear: ${e}`);
+      alert(t("tree.renameTableErr", { error: String(e) }));
     }
   };
 
   const newTableHere = () =>
     useTabs.getState().open({
-      label: `Nova tabela · ${schema.name}`,
+      label: t("newTable.tabLabel", { schema: schema.name }),
       kind: {
         kind: "new-table",
         connectionId: conn.id,
@@ -1268,7 +1279,7 @@ function SchemaNode({
   const newDumpTabForImport = useTabs((s) => s.open);
   const openSchemaImport = () => {
     newDumpTabForImport({
-      label: `Import · ${schema.name}`,
+      label: t("tree.importLabel", { name: schema.name }),
       kind: {
         kind: "sql-import",
         targetConnectionId: conn.id,
@@ -1278,10 +1289,14 @@ function SchemaNode({
     });
   };
 
-  const dbLabel = conn.driver === "postgres" ? "schema" : "database";
+  const dbLabel = conn.driver === "postgres" ? t("tree.dbLabelSchema") : t("tree.dbLabelDatabase");
 
   const createSiblingDatabase = () => {
-    const name = window.prompt(`Nome da nova ${dbLabel}:`);
+    const name = window.prompt(
+      conn.driver === "postgres"
+        ? t("tabs.newDatabasePromptPg")
+        : t("tabs.newDatabasePromptMysql"),
+    );
     if (!name || !name.trim()) return;
     const isPg = conn.driver === "postgres";
     const quoted = isPg
@@ -1289,7 +1304,7 @@ function SchemaNode({
       : `\`${name.trim().replace(/`/g, "``")}\``;
     const keyword = isPg ? "SCHEMA" : "DATABASE";
     newTab({
-      label: `Nova ${dbLabel} · ${name.trim()}`,
+      label: t("tree.newDbLabel", { kind: dbLabel, name: name.trim() }),
       kind: {
         kind: "query",
         connectionId: conn.id,
@@ -1301,16 +1316,15 @@ function SchemaNode({
 
   const dropSchema = async () => {
     const confirmed = window.confirm(
-      `Apagar ${dbLabel} "${schema.name}"?\n\n` +
-        `Todas as tabelas, views e dados serão PERDIDOS irreversivelmente.`,
+      t("tree.dropDbConfirm", { kind: dbLabel, name: schema.name }),
     );
     if (!confirmed) return;
     // Segunda confirmação digitando o nome (proteção extra).
     const typed = window.prompt(
-      `Pra confirmar, digite "${schema.name}" exatamente:`,
+      t("tree.dropDbTypePrompt", { name: schema.name }),
     );
     if (typed !== schema.name) {
-      alert("Nome não bate — operação abortada.");
+      alert(t("tree.dropDbNameMismatch"));
       return;
     }
     const isPg = conn.driver === "postgres";
@@ -1326,14 +1340,14 @@ function SchemaNode({
       // Força reload de schemas da conexão — expand colapsado primeiro.
       // A árvore do conn reconstrói no próximo tick.
     } catch (e) {
-      alert(`Falha ao apagar: ${e}`);
+      alert(t("tree.dropDbFailed", { error: String(e) }));
     }
   };
 
   const menu = useContextMenu([
     { icon: <FileCode2 className="h-3.5 w-3.5" />, label: t("tree.newQuerySchema"), onClick: newQuery },
     { icon: <Plus className="h-3.5 w-3.5" />, label: t("tree.newTable"), onClick: newTableHere },
-    { icon: <Database className="h-3.5 w-3.5" />, label: `Nova ${dbLabel} (aqui ao lado)…`, onClick: createSiblingDatabase },
+    { icon: <Database className="h-3.5 w-3.5" />, label: t("tree.newDbSibling", { kind: dbLabel }), onClick: createSiblingDatabase },
     { separator: true },
     { icon: <FileText className="h-3.5 w-3.5" />, label: t("tree.sqlDump"), onClick: openSchemaDump },
     { icon: <Upload className="h-3.5 w-3.5" />, label: t("tree.sqlImport"), onClick: openSchemaImport },
@@ -1341,7 +1355,7 @@ function SchemaNode({
     { icon: <Pencil className="h-3.5 w-3.5" />, label: t("tree.rename"), onClick: renameSchema },
     { icon: <RefreshCw className="h-3.5 w-3.5" />, label: t("common.refresh"), onClick: refresh },
     { separator: true },
-    { icon: <Trash2 className="h-3.5 w-3.5" />, label: `Apagar ${dbLabel}…`, onClick: dropSchema, variant: "destructive" },
+    { icon: <Trash2 className="h-3.5 w-3.5" />, label: t("tree.dropDbLabel", { kind: dbLabel }), onClick: dropSchema, variant: "destructive" },
   ]);
 
   if (hiddenByFilter) return null;
@@ -1479,7 +1493,7 @@ function CategoryGroup({
         tab.kind.schema === schema &&
         (tab.kind.category ?? "all") === "tables",
       () => ({
-        label: `${schema} · tabelas`,
+        label: t("tree.tablesLabel", { schema }),
         kind: {
           kind: "tables-list",
           connectionId: conn.id,
@@ -1499,7 +1513,7 @@ function CategoryGroup({
         tab.kind.schema === schema &&
         tab.kind.category === "views",
       () => ({
-        label: `${schema} · views`,
+        label: t("tree.viewsLabel", { schema }),
         kind: {
           kind: "tables-list",
           connectionId: conn.id,
@@ -1562,7 +1576,7 @@ function CategoryGroup({
       />
       <CategoryPlaceholder
         icon={<Wrench className="h-3 w-3" />}
-        label="Triggers"
+        label={t("tree.triggersLabel")}
         onCreate={() =>
           openDdlTemplate(conn, schema, "trigger", newTab)
         }
@@ -1597,6 +1611,7 @@ function Category({
   /** Se true, pinta o header com o highlight de seleção. */
   selected?: boolean;
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(defaultExpanded && count > 0);
   const isEmpty = count === 0;
   const canClick = !isEmpty || clickableWhenEmpty;
@@ -1612,7 +1627,7 @@ function Category({
               : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
         )}
         onClick={() => canClick && onClick?.()}
-        title={onClick ? "Clique pra listar · chevron pra expandir" : undefined}
+        title={onClick ? t("tree.clickToList") : undefined}
       >
         {/* Chevron é clicável independente do resto — toggle da árvore */}
         <span
@@ -1621,7 +1636,7 @@ function Category({
             e.stopPropagation();
             if (!isEmpty) setExpanded((x) => !x);
           }}
-          title="Expandir / recolher"
+          title={t("tree.expandCollapse")}
         >
           {isEmpty ? (
             <span className="h-3 w-3" />
@@ -1659,13 +1674,14 @@ function CategoryPlaceholder({
   /** Opcional: abre uma query com DDL template pra criar este tipo. */
   onCreate?: () => void;
 }) {
+  const t = useT();
   return (
     <li>
       <button
         type="button"
         onClick={onCreate}
         className="group flex h-6 w-full items-center gap-1.5 rounded-md px-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/50 hover:bg-accent/30 hover:text-foreground"
-        title={`Criar ${label.toLowerCase()}`}
+        title={t("tree.createPlaceholderHint", { label: label.toLowerCase() })}
       >
         <span className="grid h-4 w-4 place-items-center">
           <span className="h-3 w-3" />
@@ -1673,7 +1689,7 @@ function CategoryPlaceholder({
         <span className="shrink-0">{icon}</span>
         <span className="flex-1 truncate text-left">{label}</span>
         <span className="text-[9px] italic normal-case tracking-normal text-muted-foreground/50 opacity-0 group-hover:opacity-100">
-          + criar
+          {t("tree.createShort")}
         </span>
       </button>
     </li>
@@ -1731,6 +1747,7 @@ function TableNode({
       accentColor: conn.color,
     });
   };
+  // Maintain-submenu label reuses t via the outer scope.
 
   const rename = async () => {
     const next = window.prompt(
@@ -1756,7 +1773,7 @@ function TableNode({
       invalidateSchema(conn.id, table.schema);
       ensureSnapshot(conn.id, table.schema).catch(() => {});
     } catch (e) {
-      alert(`Falha ao renomear: ${e}`);
+      alert(t("tree.renameTableErr", { error: String(e) }));
     }
   };
 
@@ -1785,7 +1802,7 @@ function TableNode({
       invalidateSchema(conn.id, table.schema);
       ensureSnapshot(conn.id, table.schema).catch(() => {});
     } catch (e) {
-      alert(`Falha ao duplicar: ${e}`);
+      alert(t("tree.duplicateFailed", { error: String(e) }));
     }
   };
 
@@ -1804,7 +1821,7 @@ function TableNode({
 
   const openSelectAll = () => {
     newTab({
-      label: `Query · ${table.name}`,
+      label: t("tree.queryLabel", { name: table.name }),
       kind: {
         kind: "query",
         connectionId: conn.id,
@@ -1818,7 +1835,7 @@ function TableNode({
 
   const openEmptyQuery = () => {
     newTab({
-      label: `Query · ${table.schema}`,
+      label: t("tree.queryLabel", { name: table.schema }),
       kind: { kind: "query", connectionId: conn.id, schema: table.schema },
       accentColor: conn.color,
     });
@@ -1873,7 +1890,7 @@ function TableNode({
     {
       submenu: true,
       icon: <Wrench className="h-3.5 w-3.5" />,
-      label: "Maintain",
+      label: t("tree.maintainLabel"),
       items: [
         {
           icon: <Wrench className="h-3.5 w-3.5" />,
@@ -1906,7 +1923,7 @@ function TableNode({
     },
     {
       icon: <Upload className="h-3.5 w-3.5" />,
-      label: "Importar dados (CSV/JSON/Excel)…",
+      label: t("tree.importData"),
       onClick: () =>
         newTab({
           label: `Import · ${table.name}`,

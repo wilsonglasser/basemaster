@@ -4,6 +4,7 @@ import { Loader2, Plus, Table as TableIcon, Trash2, X } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useCreateTable } from "@/state/create-table-state";
+import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
 
 /** Tipos comuns. Length/precision viram placeholder quando não é relevante. */
@@ -109,6 +110,7 @@ function buildCreateSql(
 
 /** Montado uma vez no root — reage ao store. */
 export function CreateTableDialog() {
+  const t = useT();
   const request = useCreateTable((s) => s.request);
   const close = useCreateTable((s) => s.close);
   const invalidate = useSchemaCache((s) => s.invalidateSchema);
@@ -141,11 +143,11 @@ export function CreateTableDialog() {
 
   const handleCreate = async () => {
     if (!name.trim()) {
-      setError("Nome da tabela é obrigatório.");
+      setError(t("createTableDialog.errNameRequired"));
       return;
     }
     if (cols.filter((c) => c.name.trim()).length === 0) {
-      setError("Pelo menos uma coluna com nome é obrigatória.");
+      setError(t("createTableDialog.errColumnRequired"));
       return;
     }
     setApplying(true);
@@ -191,13 +193,13 @@ export function CreateTableDialog() {
       >
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
           <TableIcon className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Nova tabela em {schema}</h2>
+          <h2 className="text-sm font-semibold">{t("createTableDialog.title", { schema })}</h2>
           <button
             type="button"
             onClick={close}
             disabled={applying}
             className="ml-auto grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-            title="Fechar"
+            title={t("createTableDialog.close")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -210,7 +212,7 @@ export function CreateTableDialog() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Nome da tabela"
+              placeholder={t("createTableDialog.namePlaceholder")}
               className="rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
               autoFocus
             />
@@ -218,7 +220,7 @@ export function CreateTableDialog() {
               value={engine}
               onChange={(e) => setEngine(e.target.value)}
               className="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-              title="Engine"
+              title={t("createTableDialog.engineTitle")}
             >
               {ENGINES.map((e) => (
                 <option key={e} value={e}>
@@ -230,9 +232,9 @@ export function CreateTableDialog() {
               type="text"
               value={charset}
               onChange={(e) => setCharset(e.target.value)}
-              placeholder="charset"
+              placeholder={t("createTableDialog.charsetPlaceholder")}
               className="w-28 rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-              title="Default charset"
+              title={t("createTableDialog.charsetTitle")}
             />
           </div>
 
@@ -240,21 +242,21 @@ export function CreateTableDialog() {
             type="text"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="Comentário da tabela (opcional)"
+            placeholder={t("createTableDialog.commentPlaceholder")}
             className="mb-3 w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground"
           />
 
           {/* Tabela de colunas */}
           <div className="rounded-md border border-border">
             <div className="grid grid-cols-[1.5fr_1fr_0.8fr_auto_auto_auto_auto_1fr_auto] items-center gap-1 border-b border-border bg-card/40 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              <span>Nome</span>
-              <span>Tipo</span>
-              <span>Tam/Prec</span>
-              <span title="Nullable">NULL</span>
-              <span title="Primary Key">PK</span>
-              <span title="Unique">UQ</span>
-              <span title="Auto increment">AI</span>
-              <span>Default / Comentário</span>
+              <span>{t("createTableDialog.colName")}</span>
+              <span>{t("createTableDialog.colType")}</span>
+              <span>{t("createTableDialog.colSize")}</span>
+              <span title={t("createTableDialog.nullTitle")}>NULL</span>
+              <span title={t("createTableDialog.pkTitle")}>PK</span>
+              <span title={t("createTableDialog.uqTitle")}>UQ</span>
+              <span title={t("createTableDialog.aiTitle")}>AI</span>
+              <span>{t("createTableDialog.colDefaultComment")}</span>
               <span />
             </div>
             {cols.map((col, i) => (
@@ -271,7 +273,7 @@ export function CreateTableDialog() {
               className="flex w-full items-center gap-1.5 border-t border-border px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-accent/30 hover:text-foreground"
             >
               <Plus className="h-3 w-3" />
-              Adicionar coluna
+              {t("createTableDialog.addColumn")}
             </button>
           </div>
 
@@ -282,7 +284,9 @@ export function CreateTableDialog() {
               onClick={() => setPreviewOpen((o) => !o)}
               className="text-[11px] text-muted-foreground hover:text-foreground"
             >
-              {previewOpen ? "Esconder" : "Ver"} SQL gerado
+              {previewOpen
+                ? t("createTableDialog.toggleSqlHide")
+                : t("createTableDialog.toggleSqlShow")}
             </button>
             {previewOpen && (
               <pre className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-background p-2 font-mono text-[10px] text-muted-foreground">
@@ -307,7 +311,7 @@ export function CreateTableDialog() {
             disabled={applying}
             className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
           >
-            Cancelar
+            {t("createTableDialog.cancel")}
           </button>
           <button
             type="button"
@@ -320,7 +324,7 @@ export function CreateTableDialog() {
             ) : (
               <Plus className="h-3 w-3" />
             )}
-            Criar tabela
+            {t("createTableDialog.create")}
           </button>
         </footer>
       </div>
@@ -337,6 +341,7 @@ function ColumnRow({
   onChange: (p: Partial<ColumnDraft>) => void;
   onRemove: () => void;
 }) {
+  const t = useT();
   const needsLength = /^(VARCHAR|CHAR|DECIMAL|FLOAT|DOUBLE|ENUM)$/.test(col.type);
   return (
     <div className="grid grid-cols-[1.5fr_1fr_0.8fr_auto_auto_auto_auto_1fr_auto] items-center gap-1 border-b border-border/50 px-2 py-1">
@@ -344,7 +349,7 @@ function ColumnRow({
         type="text"
         value={col.name}
         onChange={(e) => onChange({ name: e.target.value })}
-        placeholder="nome"
+        placeholder={t("createTableDialog.placeholderName")}
         className="rounded border border-border bg-background px-2 py-1 font-mono text-xs"
       />
       <select
@@ -404,14 +409,14 @@ function ColumnRow({
           type="text"
           value={col.default}
           onChange={(e) => onChange({ default: e.target.value })}
-          placeholder="default"
+          placeholder={t("createTableDialog.placeholderDefault")}
           className="w-24 rounded border border-border bg-background px-1 py-1 font-mono text-xs"
         />
         <input
           type="text"
           value={col.comment}
           onChange={(e) => onChange({ comment: e.target.value })}
-          placeholder="comment"
+          placeholder={t("createTableDialog.placeholderComment")}
           className="flex-1 rounded border border-border bg-background px-1 py-1 text-xs"
         />
       </div>
@@ -419,7 +424,7 @@ function ColumnRow({
         type="button"
         onClick={onRemove}
         className="grid h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-        title="Remover coluna"
+        title={t("createTableDialog.removeColumnTitle")}
       >
         <Trash2 className="h-3 w-3" />
       </button>

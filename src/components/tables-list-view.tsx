@@ -185,7 +185,7 @@ export function TablesListView({
         return copy;
       });
     } catch (e) {
-      alert(`Falha ao renomear: ${e}`);
+      alert(t("tablesList.renameFailed", { error: String(e) }));
     }
   };
   const cancelRename = () => {
@@ -298,7 +298,7 @@ export function TablesListView({
       invalidateSchema(connectionId, schema);
       await ensureSnapshot(connectionId, schema);
     } catch (e) {
-      alert(`Falha ao duplicar: ${e}`);
+      alert(t("tablesList.duplicateFailed", { error: String(e) }));
     }
   };
 
@@ -312,13 +312,13 @@ export function TablesListView({
       const res = await ipc.db.runQuery(connectionId, sql, schema);
       const err = res.results.find((r) => r.kind === "error");
       if (err && err.kind === "error") {
-        alert(`Falha ao apagar: ${err.message}`);
+        alert(t("tablesList.deleteFailed", { error: err.message }));
         return;
       }
       invalidateSchema(connectionId, schema);
       await ensureSnapshot(connectionId, schema);
     } catch (e) {
-      alert(`Falha ao apagar: ${e}`);
+      alert(t("tablesList.deleteFailed", { error: String(e) }));
     }
   };
 
@@ -387,7 +387,7 @@ export function TablesListView({
     invalidateSchema(connectionId, schema);
     await ensureSnapshot(connectionId, schema);
     if (failed.length > 0) {
-      alert(`Falhas:\n${failed.join("\n")}`);
+      alert(t("tablesList.pasteFailures", { list: failed.join("\n") }));
     }
   };
 
@@ -479,7 +479,7 @@ export function TablesListView({
       {
         submenu: true,
         icon: <Wrench className="h-3.5 w-3.5" />,
-        label: "Maintain",
+        label: t("tablesList.maintainLabel"),
         items: [
           {
             icon: <Wrench className="h-3.5 w-3.5" />,
@@ -524,12 +524,12 @@ export function TablesListView({
           {sorted.length}{" "}
           {category === "views"
             ? sorted.length === 1
-              ? "view"
-              : "views"
+              ? t("tablesList.viewWord")
+              : t("tablesList.viewWordPlural")
             : category === "tables"
               ? sorted.length === 1
-                ? "tabela"
-                : "tabelas"
+                ? t("tablesList.tableWord")
+                : t("tablesList.tableWordPlural")
               : t("tablesList.title", { count: tables?.length ?? 0 })}
         </span>
 
@@ -539,7 +539,7 @@ export function TablesListView({
             label={t("tree.newTable")}
             onClick={() =>
               newTab({
-                label: `Nova tabela · ${schema}`,
+                label: t("tablesList.newTableTabLabel", { schema }),
                 kind: { kind: "new-table", connectionId, schema },
                 accentColor: conn?.color,
               })
@@ -636,7 +636,7 @@ export function TablesListView({
           <div className="grid h-full place-items-center p-6 text-xs text-muted-foreground">
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Conectando…
+              {t("tablesList.connecting")}
             </div>
           </div>
         )}
@@ -644,7 +644,7 @@ export function TablesListView({
           <div className="grid h-full place-items-center p-6 text-xs text-muted-foreground">
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Carregando tabelas…
+              {t("tablesList.loadingTables")}
             </div>
           </div>
         )}

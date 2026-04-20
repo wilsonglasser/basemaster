@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
@@ -126,6 +132,26 @@ function MenuPanel({
   const [openSubIdx, setOpenSubIdx] = useState<number | null>(null);
   const [subPos, setSubPos] = useState<{ x: number; y: number } | null>(null);
   const closeTimerRef = useRef<number | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [adjusted, setAdjusted] = useState<{ x: number; y: number }>({ x, y });
+
+  // Mede o painel pós-render e flipa/shifta pra dentro da viewport.
+  // Handles both: (a) menu aberto num botão perto da borda direita —
+  // right-edge passa da viewport, então alinha right-edge no X do clique
+  // (abre pra esquerda); (b) submenu que não cabe à direita, idem.
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let nx = x;
+    let ny = y;
+    if (x + rect.width > vw - 4) nx = Math.max(4, x - rect.width);
+    if (y + rect.height > vh - 4) ny = Math.max(4, vh - rect.height - 4);
+    if (nx !== adjusted.x || ny !== adjusted.y) setAdjusted({ x: nx, y: ny });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [x, y, items.length]);
 
   const scheduleClose = () => {
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
@@ -143,12 +169,13 @@ function MenuPanel({
 
   return (
     <div
+      ref={panelRef}
       role="menu"
       className={cn(
         "fixed z-[9999] min-w-[200px] rounded-md border border-border py-1 shadow-lg",
         "bg-popover text-popover-foreground",
       )}
-      style={{ top: y, left: x }}
+      style={{ top: adjusted.y, left: adjusted.x }}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}

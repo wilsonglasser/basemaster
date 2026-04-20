@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import type { DockerCandidate } from "@/lib/types";
 import { useConnections } from "@/state/connections";
 import { useDockerDiscover } from "@/state/docker-discover";
+import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
 
 export function DockerDiscoverDialog() {
@@ -22,6 +23,7 @@ export function DockerDiscoverDialog() {
 }
 
 function Dialog({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<DockerCandidate[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -68,9 +70,9 @@ function Dialog({ onClose }: { onClose: () => void }) {
       void useConnections.getState().open(profile.id).catch(() => void 0);
     } catch (e) {
       alert(
-        `Falha ao criar conexão: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
+        t("docker.createFailed", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
       );
     } finally {
       setBusy(null);
@@ -79,7 +81,7 @@ function Dialog({ onClose }: { onClose: () => void }) {
 
   const openInForm = (c: DockerCandidate) => {
     useTabs.getState().open({
-      label: `Nova conexão — ${c.container_name}`,
+      label: t("docker.newConnForLabel", { name: c.container_name }),
       kind: { kind: "new-connection" },
     });
     onClose();
@@ -98,14 +100,14 @@ function Dialog({ onClose }: { onClose: () => void }) {
         <header className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Container className="h-4 w-4 text-conn-accent" />
           <h2 className="flex-1 text-sm font-semibold">
-            Containers Docker detectados
+            {t("docker.title")}
           </h2>
           <button
             type="button"
             onClick={() => void load()}
             disabled={loading}
             className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
-            title="Recarregar"
+            title={t("docker.reload")}
           >
             <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
           </button>
@@ -113,7 +115,7 @@ function Dialog({ onClose }: { onClose: () => void }) {
             type="button"
             onClick={onClose}
             className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="Fechar"
+            title={t("common.close")}
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -123,20 +125,19 @@ function Dialog({ onClose }: { onClose: () => void }) {
           {loading && items.length === 0 ? (
             <div className="flex h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              procurando containers…
+              {t("docker.searching")}
             </div>
           ) : error ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
-              <div className="font-medium">Não foi possível consultar o Docker:</div>
+              <div className="font-medium">{t("docker.queryFailed")}</div>
               <div className="mt-1 whitespace-pre-wrap font-mono">{error}</div>
               <div className="mt-2 text-muted-foreground">
-                Verifique se o Docker Desktop está rodando, ou se o container
-                está dentro do WSL e o integration habilitado.
+                {t("docker.queryFailedHint")}
               </div>
             </div>
           ) : items.length === 0 ? (
             <div className="grid h-32 place-items-center text-sm text-muted-foreground">
-              Nenhum container MySQL/MariaDB/Postgres com portas expostas.
+              {t("docker.noContainers")}
             </div>
           ) : (
             <ul className="grid gap-2">
@@ -172,6 +173,7 @@ function CandidateRow({
   onCreate: () => void;
   onOpenInForm: () => void;
 }) {
+  const t = useT();
   return (
     <div
       className={cn(
@@ -195,7 +197,7 @@ function CandidateRow({
                 : "bg-muted text-muted-foreground",
             )}
           >
-            {c.running ? "rodando" : "parado"}
+            {c.running ? t("common.running") : t("common.stopped")}
           </span>
           {c.via_wsl && (
             <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-600 dark:text-blue-400">
@@ -215,7 +217,7 @@ function CandidateRow({
           {c.default_database && <span>· db={c.default_database}</span>}
           {!c.password && (
             <span className="text-amber-600 dark:text-amber-400">
-              · sem senha detectada
+              {t("docker.noPassword")}
             </span>
           )}
         </div>
@@ -236,10 +238,10 @@ function CandidateRow({
         ) : created ? (
           <>
             <CheckIcon className="h-3.5 w-3.5" />
-            criada
+            {t("docker.created")}
           </>
         ) : (
-          "Criar conexão"
+          t("docker.createConnection")
         )}
       </button>
     </div>

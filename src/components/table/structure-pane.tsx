@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { Combobox } from "@/components/ui/combobox";
 import { columnTypeOptions } from "@/lib/column-types";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
 import { useTableViewBridge } from "@/state/table-view-bridge";
 
@@ -43,6 +44,7 @@ export function StructurePane({
   initialEdit = false,
   tabId,
 }: StructurePaneProps) {
+  const t = useT();
   const cols = useSchemaCache(
     (s) => s.caches[connectionId]?.columns[schema]?.[table],
   );
@@ -169,7 +171,7 @@ export function StructurePane({
 
   const handleApply = async () => {
     if (!ddl) return;
-    if (!window.confirm(`Aplicar ALTER TABLE?\n\n${ddl}`)) return;
+    if (!window.confirm(t("structure.applyAlter", { ddl }))) return;
     setApplying(true);
     setApplyError(null);
     try {
@@ -221,7 +223,7 @@ export function StructurePane({
         {activeTab === "columns" && (
           <>
             {!cols ? (
-              <Spinner label="carregando colunas…" />
+              <Spinner label={t("structure.loadingColumns")} />
             ) : editing && draftCols ? (
               <ColumnsEditor
                 draft={draftCols}
@@ -237,7 +239,7 @@ export function StructurePane({
         {activeTab === "indexes" && (
           <>
             {loading && !indexes ? (
-              <Spinner label="carregando índices…" />
+              <Spinner label={t("structure.loadingIndexes")} />
             ) : error ? (
               <div className="rounded border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
                 {error}
@@ -251,7 +253,7 @@ export function StructurePane({
             ) : indexes && indexes.length > 0 ? (
               <IndexesTable indexes={indexes} />
             ) : (
-              <EmptyState label="Sem índices" />
+              <EmptyState label={t("structure.noIndexes")} />
             )}
           </>
         )}
@@ -259,7 +261,7 @@ export function StructurePane({
         {activeTab === "foreign_keys" && (
           <>
             {loading && !fks ? (
-              <Spinner label="carregando FKs…" />
+              <Spinner label={t("structure.loadingFks")} />
             ) : editing && draftFks && cols ? (
               <ForeignKeysEditor
                 draft={draftFks}
@@ -271,32 +273,32 @@ export function StructurePane({
             ) : fks && fks.length > 0 ? (
               <ForeignKeysTable fks={fks} />
             ) : (
-              <EmptyState label="Sem chaves estrangeiras" />
+              <EmptyState label={t("structure.noFks")} />
             )}
           </>
         )}
         {activeTab === "checks" && (
           <ComingSoon
-            title="Check Constraints"
-            hint="Listagem e edição de CHECKs em breve."
+            title={t("structure.checksTitle")}
+            hint={t("structure.soon.checks")}
           />
         )}
         {activeTab === "triggers" && (
           <ComingSoon
-            title="Triggers"
-            hint="Listagem de triggers em breve."
+            title={t("structure.triggersTitle")}
+            hint={t("structure.soon.triggers")}
           />
         )}
         {activeTab === "options" && (
           <>
             {loading && !options ? (
-              <Spinner label="carregando opções…" />
+              <Spinner label={t("structure.loadingOptions")} />
             ) : editing && draftOpts ? (
               <OptionsEditor draft={draftOpts} onChange={setDraftOpts} />
             ) : options ? (
               <OptionsTable opts={options} />
             ) : (
-              <EmptyState label="Sem opções" />
+              <EmptyState label={t("structure.noOptions")} />
             )}
           </>
         )}
@@ -305,12 +307,11 @@ export function StructurePane({
           <>
             {!editing ? (
               <div className="rounded-md border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
-                Entre em modo <strong>Editar</strong> pra ver o DDL gerado
-                pelas alterações.
+                {t("structure.sqlEmpty")}
               </div>
             ) : !ddl ? (
               <div className="rounded-md border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
-                Sem alterações — nada a aplicar.
+                {t("structure.sqlNoChanges")}
               </div>
             ) : (
               <>
@@ -361,14 +362,15 @@ function StructureTabs({
   onDiscardEdit: () => void;
   onApply: () => void;
 }) {
+  const t = useT();
   const tabs: Array<{ id: StructureTab; label: string; only?: "edit" }> = [
-    { id: "columns", label: "Colunas" },
-    { id: "indexes", label: "Índices" },
-    { id: "foreign_keys", label: "Foreign Keys" },
-    { id: "checks", label: "Checks" },
-    { id: "triggers", label: "Triggers" },
-    { id: "options", label: "Opções" },
-    { id: "sql", label: "SQL Preview", only: "edit" },
+    { id: "columns", label: t("structure.tabs.columns") },
+    { id: "indexes", label: t("structure.tabs.indexes") },
+    { id: "foreign_keys", label: t("structure.tabs.foreign_keys") },
+    { id: "checks", label: t("structure.tabs.checks") },
+    { id: "triggers", label: t("structure.tabs.triggers") },
+    { id: "options", label: t("structure.tabs.options") },
+    { id: "sql", label: t("structure.tabs.sql"), only: "edit" },
   ];
   return (
     <div className="flex shrink-0 items-center gap-1 border-b border-border bg-card/20 px-3 py-2">
@@ -396,10 +398,10 @@ function StructureTabs({
             onClick={onStartEdit}
             disabled={!canEdit}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
-            title="Editar estrutura"
+            title={t("structure.editTitle")}
           >
             <Pencil className="h-3 w-3" />
-            Editar
+            {t("structure.edit")}
           </button>
         ) : (
           <>
@@ -410,7 +412,7 @@ function StructureTabs({
               className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
             >
               <Undo2 className="h-3 w-3" />
-              Descartar
+              {t("common.discard")}
             </button>
             <button
               type="button"
@@ -423,7 +425,7 @@ function StructureTabs({
               ) : (
                 <Check className="h-3 w-3" />
               )}
-              Aplicar
+              {t("common.apply")}
             </button>
           </>
         )}
@@ -433,13 +435,14 @@ function StructureTabs({
 }
 
 function ComingSoon({ title, hint }: { title: string; hint: string }) {
+  const t = useT();
   return (
     <div className="grid h-full place-items-center p-6">
       <div className="max-w-md text-center">
         <div className="mb-2 text-sm font-medium text-foreground">{title}</div>
         <div className="text-xs text-muted-foreground">{hint}</div>
         <div className="mt-4 inline-block rounded-full border border-border bg-card px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-          em breve
+          {t("common.comingSoon")}
         </div>
       </div>
     </div>
@@ -455,18 +458,19 @@ function EmptyState({ label }: { label: string }) {
 }
 
 function ColumnsTable({ columns }: { columns: Column[] }) {
+  const t = useT();
   return (
     <div className="overflow-x-auto rounded-md border border-border">
       <table className="w-full text-xs">
         <thead className="bg-card/40 text-[10px] uppercase tracking-wider text-muted-foreground">
           <tr>
             <Th className="w-[24px]"></Th>
-            <Th>Nome</Th>
-            <Th>Tipo</Th>
-            <Th className="w-[60px]">Null</Th>
-            <Th>Default</Th>
-            <Th>Extra</Th>
-            <Th>Comment</Th>
+            <Th>{t("structure.colName")}</Th>
+            <Th>{t("structure.colType")}</Th>
+            <Th className="w-[60px]">{t("structure.colNull")}</Th>
+            <Th>{t("structure.colDefault")}</Th>
+            <Th>{t("structure.colExtra")}</Th>
+            <Th>{t("structure.colComment")}</Th>
           </tr>
         </thead>
         <tbody>
@@ -506,16 +510,17 @@ function ColumnsTable({ columns }: { columns: Column[] }) {
 }
 
 function IndexesTable({ indexes }: { indexes: IndexInfo[] }) {
+  const t = useT();
   return (
     <div className="overflow-x-auto rounded-md border border-border">
       <table className="w-full text-xs">
         <thead className="bg-card/40 text-[10px] uppercase tracking-wider text-muted-foreground">
           <tr>
-            <Th>Nome</Th>
-            <Th>Colunas</Th>
-            <Th className="w-[80px]">Tipo</Th>
-            <Th className="w-[80px]">Único</Th>
-            <Th className="w-[80px]">PK</Th>
+            <Th>{t("structure.colName")}</Th>
+            <Th>{t("structure.colColumns")}</Th>
+            <Th className="w-[80px]">{t("structure.colKind")}</Th>
+            <Th className="w-[80px]">{t("structure.colUnique")}</Th>
+            <Th className="w-[80px]">{t("structure.colPk")}</Th>
           </tr>
         </thead>
         <tbody>
@@ -530,19 +535,19 @@ function IndexesTable({ indexes }: { indexes: IndexInfo[] }) {
               </Td>
               <Td>
                 {i.unique ? (
-                  <span className="text-emerald-500">sim</span>
+                  <span className="text-emerald-500">{t("structure.yes")}</span>
                 ) : (
-                  <span className="text-muted-foreground">não</span>
+                  <span className="text-muted-foreground">{t("structure.no")}</span>
                 )}
               </Td>
               <Td>
                 {i.is_primary ? (
                   <span className="inline-flex items-center gap-1 text-conn-accent">
                     <Key className="h-3 w-3" />
-                    sim
+                    {t("structure.yes")}
                   </span>
                 ) : (
-                  <span className="text-muted-foreground">não</span>
+                  <span className="text-muted-foreground">{t("structure.no")}</span>
                 )}
               </Td>
             </tr>
@@ -577,11 +582,12 @@ function Td({
   return <td className={cn("px-3 py-1.5", className)}>{children}</td>;
 }
 
-function Spinner({ label }: { label: string }) {
+function Spinner({ label }: { label?: string }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground">
       <Loader2 className="h-3 w-3 animate-spin" />
-      {label}
+      {label ?? t("common.loading")}
     </div>
   );
 }
@@ -628,6 +634,7 @@ function ColumnsEditor({
   onChange: (next: DraftColumn[]) => void;
   typeOptions: string[];
 }) {
+  const t = useT();
   const update = (uid: string, patch: Partial<DraftColumn>) => {
     onChange(draft.map((c) => (c.uid === uid ? { ...c, ...patch } : c)));
   };
@@ -658,13 +665,13 @@ function ColumnsEditor({
           <thead className="bg-card/40 text-[10px] uppercase tracking-wider text-muted-foreground">
             <tr>
               <Th className="w-[24px]"></Th>
-              <Th className="min-w-[140px]">Nome</Th>
-              <Th className="min-w-[160px]">Tipo</Th>
-              <Th className="w-[70px]">Null</Th>
-              <Th className="min-w-[120px]">Default</Th>
+              <Th className="min-w-[140px]">{t("structure.colName")}</Th>
+              <Th className="min-w-[160px]">{t("structure.colType")}</Th>
+              <Th className="w-[70px]">{t("structure.colNull")}</Th>
+              <Th className="min-w-[120px]">{t("structure.colDefault")}</Th>
               <Th className="w-[60px]">AI</Th>
-              <Th className="w-[60px]">PK</Th>
-              <Th className="min-w-[140px]">Comment</Th>
+              <Th className="w-[60px]">{t("structure.colPk")}</Th>
+              <Th className="min-w-[140px]">{t("structure.colComment")}</Th>
               <Th className="w-[32px]"></Th>
             </tr>
           </thead>
@@ -681,7 +688,7 @@ function ColumnsEditor({
                   {c.originalName === null ? (
                     <Plus
                       className="h-3 w-3 text-emerald-500"
-                      aria-label="nova"
+                      aria-label={t("structure.newBadge")}
                     />
                   ) : c.isPrimaryKey ? (
                     <Key className="h-3 w-3 text-conn-accent" />
@@ -691,7 +698,7 @@ function ColumnsEditor({
                   <Input
                     value={c.name}
                     onChange={(v) => update(c.uid, { name: v })}
-                    placeholder="nome_coluna"
+                    placeholder={t("structure.placeholderName")}
                   />
                 </Td>
                 <Td>
@@ -719,7 +726,7 @@ function ColumnsEditor({
                     onChange={(v) =>
                       update(c.uid, { default: v === "" ? null : v })
                     }
-                    placeholder="(sem default)"
+                    placeholder={t("structure.placeholderNoDefault")}
                     mono
                   />
                 </Td>
@@ -747,7 +754,7 @@ function ColumnsEditor({
                   <Input
                     value={c.comment}
                     onChange={(v) => update(c.uid, { comment: v })}
-                    placeholder="—"
+                    placeholder={t("structure.placeholderDash")}
                   />
                 </Td>
                 <Td>
@@ -755,7 +762,7 @@ function ColumnsEditor({
                     type="button"
                     onClick={() => remove(c.uid)}
                     className="grid h-5 w-5 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
-                    title="Remover coluna"
+                    title={t("structure.removeColumn")}
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -772,7 +779,7 @@ function ColumnsEditor({
           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Plus className="h-3 w-3" />
-          Adicionar coluna
+          {t("structure.addColumn")}
         </button>
       </div>
     </div>
@@ -1116,6 +1123,7 @@ function IndexesEditor({
   onChange: (next: DraftIndex[]) => void;
   allColumns: string[];
 }) {
+  const t = useT();
   const update = (uid: string, patch: Partial<DraftIndex>) => {
     onChange(draft.map((x) => (x.uid === uid ? { ...x, ...patch } : x)));
   };
@@ -1142,10 +1150,10 @@ function IndexesEditor({
         <table className="w-full text-xs">
           <thead className="bg-card/40 text-[10px] uppercase tracking-wider text-muted-foreground">
             <tr>
-              <Th className="min-w-[140px]">Nome</Th>
-              <Th className="min-w-[200px]">Colunas</Th>
-              <Th className="w-[80px]">Tipo</Th>
-              <Th className="w-[60px]">Unique</Th>
+              <Th className="min-w-[140px]">{t("structure.colName")}</Th>
+              <Th className="min-w-[200px]">{t("structure.colColumns")}</Th>
+              <Th className="w-[80px]">{t("structure.colKind")}</Th>
+              <Th className="w-[60px]">{t("structure.colUnique")}</Th>
               <Th className="w-[32px]"></Th>
             </tr>
           </thead>
@@ -1209,7 +1217,7 @@ function IndexesEditor({
           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Plus className="h-3 w-3" />
-          Adicionar índice
+          {t("structure.addIndex")}
         </button>
       </div>
     </div>
@@ -1261,6 +1269,7 @@ function ForeignKeysEditor({
   connectionId: Uuid;
   currentSchema: string;
 }) {
+  const t = useT();
   const cache = useSchemaCache((s) => s.caches[connectionId]);
   const ensureSnapshot = useSchemaCache((s) => s.ensureSnapshot);
   const ensureColumns = useSchemaCache((s) => s.ensureColumns);
@@ -1313,13 +1322,13 @@ function ForeignKeysEditor({
         <table className="w-full text-xs">
           <thead className="bg-card/40 text-[10px] uppercase tracking-wider text-muted-foreground">
             <tr>
-              <Th className="min-w-[140px]">Nome</Th>
-              <Th className="min-w-[160px]">Colunas</Th>
-              <Th className="w-[110px]">Ref. schema</Th>
-              <Th className="min-w-[140px]">Ref. tabela</Th>
-              <Th className="min-w-[180px]">Ref. colunas</Th>
-              <Th className="w-[110px]">ON DELETE</Th>
-              <Th className="w-[110px]">ON UPDATE</Th>
+              <Th className="min-w-[140px]">{t("structure.colName")}</Th>
+              <Th className="min-w-[160px]">{t("structure.colColumns")}</Th>
+              <Th className="w-[110px]">{t("structure.colRefSchema")}</Th>
+              <Th className="min-w-[140px]">{t("structure.colRefTable")}</Th>
+              <Th className="min-w-[180px]">{t("structure.colRefColumns")}</Th>
+              <Th className="w-[110px]">{t("structure.colOnDelete")}</Th>
+              <Th className="w-[110px]">{t("structure.colOnUpdate")}</Th>
               <Th className="w-[32px]"></Th>
             </tr>
           </thead>
@@ -1377,7 +1386,7 @@ function ForeignKeysEditor({
                       onChange={(v) =>
                         handleRefTable(f.uid, v, refSchemaName)
                       }
-                      placeholder="tabela_ref"
+                      placeholder={t("structure.placeholderRefTable")}
                       mono
                     />
                   )}
@@ -1400,7 +1409,7 @@ function ForeignKeysEditor({
                             .filter(Boolean),
                         })
                       }
-                      placeholder="id,slug"
+                      placeholder={t("structure.placeholderRefColumns")}
                       mono
                     />
                   )}
@@ -1441,7 +1450,7 @@ function ForeignKeysEditor({
           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Plus className="h-3 w-3" />
-          Adicionar FK
+          {t("structure.addFk")}
         </button>
       </div>
     </div>
@@ -1449,16 +1458,17 @@ function ForeignKeysEditor({
 }
 
 function ForeignKeysTable({ fks }: { fks: ForeignKeyInfo[] }) {
+  const t = useT();
   return (
     <div className="overflow-x-auto rounded-md border border-border">
       <table className="w-full text-xs">
         <thead className="bg-card/40 text-[10px] uppercase tracking-wider text-muted-foreground">
           <tr>
-            <Th>Nome</Th>
-            <Th>Colunas</Th>
-            <Th>Referencia</Th>
-            <Th className="w-[110px]">ON DELETE</Th>
-            <Th className="w-[110px]">ON UPDATE</Th>
+            <Th>{t("structure.colName")}</Th>
+            <Th>{t("structure.colColumns")}</Th>
+            <Th>{t("structure.colReferences")}</Th>
+            <Th className="w-[110px]">{t("structure.colOnDelete")}</Th>
+            <Th className="w-[110px]">{t("structure.colOnUpdate")}</Th>
           </tr>
         </thead>
         <tbody>
@@ -1525,11 +1535,12 @@ function OptionsEditor({
   draft: DraftOptions;
   onChange: (next: DraftOptions) => void;
 }) {
+  const t = useT();
   const update = (patch: Partial<DraftOptions>) =>
     onChange({ ...draft, ...patch });
   return (
     <div className="grid max-w-xl gap-3 rounded-md border border-border p-4 text-xs">
-      <Field label="Engine">
+      <Field label={t("structure.colEngine")}>
         <Select
           value={draft.engine}
           onChange={(v) => update({ engine: v })}
@@ -1537,7 +1548,7 @@ function OptionsEditor({
           allowEmpty
         />
       </Field>
-      <Field label="Charset">
+      <Field label={t("structure.colCharset")}>
         <Select
           value={draft.charset}
           onChange={(v) => update({ charset: v })}
@@ -1545,15 +1556,15 @@ function OptionsEditor({
           allowEmpty
         />
       </Field>
-      <Field label="Collation">
+      <Field label={t("structure.colCollation")}>
         <Input
           value={draft.collation}
           onChange={(v) => update({ collation: v })}
-          placeholder="utf8mb4_unicode_ci"
+          placeholder={t("structure.placeholderCollation")}
           mono
         />
       </Field>
-      <Field label="Row format">
+      <Field label={t("structure.colRowFormat")}>
         <Select
           value={draft.rowFormat}
           onChange={(v) => update({ rowFormat: v })}
@@ -1561,19 +1572,19 @@ function OptionsEditor({
           allowEmpty
         />
       </Field>
-      <Field label="Auto increment">
+      <Field label={t("structure.colAutoIncrement")}>
         <Input
           value={draft.autoIncrement}
           onChange={(v) => update({ autoIncrement: v })}
-          placeholder="próximo valor (ex: 1000)"
+          placeholder={t("structure.placeholderNextValue")}
           mono
         />
       </Field>
-      <Field label="Comment">
+      <Field label={t("structure.colComment")}>
         <Input
           value={draft.comment}
           onChange={(v) => update({ comment: v })}
-          placeholder="—"
+          placeholder={t("structure.placeholderDash")}
         />
       </Field>
     </div>
@@ -1581,13 +1592,14 @@ function OptionsEditor({
 }
 
 function OptionsTable({ opts }: { opts: TableOptions }) {
+  const t = useT();
   const rows: Array<[string, string | number | null | undefined]> = [
-    ["Engine", opts.engine],
-    ["Charset", opts.charset],
-    ["Collation", opts.collation],
-    ["Row format", opts.row_format],
-    ["Auto increment", opts.auto_increment ?? null],
-    ["Comment", opts.comment],
+    [t("structure.colEngine"), opts.engine],
+    [t("structure.colCharset"), opts.charset],
+    [t("structure.colCollation"), opts.collation],
+    [t("structure.colRowFormat"), opts.row_format],
+    [t("structure.colAutoIncrement"), opts.auto_increment ?? null],
+    [t("structure.colComment"), opts.comment],
   ];
   return (
     <div className="max-w-xl overflow-hidden rounded-md border border-border">
@@ -1637,13 +1649,14 @@ function Select({
   options: readonly string[];
   allowEmpty?: boolean;
 }) {
+  const t = useT();
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className="rounded border border-border bg-background px-1.5 py-0.5 text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
     >
-      {allowEmpty && <option value="">(padrão)</option>}
+      {allowEmpty && <option value="">{t("structure.selectDefault")}</option>}
       {options.map((o) => (
         <option key={o} value={o}>
           {o}
@@ -1665,6 +1678,7 @@ function ColumnMultiSelect({
   options: string[];
   onChange: (v: string[]) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [rect, setRect] = useState<DOMRect | null>(null);
@@ -1689,7 +1703,7 @@ function ColumnMultiSelect({
       >
         <span className="flex-1 truncate font-mono text-[11px]">
           {value.length > 0 ? value.join(", ") : (
-            <span className="text-muted-foreground">escolher…</span>
+            <span className="text-muted-foreground">{t("structure.placeholderChoose")}</span>
           )}
         </span>
         <span className="text-[9px] text-muted-foreground">▾</span>
@@ -1715,7 +1729,7 @@ function ColumnMultiSelect({
             >
               {options.length === 0 ? (
                 <div className="px-2 py-1 text-[11px] italic text-muted-foreground">
-                  sem colunas
+                  {t("structure.placeholderNoColumns")}
                 </div>
               ) : (
                 options.map((o) => (

@@ -5,6 +5,7 @@ import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { Uuid, Value } from "@/lib/types";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 
 interface Props {
   connectionId: Uuid;
@@ -69,6 +70,7 @@ function findIdCol(cols: string[]): number {
 }
 
 export function ProcessListView({ connectionId }: Props) {
+  const t = useT();
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === connectionId),
   );
@@ -95,7 +97,7 @@ export function ProcessListView({ connectionId }: Props) {
       const sql = conn.driver === "postgres" ? postgresQuery() : mysqlQuery();
       const batch = await ipc.db.runQuery(connectionId, sql, null);
       const first = batch.results[0];
-      if (!first) throw new Error("sem resultado");
+      if (!first) throw new Error(t("processList.killedMessageNoResult"));
       if (first.kind === "error") throw new Error(first.message);
       if (first.kind !== "select") throw new Error("não é select");
       setResult({ columns: first.columns, rows: first.rows });
@@ -119,7 +121,7 @@ export function ProcessListView({ connectionId }: Props) {
   const killProcess = async (id: string) => {
     if (!conn) return;
     const ok = window.confirm(
-      `Matar processo ${id} em "${conn.name}"?\n\nIsso aborta a query em execução.`,
+      t("processList.killConfirm", { id, name: conn.name }),
     );
     if (!ok) return;
     setKillingId(id);
@@ -127,7 +129,12 @@ export function ProcessListView({ connectionId }: Props) {
       await ipc.db.runQuery(connectionId, killStatement(conn.driver, id), null);
       await load();
     } catch (e) {
-      alert(`Falha ao matar ${id}: ${e instanceof Error ? e.message : e}`);
+      alert(
+        t("processList.killFailed", {
+          id,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      );
     } finally {
       setKillingId(null);
     }
@@ -141,7 +148,7 @@ export function ProcessListView({ connectionId }: Props) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-10 items-center gap-3 border-b border-border bg-card/30 px-3">
-        <span className="text-sm font-medium">Processos</span>
+        <span className="text-sm font-medium">{t("processList.title")}</span>
         {conn && (
           <span className="text-xs text-muted-foreground">
             {conn.name} · {conn.driver}
@@ -155,14 +162,14 @@ export function ProcessListView({ connectionId }: Props) {
             onChange={(e) => setAuto(e.target.checked)}
             className="h-3 w-3"
           />
-          Auto-refresh (3s)
+          {t("processList.autoRefresh")}
         </label>
         <button
           type="button"
           onClick={load}
           disabled={loading}
           className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
-          title="Recarregar"
+          title={t("processList.reloadTitle")}
         >
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </button>
@@ -173,7 +180,7 @@ export function ProcessListView({ connectionId }: Props) {
           <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
             <div className="flex items-center gap-1.5 font-medium">
               <AlertTriangle className="h-3.5 w-3.5" />
-              Erro
+              {t("processList.errorLabel")}
             </div>
             <div className="mt-1 font-mono">{error}</div>
           </div>
@@ -186,7 +193,7 @@ export function ProcessListView({ connectionId }: Props) {
             <thead className="sticky top-0 bg-card/90 backdrop-blur">
               <tr>
                 <th className="border-b border-border px-2 py-1.5 text-left font-medium">
-                  ação
+                  {t("processList.actionCol")}
                 </th>
                 {result.columns.map((c) => (
                   <th
@@ -209,14 +216,14 @@ export function ProcessListView({ connectionId }: Props) {
                         onClick={() => void killProcess(pid)}
                         disabled={!pid || killingId === pid}
                         className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-40"
-                        title={`Matar ${pid}`}
+                        title={t("processList.killTitle", { id: pid })}
                       >
                         {killingId === pid ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
                           <Skull className="h-3 w-3" />
                         )}
-                        kill
+                        {t("processList.killBtn")}
                       </button>
                     </td>
                     {r.map((v, j) => (

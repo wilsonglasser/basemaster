@@ -14,9 +14,11 @@ import { parseModelKey, providerMeta } from "@/lib/ai/catalog";
 import { cn } from "@/lib/utils";
 import { useAiAgent, type AiContentBlock, type AiMessage } from "@/state/ai-agent";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
 
 export function AiSidebar() {
+  const t = useT();
   const open = useAiAgent((s) => s.panelOpen);
   const width = useAiAgent((s) => s.panelWidth);
   const setPanelWidth = useAiAgent((s) => s.setPanelWidth);
@@ -27,7 +29,7 @@ export function AiSidebar() {
   const parsed = parseModelKey(modelKeySel);
   const providerLabel = parsed
     ? providerMeta(parsed.provider).name
-    : "não configurado";
+    : t("aiSidebar.notConfigured");
   const messages = useAiAgent((s) => s.messages);
   const loading = useAiAgent((s) => s.loading);
   const error = useAiAgent((s) => s.error);
@@ -75,7 +77,7 @@ export function AiSidebar() {
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold leading-tight">
-            Agente
+            {t("aiSidebar.agent")}
           </div>
           <div className="truncate text-[11px] text-muted-foreground">
             {parsed?.modelId
@@ -88,7 +90,7 @@ export function AiSidebar() {
           onClick={clear}
           disabled={messages.length === 0 || loading}
           className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
-          title="Limpar conversa"
+          title={t("aiSidebar.clearConversation")}
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
@@ -96,7 +98,7 @@ export function AiSidebar() {
           type="button"
           onClick={() => setPanelOpen(false)}
           className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="Fechar"
+          title={t("aiSidebar.closeTitle")}
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -132,7 +134,7 @@ export function AiSidebar() {
           "transition-colors hover:bg-conn-accent/40",
           dragging && "bg-conn-accent/60",
         )}
-        title="Arrasta para redimensionar · duplo-click reseta"
+        title={t("aiSidebar.resizeHint")}
       />
     </aside>
   );
@@ -175,10 +177,11 @@ function ContextBadge() {
 }
 
 function NoApiKey() {
+  const t = useT();
   const openSettings = () => {
     useTabs.getState().openOrFocus(
-      (t) => t.kind.kind === "settings",
-      () => ({ label: "Configurações", kind: { kind: "settings" } }),
+      (tab) => tab.kind.kind === "settings",
+      () => ({ label: t("aiSidebar.settingsLabel"), kind: { kind: "settings" } }),
     );
   };
   return (
@@ -186,16 +189,16 @@ function NoApiKey() {
       <div className="grid h-10 w-10 place-items-center rounded-full border border-dashed border-border text-muted-foreground">
         <Bot className="h-5 w-5" />
       </div>
-      <div className="text-sm font-medium">Configure a API key</div>
+      <div className="text-sm font-medium">{t("aiSidebar.configureApiKey")}</div>
       <p className="text-xs text-muted-foreground">
-        Sem chave configurada. Escolha um provider e cole sua key.
+        {t("aiSidebar.noKeyHint")}
       </p>
       <button
         type="button"
         onClick={openSettings}
         className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-conn-accent px-3 py-1.5 text-xs font-medium text-conn-accent-foreground hover:opacity-90"
       >
-        Abrir configurações
+        {t("aiSidebar.openSettings")}
       </button>
     </div>
   );
@@ -271,6 +274,7 @@ function MessageList({
   messages: AiMessage[];
   loading: boolean;
 }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.scrollTo({
@@ -288,10 +292,7 @@ function MessageList({
         className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-xs text-muted-foreground"
       >
         <Sparkles className="h-4 w-4 text-conn-accent" />
-        <p>
-          Peça pra eu explorar schemas, descrever tabelas ou sugerir queries.
-          Eu tenho acesso às suas conexões do BaseMaster.
-        </p>
+        <p>{t("aiSidebar.emptyHint")}</p>
       </div>
     );
   }
@@ -305,7 +306,7 @@ function MessageList({
         {loading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" />
-            pensando…
+            {t("aiSidebar.thinking")}
           </div>
         )}
       </div>
@@ -351,6 +352,7 @@ function ToolCallsStrip({
 }: {
   calls: VisualMessage["toolCalls"];
 }) {
+  const t = useT();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   return (
     <div className="flex flex-col gap-1 self-stretch">
@@ -385,13 +387,13 @@ function ToolCallsStrip({
               />
               <span className="font-mono">{c.name}</span>
               <span className="ml-auto text-[10px] opacity-60">
-                {open ? "menos" : "detalhes"}
+                {open ? t("aiSidebar.less") : t("aiSidebar.details")}
               </span>
             </button>
             {open && (
               <div className="border-t border-border/40 px-2 py-1">
                 <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-                  input
+                  {t("aiSidebar.input")}
                 </div>
                 <pre className="mb-1 max-h-32 overflow-auto font-mono leading-tight">
                   {tryStringify(c.input)}
@@ -399,7 +401,7 @@ function ToolCallsStrip({
                 {c.result && (
                   <>
                     <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-                      {hasError ? "erro" : "resultado"}
+                      {hasError ? t("aiSidebar.errorLabel") : t("aiSidebar.resultLabel")}
                     </div>
                     <pre className="max-h-48 overflow-auto font-mono leading-tight">
                       {c.result.content}
@@ -424,15 +426,16 @@ function tryStringify(v: unknown): string {
 }
 
 function Composer() {
+  const t = useT();
   const [text, setText] = useState("");
   const loading = useAiAgent((s) => s.loading);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   const submit = async () => {
-    const t = text.trim();
-    if (!t || loading) return;
+    const v = text.trim();
+    if (!v || loading) return;
     setText("");
-    await askAgent(t);
+    await askAgent(v);
   };
 
   useEffect(() => {
@@ -456,7 +459,7 @@ function Composer() {
             }
           }}
           rows={1}
-          placeholder="Pergunte algo… (Enter envia, Shift+Enter pula linha)"
+          placeholder={t("aiSidebar.composerPlaceholder")}
           className="flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           disabled={loading}
         />
@@ -465,7 +468,7 @@ function Composer() {
           onClick={() => void submit()}
           disabled={loading || !text.trim()}
           className="grid h-7 w-7 place-items-center rounded-md bg-conn-accent text-conn-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-          title="Enviar (Enter)"
+          title={t("aiSidebar.sendTitle")}
         >
           {loading ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

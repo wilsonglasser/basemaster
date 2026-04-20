@@ -26,7 +26,7 @@ import { useConnections } from "@/state/connections";
 import { useDockerDiscover } from "@/state/docker-discover";
 import { useSidebarSelection } from "@/state/sidebar-selection";
 import { useActiveInfo } from "@/state/active-info";
-import { useT } from "@/state/i18n";
+import { useI18n, useT } from "@/state/i18n";
 import { useTabState } from "@/state/tab-state";
 import { useTabs, type Tab, type TabKind } from "@/state/tabs";
 
@@ -44,6 +44,7 @@ export function TabBar({ className }: TabBarProps) {
   const activeId = useTabs((s) => s.activeId);
   const setActive = useTabs((s) => s.setActive);
   const close = useTabs((s) => s.close);
+  const t = useT();
 
   const connectionIdOf = (tab: Tab): string | null => {
     const k = tab.kind;
@@ -63,17 +64,20 @@ export function TabBar({ className }: TabBarProps) {
   const confirmDirty = async (candidates: Tab[]): Promise<boolean> => {
     const dirtyTabs = candidates.filter((t) => t.dirty);
     if (dirtyTabs.length === 0) return true;
-    const names = dirtyTabs.map((t) => `• ${t.label}`).join("\n");
+    const names = dirtyTabs.map((tb) => `• ${tb.label}`).join("\n");
     const msg =
       dirtyTabs.length === 1
-        ? `A aba "${dirtyTabs[0].label}" tem alterações não salvas. Fechar mesmo assim?`
-        : `${dirtyTabs.length} abas têm alterações não salvas:\n${names}\n\nFechar todas mesmo assim?`;
+        ? t("tabs.closeDirtyOneMsg", { name: dirtyTabs[0].label })
+        : t("tabs.closeDirtyManyMsg", {
+            count: dirtyTabs.length,
+            list: names,
+          });
     try {
       return await ask(msg, {
-        title: "Fechar com alterações pendentes",
+        title: t("tabs.closeDirtyTitle"),
         kind: "warning",
-        okLabel: "Fechar",
-        cancelLabel: "Cancelar",
+        okLabel: t("tabs.closeDirtyOk"),
+        cancelLabel: t("tabs.closeDirtyCancel"),
       });
     } catch (e) {
       console.error("[tab-bar] ask() falhou:", e);
@@ -140,6 +144,7 @@ export function TabBar({ className }: TabBarProps) {
 function AiToggleButton() {
   const open = useAiAgent((s) => s.panelOpen);
   const toggle = useAiAgent((s) => s.togglePanel);
+  const t = useT();
   return (
     <button
       type="button"
@@ -150,7 +155,7 @@ function AiToggleButton() {
           ? "bg-conn-accent/10 text-conn-accent hover:bg-conn-accent/15"
           : "text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
-      title="Agente de IA"
+      title={t("tabs.aiAgentTitle")}
     >
       <Sparkles className="h-3.5 w-3.5" />
     </button>
@@ -200,7 +205,7 @@ function NewTabButton() {
   const openNewTable = () => {
     if (!focusConn || !focusSchema) return;
     useTabs.getState().open({
-      label: `Nova tabela · ${focusSchema}`,
+      label: t("newTable.tabLabel", { schema: focusSchema }),
       kind: {
         kind: "new-table",
         connectionId: focusConn.id,
@@ -214,8 +219,8 @@ function NewTabButton() {
     if (!focusConn) return;
     const name = window.prompt(
       focusConn.driver === "postgres"
-        ? "Nome do novo schema:"
-        : "Nome do novo database:",
+        ? t("tabs.newDatabasePromptPg")
+        : t("tabs.newDatabasePromptMysql"),
     );
     if (!name || !name.trim()) return;
     const keyword = focusConn.driver === "postgres" ? "SCHEMA" : "DATABASE";
@@ -272,8 +277,8 @@ function NewTabButton() {
       icon: <Database className="h-3.5 w-3.5" />,
       label:
         focusConn.driver === "postgres"
-          ? "Novo schema…"
-          : "Nova database…",
+          ? t("tabs.newDatabaseLabelPg")
+          : t("tabs.newDatabaseLabelMysql"),
       onClick: openCreateDatabase,
     });
     items.push({ separator: true });
@@ -293,15 +298,15 @@ function NewTabButton() {
   });
   items.push({
     icon: <Container className="h-3.5 w-3.5" />,
-    label: "Detectar do Docker…",
+    label: t("sidebar.dockerDetect"),
     onClick: openDockerDiscover,
   });
   items.push({
     icon: <FileText className="h-3.5 w-3.5" />,
-    label: "Importar CSV / JSON / Excel…",
+    label: t("tabs.dataImportMenu"),
     onClick: () => {
       useTabs.getState().open({
-        label: "Importar dados",
+        label: t("tabs.dataImportLabel"),
         kind: {
           kind: "data-import",
           connectionId: focusConnId ?? undefined,
@@ -513,7 +518,7 @@ function TabItem({
       )}
       <Icon className="h-3.5 w-3.5 shrink-0" />
       <span className="truncate">
-        {tab.label}
+        {tab.kind.kind === "welcome" ? t("tabs.welcome") : tab.label}
         {tab.dirty && <span className="ml-1 text-conn-accent">•</span>}
       </span>
       <button
@@ -557,7 +562,9 @@ function TabItem({
               />
             )}
             <Icon className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{tab.label}</span>
+            <span className="truncate">
+              {tab.kind.kind === "welcome" ? t("tabs.welcome") : tab.label}
+            </span>
           </div>,
           document.body,
         )}
@@ -599,7 +606,9 @@ function detachTabAt(tab: Tab, screenX?: number, screenY?: number) {
     .openDetached(label, "", `${payload.displayLabel} · BaseMaster`, wx, wy)
     .catch((e) => {
       console.error("openDetachedWindow:", e);
-      alert(`Falha ao abrir janela: ${e}`);
+      alert(
+        useI18n.getState().t("tabs.openWindowFailed", { error: String(e) }),
+      );
     });
 }
 

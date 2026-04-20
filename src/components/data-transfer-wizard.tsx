@@ -30,6 +30,7 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
 
 type Step = "endpoints" | "tables" | "options" | "progress";
@@ -54,6 +55,7 @@ export function DataTransferWizard({
   initialTables,
   initialAutoAdvance,
 }: Props) {
+  const t = useT();
   const patchTab = useTabs((s) => s.patch);
   const connections = useConnections((s) => s.connections);
   const activeSet = useConnections((s) => s.active);
@@ -172,7 +174,7 @@ export function DataTransferWizard({
     }
   };
   const handleStop = async () => {
-    if (!window.confirm("Parar a transferência? Tabelas em andamento terminam o chunk atual e depois encerram.")) {
+    if (!window.confirm(t("dataTransfer.stopConfirm"))) {
       return;
     }
     try {
@@ -695,11 +697,12 @@ function StepperHeader({
   step: Step;
   onJump?: (s: Step) => void;
 }) {
+  const t = useT();
   const steps: Array<{ id: Step; label: string }> = [
-    { id: "endpoints", label: "Origem + destino" },
-    { id: "tables", label: "Tabelas" },
-    { id: "options", label: "Opções" },
-    { id: "progress", label: "Executar" },
+    { id: "endpoints", label: t("dataTransfer.stepEndpoints") },
+    { id: "tables", label: t("dataTransfer.stepTables") },
+    { id: "options", label: t("dataTransfer.stepOptions") },
+    { id: "progress", label: t("dataTransfer.stepProgress") },
   ];
   const activeIdx = steps.findIndex((s) => s.id === step);
   return (
@@ -829,19 +832,20 @@ function EndpointCard({
   onSchema: (v: string) => void;
   connInfo: ConnectionProfile | undefined;
 }) {
+  const t = useT();
   return (
     <div className="rounded-lg border border-border bg-card/40 p-5">
       <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </h3>
-      <label className="mb-1 block text-xs text-muted-foreground">Conexão</label>
+      <label className="mb-1 block text-xs text-muted-foreground">{t("dataTransfer.connectionLabel")}</label>
       <select
         value={connId ?? ""}
         onChange={(e) => onConn(e.target.value)}
         className="mb-4 w-full rounded-md border border-border bg-popover px-3 py-2 text-sm text-popover-foreground focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
       >
         <option value="" disabled>
-          (selecione)
+          {t("dataTransfer.connectionSelect")}
         </option>
         {connections.map((c) => (
           <option key={c.id} value={c.id}>
@@ -850,7 +854,7 @@ function EndpointCard({
         ))}
       </select>
 
-      <label className="mb-1 block text-xs text-muted-foreground">Database</label>
+      <label className="mb-1 block text-xs text-muted-foreground">{t("dataTransfer.databaseLabel")}</label>
       <select
         value={schema}
         onChange={(e) => onSchema(e.target.value)}
@@ -858,7 +862,7 @@ function EndpointCard({
         className="w-full rounded-md border border-border bg-popover px-3 py-2 text-sm text-popover-foreground focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40 disabled:opacity-50"
       >
         <option value="" disabled>
-          (selecione)
+          {t("dataTransfer.connectionSelect")}
         </option>
         {schemas.map((s) => (
           <option key={s.name} value={s.name}>
@@ -913,12 +917,13 @@ function TablesStep({
   error: string | null;
   onReload: () => void;
 }) {
+  const t = useT();
   return (
     <div className="mx-auto max-w-4xl">
       <div className="mb-3 flex items-center gap-3">
         <Database className="h-4 w-4 text-muted-foreground" />
         <div className="text-sm font-medium">
-          Selecionar tabelas ({selected.size} de {total})
+          {t("dataTransfer.selectTables", { selected: selected.size, total })}
         </div>
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -926,7 +931,7 @@ function TablesStep({
             onClick={onSelectAll}
             className="text-[11px] text-muted-foreground hover:text-foreground"
           >
-            Todas
+            {t("dataTransfer.selectAll")}
           </button>
           <span className="text-muted-foreground/40">·</span>
           <button
@@ -934,7 +939,7 @@ function TablesStep({
             onClick={onSelectNone}
             className="text-[11px] text-muted-foreground hover:text-foreground"
           >
-            Nenhuma
+            {t("dataTransfer.selectNone")}
           </button>
         </div>
       </div>
@@ -942,14 +947,14 @@ function TablesStep({
         type="text"
         value={filter}
         onChange={(e) => onFilter(e.target.value)}
-        placeholder="Filtrar…"
+        placeholder={t("dataTransfer.filterPlaceholder")}
         className="mb-3 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
       />
       {error && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
           <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="font-medium">Falha ao listar tabelas</div>
+            <div className="font-medium">{t("dataTransfer.listTablesFailed")}</div>
             <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-[10px] opacity-80">
               {error}
             </pre>
@@ -960,7 +965,7 @@ function TablesStep({
             className="inline-flex shrink-0 items-center gap-1 rounded-md border border-destructive/40 px-2 py-1 text-[11px] hover:bg-destructive/20"
           >
             <RotateCcw className="h-3 w-3" />
-            Retentar
+            {t("dataTransfer.retry")}
           </button>
         </div>
       )}
@@ -1113,149 +1118,146 @@ function OptionsStep(props: {
     targetIsMysql,
     crossDialect,
   } = props;
+  const t = useT();
   return (
     <div className="mx-auto max-w-2xl">
       {crossDialect && (
         <div className="mb-4 rounded-md border border-conn-accent/30 bg-conn-accent/5 p-3 text-xs text-muted-foreground">
-          Transferência cross-dialect detectada. DDL será traduzido
-          automaticamente; triggers e opções MySQL-only ficam escondidas.
+          {t("dataTransfer.crossDialectNote")}
         </div>
       )}
       <div className="mb-5 flex items-center gap-2">
         <Settings2 className="h-4 w-4 text-muted-foreground" />
-        <h3 className="text-sm font-semibold">Opções de transferência</h3>
+        <h3 className="text-sm font-semibold">{t("dataTransfer.optionsHeader")}</h3>
       </div>
 
-      {/* Table Options — estrutura */}
-      <Card title="Table Options">
+      <Card title={t("dataTransfer.cardTableOptions")}>
         <Toggle
-          label="Create tables (estrutura via SHOW CREATE TABLE)"
+          label={t("dataTransfer.optCreateTables")}
           value={createTables}
           onChange={setCreateTables}
-          hint="Desliga se o destino já tem as tabelas e você só quer dados."
+          hint={t("dataTransfer.optCreateTablesHint")}
         />
         <Toggle
-          label="Drop target before create"
+          label={t("dataTransfer.optDropTarget")}
           value={dropTarget}
           onChange={setDropTarget}
-          hint="DROP TABLE IF EXISTS antes de recriar. Usa em combo com Create tables."
+          hint={t("dataTransfer.optDropTargetHint")}
         />
         <Toggle
-          label="Empty target before records"
+          label={t("dataTransfer.optEmptyTarget")}
           value={emptyTarget}
           onChange={setEmptyTarget}
-          hint="DELETE FROM antes de inserir. Ignorado se Drop target estiver ativo."
+          hint={t("dataTransfer.optEmptyTargetHint")}
         />
         {targetIsMysql && !crossDialect && (
           <Toggle
-            label="Copy triggers"
+            label={t("dataTransfer.optCopyTriggers")}
             value={copyTriggers}
             onChange={setCopyTriggers}
-            hint="Depois dos inserts, SHOW CREATE TRIGGER na origem → DROP + CREATE no destino. DEFINER é stripado pra sobreviver a usuários diferentes."
+            hint={t("dataTransfer.optCopyTriggersHint")}
           />
         )}
       </Card>
 
-      {/* Record Options */}
-      <Card title="Record Options">
+      <Card title={t("dataTransfer.cardRecordOptions")}>
         <Toggle
-          label="Create records"
+          label={t("dataTransfer.optCreateRecords")}
           value={createRecords}
           onChange={setCreateRecords}
-          hint="Desliga pra copiar só a estrutura (sem dados)."
+          hint={t("dataTransfer.optCreateRecordsHint")}
         />
         <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">Insert mode</span>
+          <span className="text-xs">{t("dataTransfer.optInsertMode")}</span>
           <select
             value={insertMode}
             onChange={(e) => setInsertMode(e.target.value as InsertMode)}
             className="w-full rounded border border-border bg-popover px-2 py-1 text-xs text-popover-foreground focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
           >
-            <option value="insert">INSERT (falha em duplicata)</option>
+            <option value="insert">{t("dataTransfer.optInsertModeInsert")}</option>
             {targetIsMysql && (
               <>
-                <option value="insert_ignore">INSERT IGNORE (pula duplicatas)</option>
-                <option value="replace">REPLACE (substitui duplicatas)</option>
+                <option value="insert_ignore">{t("dataTransfer.optInsertModeIgnore")}</option>
+                <option value="replace">{t("dataTransfer.optInsertModeReplace")}</option>
               </>
             )}
           </select>
         </label>
         <Toggle
-          label="Use complete insert statements"
+          label={t("dataTransfer.optCompleteInserts")}
           value={completeInserts}
           onChange={setCompleteInserts}
-          hint="Inclui a lista de colunas no INSERT (recomendado — seguro contra reordenação)."
+          hint={t("dataTransfer.optCompleteInsertsHint")}
         />
         <Toggle
-          label="Use extended insert statements (multi-row VALUES)"
+          label={t("dataTransfer.optExtendedInserts")}
           value={extendedInserts}
           onChange={setExtendedInserts}
-          hint="Agrupa várias linhas por INSERT. Muito mais rápido. Desliga só pra debug."
+          hint={t("dataTransfer.optExtendedInsertsHint")}
         />
         {targetIsMysql && (
           <Toggle
-            label="Use hexadecimal format for BLOB"
+            label={t("dataTransfer.optHexBlob")}
             value={hexBlob}
             onChange={setHexBlob}
-            hint="BLOBs como 0xABCD… (canônico). Desligar arrisca corromper bytes especiais."
+            hint={t("dataTransfer.optHexBlobHint")}
           />
         )}
         {targetIsMysql && (
           <Toggle
-            label="Preserve PK=0 em colunas AUTO_INCREMENT"
+            label={t("dataTransfer.optPreserveZeroAi")}
             value={preserveZeroAutoInc}
             onChange={setPreserveZeroAutoInc}
-            hint="Adiciona NO_AUTO_VALUE_ON_ZERO ao sql_mode. Sem isso, registros com id=0 viram um auto-increment novo no destino. Mesmo default do mysqldump."
+            hint={t("dataTransfer.optPreserveZeroAiHint")}
           />
         )}
         <Toggle
-          label="Use transaction (BEGIN/COMMIT por tabela)"
+          label={t("dataTransfer.optUseTransaction")}
           value={useTransaction}
           onChange={setUseTransaction}
-          hint="Atômico por tabela. Ignorado se single_transaction estiver ativo."
+          hint={t("dataTransfer.optUseTransactionHint")}
         />
         {targetIsMysql && (
           <Toggle
-            label="Lock target tables (LOCK TABLES WRITE)"
+            label={t("dataTransfer.optLockTarget")}
             value={lockTarget}
             onChange={setLockTarget}
-            hint="Reduz metadata contention em carga massiva exclusiva."
+            hint={t("dataTransfer.optLockTargetHint")}
           />
         )}
       </Card>
 
-      {/* Performance */}
-      <Card title="Performance">
+      <Card title={t("dataTransfer.cardPerformance")}>
         {targetIsMysql && (
           <>
             <Toggle
-              label="Disable FOREIGN_KEY_CHECKS"
+              label={t("dataTransfer.optDisableFkChecks")}
               value={disableFkChecks}
               onChange={setDisableFkChecks}
-              hint="Essencial em tabelas com FK. Ligado por padrão."
+              hint={t("dataTransfer.optDisableFkChecksHint")}
             />
             <Toggle
-              label="Disable UNIQUE_CHECKS"
+              label={t("dataTransfer.optDisableUniqueChecks")}
               value={disableUniqueChecks}
               onChange={setDisableUniqueChecks}
-              hint="Pula validação de UNIQUE no InnoDB durante o load."
+              hint={t("dataTransfer.optDisableUniqueChecksHint")}
             />
             <Toggle
-              label="Disable SQL_LOG_BIN"
+              label={t("dataTransfer.optDisableBinlog")}
               value={disableBinlog}
               onChange={setDisableBinlog}
-              hint="Pula o binlog. Só use se o target NÃO é master de replicação."
+              hint={t("dataTransfer.optDisableBinlogHint")}
             />
           </>
         )}
         <Toggle
-          label="Keyset pagination (WHERE pk > last LIMIT N)"
+          label={t("dataTransfer.optKeyset")}
           value={useKeyset}
           onChange={setUseKeyset}
-          hint="Em vez de OFFSET (que é O(N) em tabelas grandes). Só funciona com PK inteira de coluna única — fallback automático pra OFFSET."
+          hint={t("dataTransfer.optKeysetHint")}
         />
         <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">Chunk size (linhas/batch)</span>
+          <span className="text-xs">{t("dataTransfer.optChunkSize")}</span>
           <input
             type="number"
             min={1}
@@ -1265,7 +1267,7 @@ function OptionsStep(props: {
           />
         </label>
         <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">Max statement (KB)</span>
+          <span className="text-xs">{t("dataTransfer.optMaxStmtKb")}</span>
           <input
             type="number"
             min={16}
@@ -1277,9 +1279,12 @@ function OptionsStep(props: {
         </label>
         <label className="grid grid-cols-[180px_1fr] items-center gap-3">
           <span className="text-xs">
-            Paralelismo (tabelas)
+            {t("dataTransfer.optParallelTables")}
             <span className="ml-1 text-muted-foreground">
-              ({concurrency} worker{concurrency === 1 ? "" : "s"})
+              ({concurrency}{" "}
+              {concurrency === 1
+                ? t("dataTransfer.workerSingular")
+                : t("dataTransfer.workerPlural")})
             </span>
           </span>
           <input
@@ -1293,9 +1298,11 @@ function OptionsStep(props: {
         </label>
         <label className="grid grid-cols-[180px_1fr] items-center gap-3">
           <span className="text-xs">
-            Paralelismo intra-tabela
+            {t("dataTransfer.optParallelIntra")}
             <span className="ml-1 text-muted-foreground">
-              ({intraTableWorkers === 1 ? "off" : `${intraTableWorkers} workers`})
+              ({intraTableWorkers === 1
+                ? t("dataTransfer.intraOff")
+                : t("dataTransfer.intraWorkers", { n: intraTableWorkers })})
             </span>
           </span>
           <input
@@ -1308,11 +1315,10 @@ function OptionsStep(props: {
           />
         </label>
         <div className="-mt-2 ml-[192px] text-[10px] text-muted-foreground">
-          Divide o range da PK em N faixas. Exige PK inteira. Desliga
-          lock_target e tx por-tabela — perde atomicidade.
+          {t("dataTransfer.optParallelIntraNote")}
         </div>
         <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">Threshold intra-tabela (linhas)</span>
+          <span className="text-xs">{t("dataTransfer.optIntraThreshold")}</span>
           <input
             type="number"
             min={1}
@@ -1326,38 +1332,37 @@ function OptionsStep(props: {
         </label>
       </Card>
 
-      {/* Other Options */}
-      <Card title="Other Options">
+      <Card title={t("dataTransfer.cardOtherOptions")}>
         <Toggle
-          label="Create target database/schema if not exist"
+          label={t("dataTransfer.optCreateTargetSchema")}
           value={createTargetSchema}
           onChange={setCreateTargetSchema}
-          hint="CREATE DATABASE IF NOT EXISTS antes de começar."
+          hint={t("dataTransfer.optCreateTargetSchemaHint")}
         />
         <Toggle
-          label="Continue on error"
+          label={t("dataTransfer.optContinueOnError")}
           value={continueOnError}
           onChange={setContinueOnError}
-          hint="Pula pra próxima tabela em vez de abortar. Falhas podem ser retentadas depois."
+          hint={t("dataTransfer.optContinueOnErrorHint")}
         />
         {targetIsMysql && (
           <Toggle
-            label="Lock source tables"
+            label={t("dataTransfer.optLockSource")}
             value={lockSource}
             onChange={setLockSource}
-            hint="LOCK TABLES src.* READ — snapshot consistente durante o load."
+            hint={t("dataTransfer.optLockSourceHint")}
           />
         )}
         <Toggle
-          label="Use single transaction"
+          label={t("dataTransfer.optSingleTransaction")}
           value={singleTransaction}
           onChange={setSingleTransaction}
-          hint="Envolve TODO o transfer numa tx única no destino. Atomicidade total; pode prender undo log grande."
+          hint={t("dataTransfer.optSingleTransactionHint")}
         />
       </Card>
 
       <p className="mt-4 text-[11px] text-muted-foreground">
-        V1.2: paralelismo intra-tabela (split por PK range), drop indexes automático, protocol compression, checksum validation.
+        {t("dataTransfer.v12Hint")}
       </p>
     </div>
   );
@@ -1446,6 +1451,7 @@ function ProgressStep({
   workersByTable: Map<string, Map<number, TableWorkerProgress>>;
   notesByTable: Map<string, TableNote[]>;
 }) {
+  const t = useT();
   // Quando só 1 tabela, o "progresso geral" é redundante com o checklist.
   const showOverall = totalTables > 1;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -1477,13 +1483,18 @@ function ProgressStep({
           <div className="flex-1">
             <div className="font-medium">
               {finalSummary.failed > 0
-                ? "Concluído com erros"
-                : "Transferência concluída"}
+                ? t("dataTransfer.doneWithErrors")
+                : t("dataTransfer.doneOk")}
             </div>
             <div className="mt-1 text-xs opacity-80">
-              {finalSummary.total_rows.toLocaleString()} linhas em{" "}
-              {(finalSummary.elapsed_ms / 1000).toFixed(1)}s
-              {finalSummary.failed > 0 && ` · ${finalSummary.failed} falhas`}
+              {t("dataTransfer.summaryLine", {
+                rows: finalSummary.total_rows.toLocaleString(),
+                seconds: (finalSummary.elapsed_ms / 1000).toFixed(1),
+              })}
+              {finalSummary.failed > 0 &&
+                t("dataTransfer.summaryFailuresSuffix", {
+                  failed: finalSummary.failed,
+                })}
             </div>
           </div>
           {finalSummary.failed > 0 && failedTables.length > 0 && !running && (
@@ -1493,7 +1504,10 @@ function ProgressStep({
               className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/30"
             >
               <RotateCcw className="h-3 w-3" />
-              Retentar {failedTables.length} falha{failedTables.length === 1 ? "" : "s"}
+              {t("dataTransfer.retryFailures", {
+                n: failedTables.length,
+                plural: failedTables.length === 1 ? "" : "s",
+              })}
             </button>
           )}
         </div>
@@ -1509,7 +1523,7 @@ function ProgressStep({
               className="inline-flex items-center gap-1.5 rounded-md bg-conn-accent px-3 py-1.5 text-xs font-medium text-conn-accent-foreground hover:opacity-90"
             >
               <Play className="h-3 w-3" />
-              Retomar
+              {t("dataTransfer.resume")}
             </button>
           ) : (
             <button
@@ -1519,7 +1533,7 @@ function ProgressStep({
               className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Pause className="h-3 w-3" />
-              Pausar
+              {t("dataTransfer.pause")}
             </button>
           )}
           <button
@@ -1533,14 +1547,14 @@ function ProgressStep({
             ) : (
               <Square className="h-3 w-3" />
             )}
-            {stopping ? "Parando…" : "Parar"}
+            {stopping ? t("dataTransfer.stopping") : t("dataTransfer.stop")}
           </button>
           <div className="ml-auto text-[11px] text-muted-foreground">
             {paused
-              ? "Pausado — workers aguardando retomar."
+              ? t("dataTransfer.paused")
               : stopping
-                ? "Encerrando — aguardando workers finalizarem o chunk atual."
-                : "Em execução."}
+                ? t("dataTransfer.encerrando")
+                : t("dataTransfer.running")}
           </div>
         </div>
       )}
@@ -1551,10 +1565,10 @@ function ProgressStep({
         <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-medium text-foreground">
-              Progresso geral
+              {t("dataTransfer.overall")}
             </span>
             <span className="tabular-nums text-muted-foreground">
-              {tablesDone}/{totalTables} tabelas
+              {t("dataTransfer.tablesDoneFormat", { done: tablesDone, total: totalTables })}
             </span>
           </div>
           <div className="flex items-baseline gap-3 tabular-nums text-muted-foreground">
@@ -1583,9 +1597,9 @@ function ProgressStep({
 
       {/* Checklist por tabela */}
       <div className="space-y-1">
-        {tables.map((t) => {
-          const p = perTable.get(t);
-          const d = doneTable.get(t);
+        {tables.map((tbl) => {
+          const p = perTable.get(tbl);
+          const d = doneTable.get(tbl);
           const pct =
             p && p.total > 0 ? Math.min(100, (p.done / p.total) * 100) : d && !d.error ? 100 : 0;
           const status: "pending" | "running" | "done" | "error" = d
@@ -1597,17 +1611,20 @@ function ProgressStep({
               : "pending";
 
           const rowsLine = d
-            ? `${d.rows.toLocaleString()} linhas · ${(d.elapsed_ms / 1000).toFixed(1)}s`
+            ? t("dataTransfer.summaryLine", {
+                rows: d.rows.toLocaleString(),
+                seconds: (d.elapsed_ms / 1000).toFixed(1),
+              })
             : p
               ? `${p.done.toLocaleString()}${p.total > 0 ? ` / ${p.total.toLocaleString()}` : ""}`
               : "—";
 
-          const workers = workersByTable.get(t);
+          const workers = workersByTable.get(tbl);
           const hasWorkers = workers && workers.size > 0;
-          const isExpanded = expanded.has(t);
+          const isExpanded = expanded.has(tbl);
           return (
             <div
-              key={t}
+              key={tbl}
               className={cn(
                 "rounded-md border px-3 py-2 transition-colors",
                 status === "error"
@@ -1624,7 +1641,7 @@ function ProgressStep({
                   "flex items-center gap-2 text-xs",
                   hasWorkers && "cursor-pointer",
                 )}
-                onClick={hasWorkers ? () => toggleExpand(t) : undefined}
+                onClick={hasWorkers ? () => toggleExpand(tbl) : undefined}
               >
                 {hasWorkers && (
                   <span className="grid h-4 w-4 place-items-center text-muted-foreground">
@@ -1644,7 +1661,7 @@ function ProgressStep({
                 ) : (
                   <span className="h-4 w-4 shrink-0 rounded-full border border-muted-foreground/40" />
                 )}
-                <span className="flex-1 truncate font-mono font-medium">{t}</span>
+                <span className="flex-1 truncate font-mono font-medium">{tbl}</span>
                 <span className="shrink-0 text-right tabular-nums text-muted-foreground">
                   {rowsLine}
                 </span>
@@ -1656,9 +1673,9 @@ function ProgressStep({
                 {status === "error" && !running && (
                   <button
                     type="button"
-                    onClick={() => onRetrySingle(t)}
+                    onClick={() => onRetrySingle(tbl)}
                     className="grid h-5 w-5 place-items-center rounded text-muted-foreground transition-colors hover:bg-amber-500/20 hover:text-amber-400"
-                    title="Retentar esta tabela"
+                    title={t("dataTransfer.retrySingleTitle")}
                   >
                     <RotateCcw className="h-3 w-3" />
                   </button>
@@ -1685,7 +1702,7 @@ function ProgressStep({
                 </div>
               )}
               {/* Notas do backend (ex: intra-parallel ativado / desativado) */}
-              {(notesByTable.get(t) ?? []).map((note, i) => (
+              {(notesByTable.get(tbl) ?? []).map((note, i) => (
                 <div
                   key={i}
                   className={cn(
@@ -1800,6 +1817,7 @@ function NavFooter({
   onRun: () => void;
   running: boolean;
 }) {
+  const t = useT();
   const order: Step[] = ["endpoints", "tables", "options", "progress"];
   const idx = order.indexOf(step);
   const back = () => idx > 0 && setStep(order[idx - 1]);
@@ -1813,16 +1831,16 @@ function NavFooter({
             type="button"
             onClick={() => setStep("tables")}
             className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="Volta direto pro passo de tabelas (útil quando precisa remover uma tabela que falhou)"
+            title={t("dataTransfer.backToTablesTitle")}
           >
-            ← Tabelas
+            {t("dataTransfer.backToTables")}
           </button>
           <button
             type="button"
             onClick={() => setStep("options")}
             className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            ← Opções
+            {t("dataTransfer.backToOptions")}
           </button>
         </>
       )}
@@ -1832,7 +1850,7 @@ function NavFooter({
           onClick={back}
           className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
-          Voltar
+          {t("dataTransfer.back")}
         </button>
       )}
       {step === "endpoints" && (
@@ -1842,7 +1860,7 @@ function NavFooter({
           disabled={!canNext}
           className="inline-flex items-center gap-1 rounded-md bg-conn-accent px-3 py-1.5 font-medium text-conn-accent-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Avançar
+          {t("dataTransfer.advance")}
           <ArrowRight className="h-3 w-3" />
         </button>
       )}
@@ -1853,7 +1871,7 @@ function NavFooter({
           disabled={!canNext}
           className="inline-flex items-center gap-1 rounded-md bg-conn-accent px-3 py-1.5 font-medium text-conn-accent-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Avançar
+          {t("dataTransfer.advance")}
           <ArrowRight className="h-3 w-3" />
         </button>
       )}
@@ -1869,7 +1887,7 @@ function NavFooter({
           ) : (
             <Play className="h-3 w-3" />
           )}
-          Executar transferência
+          {t("dataTransfer.runTransfer")}
         </button>
       )}
     </div>

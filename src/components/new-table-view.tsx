@@ -4,6 +4,7 @@ import { Loader2, Plus, Table as TableIcon, Trash2 } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import type { Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
 import { useTabs } from "@/state/tabs";
 
@@ -109,6 +110,7 @@ interface Props {
 }
 
 export function NewTableView({ tabId, connectionId, schema }: Props) {
+  const t = useT();
   const invalidate = useSchemaCache((s) => s.invalidateSchema);
   const ensureSnapshot = useSchemaCache((s) => s.ensureSnapshot);
   const closeTab = useTabs((s) => s.close);
@@ -145,17 +147,19 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
 
   // Atualiza o label da aba com o nome digitado.
   const updateTabLabel = (n: string) => {
-    const lbl = n.trim() ? `Nova tabela · ${n.trim()}` : `Nova tabela · ${schema}`;
+    const lbl = n.trim()
+      ? t("newTable.tabLabelNamed", { name: n.trim() })
+      : t("newTable.tabLabel", { schema });
     patchTab(tabId, { label: lbl });
   };
 
   const handleCreate = async () => {
     if (!name.trim()) {
-      setError("Nome da tabela é obrigatório.");
+      setError(t("newTable.errNameRequired"));
       return;
     }
     if (cols.filter((c) => c.name.trim()).length === 0) {
-      setError("Pelo menos uma coluna com nome é obrigatória.");
+      setError(t("newTable.errColumnRequired"));
       return;
     }
     setApplying(true);
@@ -188,9 +192,9 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-card/30 px-4">
         <TableIcon className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">Nova tabela em {schema}</h2>
+        <h2 className="text-sm font-semibold">{t("newTable.title", { schema })}</h2>
         <span className="ml-auto text-[11px] text-muted-foreground">
-          Crie a tabela e depois edite índices, FKs e opções via Ctrl+D
+          {t("newTable.hint")}
         </span>
       </header>
 
@@ -204,7 +208,7 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
                 setName(e.target.value);
                 updateTabLabel(e.target.value);
               }}
-              placeholder="Nome da tabela"
+              placeholder={t("newTable.namePlaceholder")}
               className="rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
               autoFocus
             />
@@ -212,7 +216,7 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
               value={engine}
               onChange={(e) => setEngine(e.target.value)}
               className="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-              title="Engine"
+              title={t("newTable.engineTitle")}
             >
               {ENGINES.map((e) => (
                 <option key={e} value={e}>
@@ -224,9 +228,9 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
               type="text"
               value={charset}
               onChange={(e) => setCharset(e.target.value)}
-              placeholder="charset"
+              placeholder={t("newTable.charsetPlaceholder")}
               className="w-28 rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-              title="Default charset"
+              title={t("newTable.charsetTitle")}
             />
           </div>
 
@@ -234,20 +238,20 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
             type="text"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="Comentário da tabela (opcional)"
+            placeholder={t("newTable.commentPlaceholder")}
             className="mb-3 w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground"
           />
 
           <div className="rounded-md border border-border">
             <div className="grid grid-cols-[1.5fr_1fr_0.8fr_auto_auto_auto_auto_1fr_auto] items-center gap-1 border-b border-border bg-card/40 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              <span>Nome</span>
-              <span>Tipo</span>
-              <span>Tam/Prec</span>
-              <span title="Nullable">NULL</span>
-              <span title="Primary Key">PK</span>
-              <span title="Unique">UQ</span>
-              <span title="Auto increment">AI</span>
-              <span>Default / Comentário</span>
+              <span>{t("newTable.colName")}</span>
+              <span>{t("newTable.colType")}</span>
+              <span>{t("newTable.colSize")}</span>
+              <span title={t("newTable.nullTitle")}>NULL</span>
+              <span title={t("newTable.pkTitle")}>PK</span>
+              <span title={t("newTable.uqTitle")}>UQ</span>
+              <span title={t("newTable.aiTitle")}>AI</span>
+              <span>{t("newTable.colDefaultComment")}</span>
               <span />
             </div>
             {cols.map((col, i) => (
@@ -264,7 +268,7 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
               className="flex w-full items-center gap-1.5 border-t border-border px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-accent/30 hover:text-foreground"
             >
               <Plus className="h-3 w-3" />
-              Adicionar coluna
+              {t("newTable.addColumn")}
             </button>
           </div>
 
@@ -274,7 +278,7 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
               onClick={() => setPreviewOpen((o) => !o)}
               className="text-[11px] text-muted-foreground hover:text-foreground"
             >
-              {previewOpen ? "Esconder" : "Ver"} SQL gerado
+              {previewOpen ? t("newTable.toggleSqlHide") : t("newTable.toggleSqlShow")}
             </button>
             {previewOpen && (
               <pre className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-background p-2 font-mono text-[10px] text-muted-foreground">
@@ -300,7 +304,7 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
           disabled={applying}
           className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
         >
-          Cancelar
+          {t("newTable.cancel")}
         </button>
         <button
           type="button"
@@ -313,7 +317,7 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
           ) : (
             <Plus className="h-3 w-3" />
           )}
-          Criar tabela
+          {t("newTable.create")}
         </button>
       </footer>
     </div>
@@ -329,6 +333,7 @@ function ColumnRow({
   onChange: (p: Partial<ColumnDraft>) => void;
   onRemove: () => void;
 }) {
+  const t = useT();
   const needsLength = /^(VARCHAR|CHAR|DECIMAL|FLOAT|DOUBLE|ENUM)$/.test(col.type);
   return (
     <div className="grid grid-cols-[1.5fr_1fr_0.8fr_auto_auto_auto_auto_1fr_auto] items-center gap-1 border-b border-border/50 px-2 py-1">
@@ -336,7 +341,7 @@ function ColumnRow({
         type="text"
         value={col.name}
         onChange={(e) => onChange({ name: e.target.value })}
-        placeholder="nome"
+        placeholder={t("newTable.placeholderName")}
         className="rounded border border-border bg-background px-2 py-1 font-mono text-xs"
       />
       <select
@@ -395,14 +400,14 @@ function ColumnRow({
           type="text"
           value={col.default}
           onChange={(e) => onChange({ default: e.target.value })}
-          placeholder="default"
+          placeholder={t("newTable.placeholderDefault")}
           className="w-24 rounded border border-border bg-background px-1 py-1 font-mono text-xs"
         />
         <input
           type="text"
           value={col.comment}
           onChange={(e) => onChange({ comment: e.target.value })}
-          placeholder="comment"
+          placeholder={t("newTable.placeholderComment")}
           className="flex-1 rounded border border-border bg-background px-1 py-1 text-xs"
         />
       </div>
@@ -410,7 +415,7 @@ function ColumnRow({
         type="button"
         onClick={onRemove}
         className="grid h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-        title="Remover coluna"
+        title={t("newTable.removeColumnTitle")}
       >
         <Trash2 className="h-3 w-3" />
       </button>

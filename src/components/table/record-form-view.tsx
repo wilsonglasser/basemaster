@@ -11,6 +11,7 @@ import {
 import { formatValue, isNullish } from "@/lib/format-value";
 import type { Value } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useT } from "@/state/i18n";
 
 export interface FormCellEdit {
   row: number;
@@ -47,6 +48,7 @@ export function RecordFormView({
   onCellEdit,
   initialRow = 0,
 }: Props) {
+  const t = useT();
   const [rowIdx, setRowIdx] = useState(
     Math.min(Math.max(0, initialRow), Math.max(0, rows.length - 1)),
   );
@@ -62,7 +64,7 @@ export function RecordFormView({
   if (rows.length === 0 || !row) {
     return (
       <div className="grid h-full place-items-center text-xs text-muted-foreground">
-        Sem registros nesta página.
+        {t("recordForm.noRecords")}
       </div>
     );
   }
@@ -73,14 +75,14 @@ export function RecordFormView({
         <NavBtn
           onClick={() => setRowIdx(0)}
           disabled={clampedIdx === 0}
-          title="Primeiro (Home)"
+          title={t("recordForm.firstTitle")}
         >
           <ChevronFirst className="h-3.5 w-3.5" />
         </NavBtn>
         <NavBtn
           onClick={() => setRowIdx((i) => Math.max(0, i - 1))}
           disabled={clampedIdx === 0}
-          title="Anterior (←)"
+          title={t("recordForm.prevTitle")}
         >
           <ChevronLeft className="h-3.5 w-3.5" />
         </NavBtn>
@@ -106,14 +108,14 @@ export function RecordFormView({
         <NavBtn
           onClick={() => setRowIdx((i) => Math.min(rows.length - 1, i + 1))}
           disabled={clampedIdx >= rows.length - 1}
-          title="Próximo (→)"
+          title={t("recordForm.nextTitle")}
         >
           <ChevronRight className="h-3.5 w-3.5" />
         </NavBtn>
         <NavBtn
           onClick={() => setRowIdx(rows.length - 1)}
           disabled={clampedIdx >= rows.length - 1}
-          title="Último (End)"
+          title={t("recordForm.lastTitle")}
         >
           <ChevronLast className="h-3.5 w-3.5" />
         </NavBtn>
@@ -207,7 +209,7 @@ export function RecordFormView({
                           })
                         }
                         className="grid h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                        title="Set NULL"
+                        title={t("recordForm.setNullTitle")}
                       >
                         <Ban className="h-3 w-3" />
                       </button>
@@ -222,7 +224,7 @@ export function RecordFormView({
                           })
                         }
                         className="grid h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                        title="Set empty ('')"
+                        title={t("recordForm.setEmptyTitle")}
                       >
                         <Eraser className="h-3 w-3" />
                       </button>

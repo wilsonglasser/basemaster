@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useT } from "@/state/i18n";
 
 export type SearchMode = "campo" | "dado";
 
@@ -42,6 +43,7 @@ export function SearchBar({
   onPrev,
   onNext,
 }: SearchBarProps) {
+  const t = useT();
   const [mode, setMode] = useState<SearchMode>("dado");
   const [value, setValue] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -81,13 +83,13 @@ export function SearchBar({
           active={mode === "campo"}
           onClick={() => setMode("campo")}
           icon={<Hash className="h-3 w-3" />}
-          label="Campo"
+          label={t("search.modeField")}
         />
         <ModeBtn
           active={mode === "dado"}
           onClick={() => setMode("dado")}
           icon={<Type className="h-3 w-3" />}
-          label="Dado"
+          label={t("search.modeData")}
         />
       </div>
 
@@ -108,8 +110,8 @@ export function SearchBar({
           }}
           placeholder={
             mode === "campo"
-              ? "nome da coluna…"
-              : "valor a procurar nas células…"
+              ? t("search.placeholderField")
+              : t("search.placeholderData")
           }
           className={cn(
             "w-full rounded border border-border bg-background px-2 py-1 pr-16 text-xs",
@@ -122,13 +124,13 @@ export function SearchBar({
             active={caseSensitive}
             onClick={() => setCaseSensitive((x) => !x)}
             icon={<CaseSensitive className="h-3 w-3" />}
-            title="Match case (Aa)"
+            title={t("search.caseTitle")}
           />
           <ToggleBtn
             active={regex}
             onClick={() => setRegex((x) => !x)}
             icon={<Regex className="h-3 w-3" />}
-            title="Regex (.*)"
+            title={t("search.regexTitle")}
           />
         </div>
       </div>
@@ -150,7 +152,7 @@ export function SearchBar({
           onClick={onPrev}
           disabled={!hasMatches}
           className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
-          title="Anterior (Shift+Enter)"
+          title={t("search.prevTitle")}
         >
           <ChevronUp className="h-3 w-3" />
         </button>
@@ -159,7 +161,7 @@ export function SearchBar({
           onClick={onNext}
           disabled={!hasMatches}
           className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
-          title="Próximo (Enter)"
+          title={t("search.nextTitle")}
         >
           <ChevronDown className="h-3 w-3" />
         </button>
@@ -169,7 +171,7 @@ export function SearchBar({
         type="button"
         onClick={onClose}
         className="grid h-6 w-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-        title="Fechar (Esc)"
+        title={t("search.closeTitle")}
       >
         <X className="h-3 w-3" />
       </button>

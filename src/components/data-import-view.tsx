@@ -18,6 +18,7 @@ import { autoMapColumns } from "@/lib/auto-map";
 import { parseFile, toValue, type ParsedData } from "@/lib/data-import";
 import type { Column, Uuid } from "@/lib/types";
 import { useConnections } from "@/state/connections";
+import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
 
 const CHUNK = 500;
@@ -44,6 +45,7 @@ export function DataImportView({
   initialSchema,
   initialTable,
 }: Props) {
+  const t = useT();
   const connections = useConnections((s) => s.connections);
   const ensureSchemas = useSchemaCache((s) => s.ensureSchemas);
   const ensureTables = useSchemaCache((s) => s.ensureTables);
@@ -305,7 +307,7 @@ export function DataImportView({
             <Card title="3. Destino">
               <div className="grid grid-cols-3 gap-2">
                 <SelectField
-                  label="Conexão"
+                  label={t("dataImport.connectionLabel")}
                   value={connId ?? ""}
                   onChange={(v) => {
                     setConnId(v || null);
@@ -362,7 +364,7 @@ export function DataImportView({
                   type="button"
                   onClick={() => runAutoMap({ preserveManual: true })}
                   className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-accent"
-                  title="Preserva suas edições manuais"
+                  title={t("dataImport.preserveManualTitle")}
                 >
                   <Sparkles className="h-3 w-3" />
                   Auto-map
@@ -371,7 +373,7 @@ export function DataImportView({
                   type="button"
                   onClick={() => runAutoMap({ preserveManual: false })}
                   className="ml-1 inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent"
-                  title="Descarta edições manuais"
+                  title={t("dataImport.discardManualTitle")}
                 >
                   reset
                 </button>
