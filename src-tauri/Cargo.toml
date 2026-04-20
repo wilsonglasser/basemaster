@@ -1,0 +1,55 @@
+[package]
+name = "basemaster-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "basemaster_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+basemaster-core = { path = "../crates/core" }
+basemaster-driver-mysql = { path = "../crates/driver-mysql" }
+basemaster-driver-postgres = { path = "../crates/driver-postgres" }
+basemaster-driver-sqlite = { path = "../crates/driver-sqlite" }
+basemaster-store = { path = "../crates/store" }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-prevent-default = { version = "5", features = ["platform-windows"] }
+# Pra decriptar senhas em exports do Navicat (.ncx) — Blowfish ECB.
+blowfish = "0.9"
+cipher = "0.4"
+ecb = "0.1"
+hex = "0.4"
+quick-xml = { version = "0.36", features = ["serialize"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+# russh com ring (não aws-lc — evita dependência do NASM no Windows).
+russh = { version = "0.60", default-features = false, features = ["ring", "flate2", "rsa", "async-trait"] }
+async-trait = "0.1"
+async-channel = "2"
+# `zip` pra dump em ZIP. `default-features = false` pra evitar compressões
+# pesadas (bzip2 etc); inclui só `deflate` (standard) e `aes` opt-out.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Usado no translator MySQL→PG do sql_import (stripping table options,
+# type remaps, etc). Padrões simples; não precisa de full parser.
+regex = "1"
+# Servidor HTTP local pro MCP (Model Context Protocol). Bind em
+# 127.0.0.1 com token header — nunca exposto externamente.
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }
+tower = "0.4"
+# Sentry no-op quando SENTRY_DSN não setado. rustls features pra não arrastar openssl.
+sentry = { version = "0.41", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }

@@ -1,0 +1,61 @@
+# Rust
+target/
+Cargo.lock.bak
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editores
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tauri
+src-tauri/gen/schemas/
+src-tauri/target/
+
+# Locais
+_check.bat
+
+# Sentry / env
+.env
+.env.*
+!.env.example
+
+# SignPath / assinatura
+*.p12
+*.pfx
+*.cer
+signed/
+
+# Claude Code / agentes
+.claude/
+
+# Certificados e chaves
+*.key
+*.pem
+
+# Dumps / saídas temporárias
+/dumps/
+/exports/
+*.bmconn
+
+# Vite cache
+.vite/
+

@@ -1,0 +1,1209 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  FileText,
+  Gauge,
+  Inbox,
+  Loader2,
+  Play,
+  Save,
+  Search,
+  Square,
+  Wand2,
+} from "lucide-react";
+import {
+  Panel,
+  PanelGroup,
+  PanelResizeHandle,
+  type ImperativePanelHandle,
+} from "react-resizable-panels";
+
+import type { SQLNamespace } from "@codemirror/lang-sql";
+
+import { useTheme } from "@/hooks/use-theme";
+import { ipc } from "@/lib/ipc";
+import { ExportDialog } from "@/components/export-dialog";
+import { writeInMemory } from "@/lib/export";
+import { formatSqlText } from "@/lib/sql-format";
+import type { QueryRunBatch, QueryRunResult, Uuid } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { useActiveInfo } from "@/state/active-info";
+import { useTabState } from "@/state/tab-state";
+import { useConnections } from "@/state/connections";
+import { useQueryTabBridge } from "@/state/query-tab-bridge";
+import { useSavedQueries } from "@/state/saved-queries";
+import { useSchemaCache } from "@/state/schema-cache";
+import { useTabs } from "@/state/tabs";
+
+import { SearchBar, type SearchState } from "@/components/grid/search-bar";
+import { useGridSearch } from "@/lib/use-grid-search";
+
+import { QueryEditor } from "./query-editor";
+import { ResultGrid, type ResultGridHandle } from "./result-grid";
+
+interface QueryTabProps {
+  tabId: string;
+  connectionId: Uuid;
+  initialSchema?: string;
+  initialSql?: string;
+  autoRun?: boolean;
+  /** Se setado, Ctrl+S atualiza essa saved_query em vez de criar uma nova. */
+  savedQueryId?: Uuid;
+  savedQueryName?: string;
+}
+
+type ResultView = number | "messages" | "summary";
+
+type RunState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "results"; batch: QueryRunBatch; view: ResultView }
+  | { kind: "error"; message: string };
+
+export function QueryTab({
+  tabId,
+  connectionId,
+  initialSchema,
+  initialSql,
+  autoRun,
+  savedQueryId,
+  savedQueryName,
+}: QueryTabProps) {
+  const { theme } = useTheme();
+  const conn = useConnections((s) =>
+    s.connections.find((c) => c.id === connectionId),
+  );
+  const cache = useSchemaCache((s) => s.caches[connectionId]);
+  const ensureSchemas = useSchemaCache((s) => s.ensureSchemas);
+  const ensureSnapshot = useSchemaCache((s) => s.ensureSnapshot);
+  const patchTab = useTabs((s) => s.patch);
+  const setLive = useActiveInfo((s) => s.patch);
+  const clearLive = useActiveInfo((s) => s.clear);
+  const patchQueryState = useTabState((s) => s.patchQuery);
+  const createSaved = useSavedQueries((s) => s.create);
+  const updateSaved = useSavedQueries((s) => s.update);
+  // Nome atual da saved query linkada (vive no state local porque a
+  // aba pode ter acabado de criar uma — antes do refresh via tab kind).
+  const [currentSavedId, setCurrentSavedId] = useState<Uuid | null>(
+    savedQueryId ?? null,
+  );
+  const [currentSavedName, setCurrentSavedName] = useState<string | null>(
+    savedQueryName ?? null,
+  );
+  /** SQL "limpo" contra o qual comparamos pra detectar dirty. Inicia
+   *  com o SQL no mount (snap restaurado ou initialSql ou default) e só
+   *  avança quando o usuário salva. CRÍTICO: usar lazy init — o snap
+   *  muda a cada keystroke (porque patchQueryState persiste sql pro
+   *  tab-state), então NÃO podemos recomputar isso em render. */
+  const [savedSqlBaseline, setSavedSqlBaseline] = useState<string>(
+    () =>
+      useTabState.getState().queryOf(tabId)?.sql ??
+      initialSql ??
+      "SELECT 1;",
+  );
+
+  // Lê snapshot persistido no tab-state — sobrevive a detach/reattach e
+  // futuramente restart do app. `getState()` sem reagir — só serve pra
+  // seeding inicial.
+  const snap = useTabState.getState().queryOf(tabId);
+  const [sql, setSql] = useState(
+    () => snap?.sql ?? initialSql ?? "SELECT 1;",
+  );
+  const [schema, setSchema] = useState<string | null>(
+    snap?.schema ?? initialSchema ?? conn?.default_database ?? null,
+  );
+  // Dirty simples: sql atual diverge da baseline (que é estável — só
+  // muda em save). Funciona pra ad-hoc e pra saved_query linkada.
+  const dirty = sql !== savedSqlBaseline;
+  const [run, setRun] = useState<RunState>({ kind: "idle" });
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [search, setSearch] = useState<SearchState>({
+    value: "",
+    mode: "dado",
+    caseSensitive: false,
+    regex: false,
+  });
+  const [editorCollapsed, setEditorCollapsed] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+
+  const editorPanelRef = useRef<ImperativePanelHandle>(null);
+  const gridRef = useRef<ResultGridHandle>(null);
+
+  // Expõe setSql pro AI agent (via bridge) enquanto essa aba está
+  // montada. Desregistra no unmount.
+  useEffect(() => {
+    useQueryTabBridge.getState().register(tabId, setSql);
+    return () => {
+      useQueryTabBridge.getState().unregister(tabId);
+    };
+  }, [tabId]);
+
+  const sqlRef = useRef(sql);
+  const schemaRef = useRef(schema);
+  useEffect(() => {
+    sqlRef.current = sql;
+  }, [sql]);
+  useEffect(() => {
+    schemaRef.current = schema;
+  }, [schema]);
+
+  // Publica o conteúdo do editor pro tear-off ler + persiste em tab-state
+  // (localStorage) pra sobreviver a detach/reattach e restart.
+  useEffect(() => {
+    setLive(tabId, { editorSql: sql, editorSchema: schema ?? undefined });
+    patchQueryState(tabId, { sql, schema: schema ?? undefined });
+  }, [tabId, sql, schema, setLive, patchQueryState]);
+
+  const handleFormat = () => {
+    const formatted = formatSqlText(sql, conn?.driver);
+    if (formatted !== sql) setSql(formatted);
+  };
+
+  /** Token incremental pra invalidar runs antigos quando usuário clica Stop
+   *  ou dispara novo Run. O backend continua executando (sqlx não cancela
+   *  fácil), mas ignoramos o resultado tardio. */
+  const runTokenRef = useRef(0);
+
+  const runSql = async (sqlNow: string, schemaNow: string | null) => {
+    const token = ++runTokenRef.current;
+    setRun({ kind: "running" });
+    const started = performance.now();
+    try {
+      const batch = await ipc.db.runQuery(connectionId, sqlNow, schemaNow);
+      if (runTokenRef.current !== token) return; // abortado
+      const elapsed = Math.round(performance.now() - started);
+      const initialView: ResultView = batch.results.length > 0 ? 0 : "summary";
+      setRun({ kind: "results", batch, view: initialView });
+      const rowsAffected = batch.results.reduce(
+        (a, r) => a + (r.kind === "modify" ? r.rows_affected : 0),
+        0,
+      );
+      ipc.queryHistory
+        .insert(connectionId, {
+          sql: sqlNow,
+          schema: schemaNow,
+          elapsed_ms: elapsed,
+          rows_affected: rowsAffected > 0 ? rowsAffected : null,
+          success: true,
+        })
+        .catch((err) => console.warn("query_history insert:", err));
+    } catch (e) {
+      if (runTokenRef.current !== token) return;
+      const elapsed = Math.round(performance.now() - started);
+      setRun({ kind: "error", message: String(e) });
+      ipc.queryHistory
+        .insert(connectionId, {
+          sql: sqlNow,
+          schema: schemaNow,
+          elapsed_ms: elapsed,
+          success: false,
+          error_msg: String(e),
+        })
+        .catch((err) => console.warn("query_history insert:", err));
+    }
+  };
+
+  const handleRun = () => runSql(sqlRef.current, schemaRef.current);
+
+  const handleStop = () => {
+    // Invalida o run em voo — backend segue até terminar, mas ignoramos.
+    runTokenRef.current++;
+    setRun({ kind: "error", message: "Cancelado pelo usuário" });
+  };
+
+  const handleExplain = () => {
+    const sqlNow = sqlRef.current.trim().replace(/;\s*$/, "");
+    if (!sqlNow) return;
+    const isPg = conn?.driver === "postgres";
+    const prefix = isPg ? "EXPLAIN (ANALYZE, FORMAT TEXT)" : "EXPLAIN ANALYZE";
+    void runSql(`${prefix} ${sqlNow}`, schemaRef.current);
+  };
+
+  const handleRunRef = useRef(handleRun);
+  useEffect(() => {
+    handleRunRef.current = handleRun;
+  });
+
+  /** Salva a query (cria nova ou atualiza a linkada). Prompta por nome
+   *  apenas quando não há uma query salva associada a essa aba. */
+  const handleSave = async () => {
+    const sqlNow = sqlRef.current;
+    const schemaNow = schemaRef.current;
+    if (!sqlNow.trim()) {
+      alert("Nada pra salvar — query vazia.");
+      return;
+    }
+    try {
+      if (currentSavedId) {
+        const saved = await updateSaved(currentSavedId, {
+          name: currentSavedName ?? "Sem nome",
+          sql: sqlNow,
+          schema: schemaNow,
+        });
+        setCurrentSavedName(saved.name);
+        setSavedSqlBaseline(saved.sql);
+        // Atualiza o Tab kind pra persistir em restart/detach.
+        patchTab(tabId, {
+          label: saved.name,
+          kind: {
+            kind: "query",
+            connectionId,
+            schema: schemaNow ?? undefined,
+            initialSql: saved.sql,
+            savedQueryId: saved.id,
+            savedQueryName: saved.name,
+          },
+        });
+      } else {
+        const name = window.prompt(
+          "Nome da query salva:",
+          "Nova query",
+        );
+        if (!name || !name.trim()) return;
+        const saved = await createSaved(connectionId, {
+          name: name.trim(),
+          sql: sqlNow,
+          schema: schemaNow,
+        });
+        setCurrentSavedId(saved.id);
+        setCurrentSavedName(saved.name);
+        setSavedSqlBaseline(saved.sql);
+        patchTab(tabId, {
+          label: saved.name,
+          kind: {
+            kind: "query",
+            connectionId,
+            schema: schemaNow ?? undefined,
+            initialSql: saved.sql,
+            savedQueryId: saved.id,
+            savedQueryName: saved.name,
+          },
+        });
+      }
+    } catch (e) {
+      alert(`Falha ao salvar: ${e}`);
+    }
+  };
+
+  const handleSaveRef = useRef(handleSave);
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  });
+
+  useEffect(() => {
+    ensureSchemas(connectionId)
+      .then((schemas) => {
+        if (schema || schemas.length === 0) return;
+        const preferred = conn?.default_database
+          ? schemas.find((s) => s.name === conn.default_database)
+          : undefined;
+        setSchema(preferred?.name ?? schemas[0].name);
+      })
+      .catch((e) => console.error("ensureSchemas:", e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionId]);
+
+  useEffect(() => {
+    if (!schema) return;
+    ensureSnapshot(connectionId, schema).catch((e) =>
+      console.error("ensureSnapshot:", e),
+    );
+  }, [connectionId, schema, ensureSnapshot]);
+
+  useEffect(() => {
+    const base = currentSavedName
+      ? currentSavedName
+      : schema
+        ? `Query · ${schema}`
+        : "Query";
+    const label = dirty ? `* ${base}` : base;
+    patchTab(tabId, {
+      label,
+      accentColor: conn?.color,
+      dirty,
+    });
+  }, [schema, tabId, conn?.color, patchTab, currentSavedName, dirty]);
+
+  // Auto-run quando vem de double-click etc.
+  useEffect(() => {
+    if (autoRun && initialSql) handleRunRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Atalhos globais (capture phase) — só atuam com a aba montada (key=active.id).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const inEditor = target?.closest(".cm-editor");
+      // Se foco tá em input/textarea/contenteditable FORA do editor da
+      // query, não engula atalhos — evita que Ctrl+Enter do input do
+      // agente rode a query, por exemplo.
+      const inOtherEditable =
+        target &&
+        !inEditor &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      if (inOtherEditable) return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        handleRunRef.current();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void handleSaveRef.current();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        if (inEditor) return;
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, []);
+
+  // Search no resultado focado.
+  const focusedResult =
+    run.kind === "results" && typeof run.view === "number"
+      ? run.batch.results[run.view]
+      : null;
+  const focusedColumns =
+    focusedResult?.kind === "select" ? focusedResult.columns : [];
+  const focusedRows =
+    focusedResult?.kind === "select" ? focusedResult.rows : [];
+  const { matches, index: matchIndex, prev: matchPrev, next: matchNext } =
+    useGridSearch(search, focusedColumns, focusedRows);
+
+  const focused = matches.length > 0 ? matches[matchIndex] : null;
+  const focusedCell =
+    searchOpen && focused && search.mode === "dado" ? focused : null;
+  const focusedColumn =
+    searchOpen && focused && search.mode === "campo" ? focused[0] : null;
+
+  useEffect(() => {
+    if (!focused) return;
+    const [col, row] = focused;
+    if (search.mode === "campo") {
+      gridRef.current?.scrollToColumn(col);
+    } else {
+      gridRef.current?.scrollToCell(col, row);
+    }
+  }, [focused, search.mode]);
+
+  // Sincroniza informação "viva" da aba para a status bar.
+  useEffect(() => {
+    if (run.kind !== "results") {
+      clearLive(tabId);
+      return;
+    }
+    if (typeof run.view === "number") {
+      const r = run.batch.results[run.view];
+      if (!r) return;
+      setLive(tabId, {
+        currentSql: r.sql,
+        totalRows: r.kind === "select" ? r.rows.length : undefined,
+        elapsedMs: r.elapsed_ms,
+        cellCol: undefined,
+        cellRow: undefined,
+      });
+    } else {
+      setLive(tabId, {
+        currentSql: undefined,
+        totalRows: undefined,
+        elapsedMs: undefined,
+        cellCol: undefined,
+        cellRow: undefined,
+      });
+    }
+  }, [run, tabId, setLive, clearLive]);
+
+  // Cleanup ao desmontar a aba.
+  useEffect(() => {
+    return () => clearLive(tabId);
+  }, [tabId, clearLive]);
+
+  const sqlSchema: SQLNamespace = useMemo(() => {
+    if (!cache || !schema) return {};
+    const tables = cache.tables[schema] ?? [];
+    const cols = cache.columns[schema] ?? {};
+    const tablesNs: Record<string, string[]> = {};
+    for (const t of tables) {
+      tablesNs[t.name] = (cols[t.name] ?? []).map((c) => c.name);
+    }
+    return { [schema]: tablesNs } as SQLNamespace;
+  }, [cache, schema]);
+
+  const toggleEditor = () => {
+    const panel = editorPanelRef.current;
+    if (!panel) return;
+    if (panel.isCollapsed()) panel.expand();
+    else panel.collapse();
+  };
+
+  return (
+    <div className="flex h-full flex-col">
+      <Toolbar
+        schemas={cache?.schemas?.map((s) => s.name) ?? []}
+        schema={schema}
+        onSchema={setSchema}
+        running={run.kind === "running"}
+        onRun={handleRun}
+        onStop={handleStop}
+        onExplain={handleExplain}
+        onFormat={handleFormat}
+        editorCollapsed={editorCollapsed}
+        onToggleEditor={toggleEditor}
+        onOpenSearch={() => setSearchOpen(true)}
+        onSave={handleSave}
+        dirty={dirty}
+        isLinkedSavedQuery={!!currentSavedId}
+        onExport={
+          focusedResult?.kind === "select" ? () => setExportOpen(true) : undefined
+        }
+      />
+      {focusedResult?.kind === "select" && (
+        <ExportDialog
+          open={exportOpen}
+          onClose={() => setExportOpen(false)}
+          columns={focusedResult.columns}
+          rowCount={focusedResult.rows.length}
+          defaultName={currentSavedName ?? "query-result"}
+          onExport={async ({ format, columns, path }) => {
+            if (focusedResult.kind !== "select") return;
+            // Fatia colunas + rows no cliente.
+            const keep: number[] = [];
+            for (let i = 0; i < focusedResult.columns.length; i++) {
+              if (columns.includes(focusedResult.columns[i])) keep.push(i);
+            }
+            const sliced = focusedResult.rows.map((r) =>
+              keep.map((i) => r[i]),
+            );
+            await writeInMemory(path, format, columns, sliced);
+          }}
+        />
+      )}
+
+      <div className="min-h-0 flex-1">
+        <PanelGroup direction="vertical" autoSaveId="basemaster.query-split">
+          <Panel
+            ref={editorPanelRef}
+            defaultSize={45}
+            minSize={10}
+            collapsible
+            collapsedSize={0}
+            onCollapse={() => setEditorCollapsed(true)}
+            onExpand={() => setEditorCollapsed(false)}
+          >
+            <div className="h-full bg-card/20">
+              <QueryEditor
+                value={sql}
+                onChange={setSql}
+                onRun={handleRun}
+                onFormat={handleFormat}
+                schema={sqlSchema}
+                defaultSchema={schema ?? undefined}
+              />
+            </div>
+          </Panel>
+          <PanelResizeHandle
+            className={cn(
+              "h-1 cursor-row-resize bg-border transition-colors",
+              "hover:bg-conn-accent data-[resize-handle-active]:bg-conn-accent",
+            )}
+          />
+          <Panel defaultSize={55} minSize={10}>
+            <div className="flex h-full flex-col bg-background">
+              <SearchBar
+                open={searchOpen}
+                onClose={() => setSearchOpen(false)}
+                onChange={setSearch}
+                matchCount={matches.length}
+                matchIndex={matchIndex}
+                onPrev={matchPrev}
+                onNext={matchNext}
+              />
+              <div className="min-h-0 flex-1">
+                <ResultArea
+                  state={run}
+                  theme={theme}
+                  searchValue={search.mode === "dado" ? search.value : ""}
+                  searchResults={search.mode === "dado" ? matches : undefined}
+                  focusedCell={focusedCell}
+                  focusedColumn={focusedColumn}
+                  accentColor={conn?.color ?? null}
+                  gridRef={gridRef}
+                  onSelectView={(view) =>
+                    setRun((s) => (s.kind === "results" ? { ...s, view } : s))
+                  }
+                  onCellSelect={(cell) =>
+                    setLive(tabId, {
+                      cellCol: cell?.[0],
+                      cellRow: cell?.[1],
+                    })
+                  }
+                />
+              </div>
+            </div>
+          </Panel>
+        </PanelGroup>
+      </div>
+    </div>
+  );
+}
+
+function Toolbar({
+  schemas,
+  schema,
+  onSchema,
+  running,
+  onRun,
+  onStop,
+  onExplain,
+  onFormat,
+  editorCollapsed,
+  onToggleEditor,
+  onOpenSearch,
+  onSave,
+  dirty,
+  isLinkedSavedQuery,
+  onExport,
+}: {
+  schemas: string[];
+  schema: string | null;
+  onSchema: (s: string | null) => void;
+  running: boolean;
+  onRun: () => void;
+  onStop: () => void;
+  onExplain: () => void;
+  onFormat: () => void;
+  editorCollapsed: boolean;
+  onToggleEditor: () => void;
+  onOpenSearch: () => void;
+  onSave: () => void;
+  dirty: boolean;
+  isLinkedSavedQuery: boolean;
+  /** Dispara o fluxo de export — undefined = sem result-set exportável. */
+  onExport?: () => void;
+}) {
+  return (
+    <div className="flex h-10 items-center gap-3 border-b border-border bg-card/30 px-3">
+      <button
+        type="button"
+        onClick={onToggleEditor}
+        className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title={editorCollapsed ? "Expandir editor" : "Colapsar editor"}
+      >
+        {editorCollapsed ? (
+          <ChevronDown className="h-3.5 w-3.5" />
+        ) : (
+          <ChevronUp className="h-3.5 w-3.5" />
+        )}
+      </button>
+
+      <select
+        value={schema ?? ""}
+        onChange={(e) => onSchema(e.target.value || null)}
+        className="rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring/30"
+      >
+        <option value="">— sem schema —</option>
+        {schemas.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+
+      <button
+        type="button"
+        onClick={onFormat}
+        className="ml-auto grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title="Formatar SQL (Ctrl+Shift+F)"
+      >
+        <Wand2 className="h-3.5 w-3.5" />
+      </button>
+
+      <button
+        type="button"
+        onClick={onSave}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors",
+          dirty
+            ? "bg-amber-500/20 text-amber-500 hover:bg-amber-500/30"
+            : "text-muted-foreground hover:bg-accent hover:text-foreground",
+        )}
+        title={
+          isLinkedSavedQuery
+            ? dirty
+              ? "Salvar alterações (Ctrl+S)"
+              : "Salvar (Ctrl+S) — sem mudanças"
+            : "Salvar como query nova (Ctrl+S)"
+        }
+      >
+        <Save className="h-3.5 w-3.5" />
+        {isLinkedSavedQuery
+          ? dirty
+            ? "Salvar*"
+            : "Salvo"
+          : "Salvar"}
+      </button>
+
+      {onExport && (
+        <button
+          type="button"
+          onClick={onExport}
+          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Exportar resultado"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onOpenSearch}
+        className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title="Buscar no resultado (Ctrl+F)"
+      >
+        <Search className="h-3.5 w-3.5" />
+      </button>
+
+      {running ? (
+        <button
+          type="button"
+          onClick={onStop}
+          className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground shadow-sm transition-opacity hover:opacity-90"
+          title="Abortar query em execução"
+        >
+          <Square className="h-3 w-3 fill-current" />
+          Stop
+        </button>
+      ) : (
+        <div className="inline-flex rounded-md bg-conn-accent text-conn-accent-foreground shadow-sm">
+          <button
+            type="button"
+            onClick={onRun}
+            className="inline-flex items-center gap-1.5 rounded-l-md px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
+          >
+            <Play className="h-3 w-3 fill-current" />
+            Run
+            <kbd className="ml-1 rounded bg-black/20 px-1 py-px text-[9px] font-mono tracking-wider">
+              Ctrl ↵
+            </kbd>
+          </button>
+          <div className="w-px bg-black/20" />
+          <button
+            type="button"
+            onClick={onExplain}
+            className="inline-flex items-center gap-1 rounded-r-md px-2 py-1 text-xs font-medium transition-opacity hover:opacity-90"
+            title="EXPLAIN ANALYZE na query atual"
+          >
+            <Gauge className="h-3 w-3" />
+            Explain
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultArea({
+  state,
+  theme,
+  searchValue,
+  searchResults,
+  focusedCell,
+  focusedColumn,
+  accentColor,
+  gridRef,
+  onSelectView,
+  onCellSelect,
+}: {
+  state: RunState;
+  theme: "dark" | "light";
+  searchValue: string;
+  searchResults?: ReadonlyArray<readonly [number, number]>;
+  focusedCell?: readonly [number, number] | null;
+  focusedColumn?: number | null;
+  accentColor?: string | null;
+  gridRef: React.RefObject<ResultGridHandle>;
+  onSelectView: (view: ResultView) => void;
+  onCellSelect: (cell: readonly [number, number] | undefined) => void;
+}) {
+  if (state.kind === "idle") {
+    return (
+      <Centered>
+        <p className="text-sm text-muted-foreground">
+          Pressione{" "}
+          <kbd className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-mono">
+            Ctrl + Enter
+          </kbd>{" "}
+          para executar.
+        </p>
+      </Centered>
+    );
+  }
+  if (state.kind === "running") {
+    return (
+      <Centered>
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Executando…</span>
+      </Centered>
+    );
+  }
+  if (state.kind === "error") {
+    return (
+      <div className="h-full overflow-auto p-4">
+        <pre
+          className={cn(
+            "rounded-md border border-destructive/30 bg-destructive/5 p-4",
+            "font-mono text-xs leading-relaxed text-destructive whitespace-pre-wrap break-words",
+          )}
+        >
+          {state.message}
+        </pre>
+      </div>
+    );
+  }
+
+  const { batch, view } = state;
+  return (
+    <div className="flex h-full flex-col">
+      <ResultTabs
+        batch={batch}
+        view={view}
+        onSelect={onSelectView}
+      />
+      <div className="min-h-0 flex-1">
+        {typeof view === "number" ? (
+          <ResultPane
+            result={batch.results[view]}
+            theme={theme}
+            searchValue={searchValue}
+            searchResults={searchResults}
+            focusedCell={focusedCell}
+            focusedColumn={focusedColumn}
+            accentColor={accentColor}
+            gridRef={gridRef}
+            onCellSelect={onCellSelect}
+          />
+        ) : view === "messages" ? (
+          <MessagesPane batch={batch} />
+        ) : (
+          <SummaryPane batch={batch} onJumpTo={onSelectView} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResultTabs({
+  batch,
+  view,
+  onSelect,
+}: {
+  batch: QueryRunBatch;
+  view: ResultView;
+  onSelect: (view: ResultView) => void;
+}) {
+  return (
+    <div className="flex h-7 shrink-0 items-stretch overflow-x-auto border-b border-border bg-card/30">
+      {batch.results.map((r, i) => {
+        const active = view === i;
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onSelect(i)}
+            className={cn(
+              "flex items-center gap-1.5 border-r border-border px-3 text-[11px] tabular-nums transition-colors",
+              active
+                ? "bg-background text-foreground"
+                : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+            )}
+            title={r.sql}
+          >
+            <ResultBadge result={r} index={i} />
+          </button>
+        );
+      })}
+
+      <FixedTab
+        active={view === "messages"}
+        onClick={() => onSelect("messages")}
+        icon={<FileText className="h-3 w-3" />}
+        label="Mensagens"
+      />
+      <FixedTab
+        active={view === "summary"}
+        onClick={() => onSelect("summary")}
+        icon={<Inbox className="h-3 w-3" />}
+        label="Resumo"
+      />
+    </div>
+  );
+}
+
+function FixedTab({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1.5 border-r border-border px-3 text-[11px] transition-colors",
+        active
+          ? "bg-background text-foreground"
+          : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+      )}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function ResultBadge({
+  result,
+  index,
+}: {
+  result: QueryRunResult;
+  index: number;
+}) {
+  if (result.kind === "select") {
+    return (
+      <>
+        <span className="font-medium">#{index + 1}</span>
+        <span className="opacity-70">{result.rows.length} linhas</span>
+      </>
+    );
+  }
+  if (result.kind === "modify") {
+    return (
+      <>
+        <span className="font-medium">#{index + 1}</span>
+        <span className="opacity-70">{result.rows_affected} afetadas</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <AlertCircle className="h-3 w-3 text-destructive" />
+      <span className="font-medium">#{index + 1}</span>
+      <span className="text-destructive opacity-90">erro</span>
+    </>
+  );
+}
+
+function ResultPane({
+  result,
+  theme,
+  searchValue,
+  searchResults,
+  focusedCell,
+  focusedColumn,
+  accentColor,
+  gridRef,
+  onCellSelect,
+}: {
+  result: QueryRunResult;
+  theme: "dark" | "light";
+  searchValue: string;
+  searchResults?: ReadonlyArray<readonly [number, number]>;
+  focusedCell?: readonly [number, number] | null;
+  focusedColumn?: number | null;
+  accentColor?: string | null;
+  gridRef: React.RefObject<ResultGridHandle>;
+  onCellSelect: (cell: readonly [number, number] | undefined) => void;
+}) {
+  if (result.kind === "error") {
+    return (
+      <div className="h-full overflow-auto p-4">
+        <pre
+          className={cn(
+            "rounded-md border border-destructive/30 bg-destructive/5 p-4",
+            "font-mono text-xs leading-relaxed text-destructive whitespace-pre-wrap break-words",
+          )}
+        >
+          {result.message}
+        </pre>
+      </div>
+    );
+  }
+  if (result.kind === "modify") {
+    return (
+      <Centered>
+        <span className="text-sm text-foreground">
+          {result.rows_affected} linha{result.rows_affected === 1 ? "" : "s"}{" "}
+          afetada{result.rows_affected === 1 ? "" : "s"}
+          {result.last_insert_id
+            ? ` · last_insert_id ${result.last_insert_id}`
+            : ""}{" "}
+          · {result.elapsed_ms} ms
+        </span>
+      </Centered>
+    );
+  }
+  if (result.rows.length === 0) {
+    return (
+      <Centered>
+        <span className="text-sm text-muted-foreground">
+          Nenhuma linha retornada.
+        </span>
+      </Centered>
+    );
+  }
+  return (
+    <ResultGrid
+      ref={gridRef}
+      columns={result.columns}
+      rows={result.rows}
+      theme={theme}
+      searchValue={searchValue}
+      searchResults={searchResults}
+      focusedCell={focusedCell}
+      focusedColumn={focusedColumn}
+      accentColor={accentColor}
+      onCellSelect={onCellSelect}
+    />
+  );
+}
+
+function MessagesPane({ batch }: { batch: QueryRunBatch }) {
+  if (batch.results.length === 0) {
+    return (
+      <Centered>
+        <span className="text-sm text-muted-foreground">
+          Nenhuma query executada.
+        </span>
+      </Centered>
+    );
+  }
+  return (
+    <div className="h-full overflow-auto px-4 py-3 font-mono text-[12px] leading-relaxed">
+      {batch.results.map((r, i) => (
+        <div key={i} className={cn(i > 0 && "mt-4")}>
+          <pre className="whitespace-pre text-foreground/90">{r.sql}</pre>
+          <div
+            className={cn(
+              r.kind === "error" ? "text-destructive" : "text-emerald-500",
+            )}
+          >
+            {r.kind === "error" ? `> ERROR: ${r.message}` : "> OK"}
+          </div>
+          {r.kind === "select" && (
+            <div className="text-muted-foreground">
+              {`> ${r.rows.length} ${r.rows.length === 1 ? "linha" : "linhas"} retornada${r.rows.length === 1 ? "" : "s"}`}
+            </div>
+          )}
+          {r.kind === "modify" && (
+            <div className="text-muted-foreground">
+              {`> ${r.rows_affected} linha${r.rows_affected === 1 ? "" : "s"} afetada${r.rows_affected === 1 ? "" : "s"}`}
+              {r.last_insert_id != null
+                ? `, last_insert_id = ${r.last_insert_id}`
+                : ""}
+            </div>
+          )}
+          <div className="text-muted-foreground">
+            {`> Query Time: ${formatSeconds(r.elapsed_ms)}`}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatSeconds(ms: number): string {
+  return `${(ms / 1000).toFixed(3).replace(".", ",")}s`;
+}
+
+function SummaryPane({
+  batch,
+  onJumpTo,
+}: {
+  batch: QueryRunBatch;
+  onJumpTo: (view: ResultView) => void;
+}) {
+  const total = batch.results.length;
+  const errors = batch.results.filter((r) => r.kind === "error").length;
+  const success = total - errors;
+  const totalRows = batch.results.reduce(
+    (acc, r) => acc + (r.kind === "select" ? r.rows.length : 0),
+    0,
+  );
+  const totalAffected = batch.results.reduce(
+    (acc, r) => acc + (r.kind === "modify" ? r.rows_affected : 0),
+    0,
+  );
+
+  return (
+    <div className="h-full overflow-auto p-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 mb-5">
+        <Stat label="Statements" value={String(total)} />
+        <Stat label="Sucesso" value={String(success)} tone="ok" />
+        <Stat label="Erros" value={String(errors)} tone={errors > 0 ? "err" : "muted"} />
+        <Stat label="Tempo total" value={`${batch.total_ms} ms`} />
+      </div>
+
+      <div className="mb-3 flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>
+          início {formatStamp(batch.started_at_ms)} · fim{" "}
+          {formatStamp(batch.finished_at_ms)}
+        </span>
+        {totalRows > 0 && <span>{totalRows} linhas retornadas</span>}
+        {totalAffected > 0 && <span>{totalAffected} linhas afetadas</span>}
+      </div>
+
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-card/40 text-muted-foreground">
+              <Th className="w-[50px]">#</Th>
+              <Th>SQL</Th>
+              <Th className="w-[100px]">Status</Th>
+              <Th className="w-[120px]">Retorno</Th>
+              <Th className="w-[80px] text-right">ms</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {batch.results.map((r, i) => (
+              <tr
+                key={i}
+                onClick={() => onJumpTo(i)}
+                className="cursor-pointer border-t border-border hover:bg-accent/30"
+              >
+                <Td className="text-muted-foreground tabular-nums">{i + 1}</Td>
+                <Td className="font-mono text-[11px]">
+                  <code className="line-clamp-1 break-all">
+                    {truncate(r.sql, 140)}
+                  </code>
+                </Td>
+                <Td>
+                  {r.kind === "error" ? (
+                    <span className="inline-flex items-center gap-1 text-destructive">
+                      <AlertCircle className="h-3 w-3" />
+                      erro
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-emerald-500">
+                      <CheckCircle2 className="h-3 w-3" />
+                      ok
+                    </span>
+                  )}
+                </Td>
+                <Td className="tabular-nums text-muted-foreground">
+                  {r.kind === "select" && `${r.rows.length} linhas`}
+                  {r.kind === "modify" &&
+                    `${r.rows_affected} afetadas${r.last_insert_id ? ` · id ${r.last_insert_id}` : ""}`}
+                  {r.kind === "error" && (
+                    <span
+                      className="line-clamp-2 break-words font-mono text-[11px] text-destructive"
+                      title={r.message}
+                    >
+                      {r.message}
+                    </span>
+                  )}
+                </Td>
+                <Td className="text-right tabular-nums text-muted-foreground">
+                  {r.elapsed_ms}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "ok" | "err" | "muted";
+}) {
+  return (
+    <div className="rounded-md border border-border bg-card/40 px-3 py-2.5">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div
+        className={cn(
+          "mt-1 text-lg font-semibold tabular-nums",
+          tone === "ok" && "text-emerald-500",
+          tone === "err" && "text-destructive",
+          tone === "muted" && "text-muted-foreground",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function Th({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={cn(
+        "px-3 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider",
+        className,
+      )}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <td className={cn("px-3 py-1.5 align-top", className)}>{children}</td>
+  );
+}
+
+function Centered({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="grid h-full place-items-center">
+      <div className="flex items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return s.slice(0, n - 1) + "…";
+}
+
+function formatStamp(ms: number): string {
+  const d = new Date(ms);
+  return d.toLocaleTimeString("pt-BR", { hour12: false });
+}
