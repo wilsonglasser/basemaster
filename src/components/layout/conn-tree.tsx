@@ -883,9 +883,13 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   return (
     <li
       style={
-        conn.color
-          ? ({ "--conn-accent": conn.color } as React.CSSProperties)
-          : undefined
+        // Sempre re-escopar o --conn-accent por conexão pra não herdar
+        // o do root (App.tsx seta ele baseado na aba ativa). Sem isso,
+        // editar a cor de uma conexão no form vaza visualmente pra
+        // qualquer conexão sem cor própria.
+        {
+          "--conn-accent": conn.color ?? "var(--conn-accent-default)",
+        } as React.CSSProperties
       }
     >
       <div

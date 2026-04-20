@@ -45,6 +45,21 @@ BaseMaster is an open-source desktop database client — an alternative to Navic
 
 Existing alternatives are either paid and closed-source (Navicat, TablePlus), Electron-based and heavy (DBeaver), or terminal-only (`psql`, `mysql`). BaseMaster aims to be **fast, native, and have the UX a professional DBA or dev expects**.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screen_1.png" width="720" alt="BaseMaster screenshot 1">
+</p>
+<p align="center">
+  <img src="docs/screen_2.png" width="720" alt="BaseMaster screenshot 2">
+</p>
+<p align="center">
+  <img src="docs/screen_3.png" width="720" alt="BaseMaster screenshot 3">
+</p>
+<p align="center">
+  <img src="docs/screen_4.png" width="720" alt="BaseMaster screenshot 4">
+</p>
+
 ## Features
 
 ### Connectivity

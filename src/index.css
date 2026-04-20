@@ -41,6 +41,7 @@
 
   /* cor por conexão (sobrescrita em runtime) — fallback = primary */
   --conn-accent: oklch(0.55 0.18 254);
+  --conn-accent-default: oklch(0.55 0.18 254);
   --conn-accent-foreground: oklch(0.985 0 0);
 }
 
@@ -74,6 +75,7 @@
   --ring: oklch(0.5 0 0);
 
   --conn-accent: oklch(0.62 0.19 254);
+  --conn-accent-default: oklch(0.62 0.19 254);
   --conn-accent-foreground: oklch(0.145 0 0);
 }
 

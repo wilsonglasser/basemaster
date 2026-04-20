@@ -200,9 +200,9 @@ export function SidebarSearchResults({ query, onResultClicked }: Props) {
           className="cursor-pointer rounded-md px-1.5 py-1 hover:bg-accent/50"
           onClick={() => handle(r)}
           style={
-            r.connColor
-              ? ({ "--conn-accent": r.connColor } as React.CSSProperties)
-              : undefined
+            {
+              "--conn-accent": r.connColor ?? "var(--conn-accent-default)",
+            } as React.CSSProperties
           }
           title={r.hint}
         >
