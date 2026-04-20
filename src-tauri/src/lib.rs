@@ -35,13 +35,13 @@ pub fn run() {
 
     // prevent-default: desabilita shortcuts nativos do WebView2 (zoom,
     // reload, find, etc) pra chegarem no JS. `browser_accelerator_keys =
-    // false` é o que libera Ctrl+=/-/0 pra nosso handler.
-    let prevent_default = tauri_plugin_prevent_default::Builder::new()
-        .platform(
-            tauri_plugin_prevent_default::PlatformOptions::new()
-                .browser_accelerator_keys(false),
-        )
-        .build();
+    // false` só existe no Windows — API da crate é gated por target_os.
+    let prevent_default_builder = tauri_plugin_prevent_default::Builder::new();
+    #[cfg(target_os = "windows")]
+    let prevent_default_builder = prevent_default_builder.platform(
+        tauri_plugin_prevent_default::PlatformOptions::new().browser_accelerator_keys(false),
+    );
+    let prevent_default = prevent_default_builder.build();
 
     tauri::Builder::default()
         .plugin(prevent_default)
