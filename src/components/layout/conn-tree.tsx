@@ -325,7 +325,7 @@ function FolderNode({
     <li>
       <div
         className={cn(
-          "flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-[11px] font-medium uppercase tracking-wider transition-colors",
+          "flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs font-medium tracking-wide transition-colors",
           dragOver
             ? "bg-conn-accent/20 text-foreground ring-1 ring-conn-accent/60"
             : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",

@@ -79,7 +79,19 @@ export function QueryTab({
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === connectionId),
   );
+  const isActive = useConnections((s) => s.active.has(connectionId));
+  const openConn = useConnections((s) => s.open);
   const cache = useSchemaCache((s) => s.caches[connectionId]);
+
+  // Auto-connect: quando a aba monta (ou vira ativa após restart do app)
+  // e a conexão ainda não foi aberta, abre em background. Evita o erro
+  // "conexão não está aberta" no primeiro run.
+  useEffect(() => {
+    if (!conn || isActive) return;
+    void openConn(connectionId).catch((e) =>
+      console.warn("[query-tab] auto-open failed:", e),
+    );
+  }, [conn, isActive, connectionId, openConn]);
   const ensureSchemas = useSchemaCache((s) => s.ensureSchemas);
   const ensureSnapshot = useSchemaCache((s) => s.ensureSnapshot);
   const patchTab = useTabs((s) => s.patch);
@@ -175,6 +187,13 @@ export function QueryTab({
     setRun({ kind: "running" });
     const started = performance.now();
     try {
+      // Fallback: garante que a conexão está aberta antes de rodar.
+      // O useEffect acima já tenta abrir no mount, mas rodar a query
+      // pode chegar primeiro se o user for rápido.
+      if (!useConnections.getState().active.has(connectionId)) {
+        await openConn(connectionId);
+      }
+      if (runTokenRef.current !== token) return;
       const batch = await ipc.db.runQuery(connectionId, sqlNow, schemaNow);
       if (runTokenRef.current !== token) return; // abortado
       const elapsed = Math.round(performance.now() - started);
