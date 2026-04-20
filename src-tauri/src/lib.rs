@@ -57,7 +57,21 @@ pub fn run() {
         .setup(|app| {
             let paths = AppPaths::resolve()?;
             tracing::info!(?paths.data_dir, "abrindo SQLite local");
-            let store = tauri::async_runtime::block_on(Store::open(&paths.db_path()))?;
+            let store = match tauri::async_runtime::block_on(Store::open(&paths.db_path())) {
+                Ok(s) => s,
+                Err(basemaster_store::StoreError::Migrate(e)) => {
+                    let msg = format!(
+                        "Banco SQLite local está incompatível com esta versão:\n{e}\n\n\
+                         O arquivo foi criado por outra build do BaseMaster\n\
+                         (tipicamente dev vs release). Delete o diretório\n\
+                         {} e reabra o app.",
+                        paths.data_dir.display()
+                    );
+                    write_setup_error(&msg);
+                    return Err(msg.into());
+                }
+                Err(e) => return Err(Box::new(e)),
+            };
             app.manage(state::AppState::new(store));
             Ok(())
         })
@@ -125,7 +139,40 @@ pub fn run() {
             commands::connection_reorder,
         ])
         .run(tauri::generate_context!())
-        .expect("erro ao executar BaseMaster");
+        .unwrap_or_else(|e| {
+            // Em vez de panicar (que vira 0xc0000409 no Windows sem
+            // stderr visível), grava mensagem no log de erro e sai
+            // com código diferente de zero.
+            let msg = format!("Falha ao iniciar o BaseMaster: {e}");
+            write_setup_error(&msg);
+            eprintln!("{msg}");
+            std::process::exit(1);
+        });
+}
+
+/// Grava mensagem de erro de setup em `panic.log` (mesmo local usado
+/// pelo panic hook). Útil pra erros que a gente prefere NÃO transformar
+/// em panic (ex.: migration mismatch, que tem solução conhecida).
+fn write_setup_error(msg: &str) {
+    let dir = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join(basemaster_store::AppPaths::project_name());
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("panic.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let entry = format!(
+            "[{}] SETUP ERROR\n{}\n\n",
+            chrono::Utc::now().to_rfc3339(),
+            msg,
+        );
+        let _ = f.write_all(entry.as_bytes());
+    }
 }
 
 /// Captura panics em release pra arquivo em `%LOCALAPPDATA%\BaseMaster\panic.log`
@@ -159,7 +206,7 @@ fn install_panic_hook() {
         let dir = std::env::var_os("LOCALAPPDATA")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
-            .join("BaseMaster");
+            .join(basemaster_store::AppPaths::project_name());
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("panic.log");
         if let Ok(mut f) = std::fs::OpenOptions::new()

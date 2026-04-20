@@ -65,12 +65,25 @@ impl AppPaths {
         //   Windows: %APPDATA%\BaseMaster\data
         //   macOS:   ~/Library/Application Support/BaseMaster
         //   Linux:   ~/.local/share/basemaster
-        let pd = ProjectDirs::from("", "", "BaseMaster").ok_or(StoreError::NoProjectDirs)?;
+        //
+        // Dev usa sufixo `-Dev` pra não misturar com install de release:
+        // senão as migrations do dev contaminam o DB do app instalado e
+        // vice-versa.
+        let pd = ProjectDirs::from("", "", Self::project_name())
+            .ok_or(StoreError::NoProjectDirs)?;
         Ok(Self {
             data_dir: pd.data_dir().to_path_buf(),
             config_dir: pd.config_dir().to_path_buf(),
             cache_dir: pd.cache_dir().to_path_buf(),
         })
+    }
+
+    pub fn project_name() -> &'static str {
+        if cfg!(debug_assertions) {
+            "BaseMaster-Dev"
+        } else {
+            "BaseMaster"
+        }
     }
 
     pub fn db_path(&self) -> PathBuf {
