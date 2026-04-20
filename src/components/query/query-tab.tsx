@@ -64,7 +64,20 @@ type RunState =
   | { kind: "idle" }
   | { kind: "running" }
   | { kind: "results"; batch: QueryRunBatch; view: ResultView }
-  | { kind: "explain"; driver: string; raw: unknown; rawText: string }
+  | {
+      kind: "explain";
+      driver: string;
+      raw: unknown;
+      rawText: string;
+      /** Colunas + linhas do EXPLAIN clássico (MySQL). PG: undefined. */
+      classicColumns?: string[];
+      classicRows?: import("@/lib/types").Value[][];
+      sql: string;
+      elapsedMs: number;
+      schema: string | null;
+      connectionName: string;
+      timestamp: number;
+    }
   | { kind: "error"; message: string };
 
 export function QueryTab({
@@ -264,28 +277,38 @@ export function QueryTab({
     const sqlNow = sqlRef.current.trim().replace(/;\s*$/, "");
     if (!sqlNow) return;
     const isPg = conn?.driver === "postgres";
-    const prefix = isPg
+    const prefixJson = isPg
       ? "EXPLAIN (ANALYZE, FORMAT JSON, BUFFERS)"
       : "EXPLAIN FORMAT=JSON";
     const token = ++runTokenRef.current;
     setRun({ kind: "running" });
+    const started = performance.now();
     try {
       if (!useConnections.getState().active.has(connectionId)) {
         await useConnections.getState().open(connectionId);
       }
       if (runTokenRef.current !== token) return;
-      const batch = await ipc.db.runQuery(
+
+      // Roda em paralelo: JSON (pra tree/stats/flame) e clássico (pro Grid).
+      const jsonP = ipc.db.runQuery(
         connectionId,
-        `${prefix} ${sqlNow}`,
+        `${prefixJson} ${sqlNow}`,
         schemaRef.current,
       );
+      const classicP = isPg
+        ? Promise.resolve(null)
+        : ipc.db
+            .runQuery(connectionId, `EXPLAIN ${sqlNow}`, schemaRef.current)
+            .catch(() => null);
+      const [jsonBatch, classicBatch] = await Promise.all([jsonP, classicP]);
       if (runTokenRef.current !== token) return;
-      // Procura a primeira célula textual nos resultados — é lá que mora o JSON.
-      const rawText = extractExplainJsonText(batch);
+
+      const rawText = extractExplainJsonText(jsonBatch);
       if (!rawText) {
         setRun({
           kind: "error",
-          message: "EXPLAIN não retornou JSON — driver pode não suportar FORMAT JSON.",
+          message:
+            "EXPLAIN não retornou JSON — driver pode não suportar FORMAT JSON.",
         });
         return;
       }
@@ -293,13 +316,33 @@ export function QueryTab({
       try {
         parsed = JSON.parse(rawText);
       } catch {
-        // Alguns drivers já devolvem estrutura parseada (ex: jsonb do PG).
+        /* já é parseado */
       }
+
+      let classicColumns: string[] | undefined;
+      let classicRows: import("@/lib/types").Value[][] | undefined;
+      if (classicBatch) {
+        const firstSelect = classicBatch.results.find(
+          (r) => r.kind === "select",
+        );
+        if (firstSelect && firstSelect.kind === "select") {
+          classicColumns = firstSelect.columns;
+          classicRows = firstSelect.rows;
+        }
+      }
+
       setRun({
         kind: "explain",
         driver: conn?.driver ?? "unknown",
         raw: parsed,
         rawText,
+        classicColumns,
+        classicRows,
+        sql: sqlNow,
+        elapsedMs: Math.round(performance.now() - started),
+        schema: schemaRef.current,
+        connectionName: conn?.name ?? "—",
+        timestamp: Date.now(),
       });
     } catch (e) {
       if (runTokenRef.current !== token) return;
@@ -859,6 +902,13 @@ function ResultArea({
         driver={state.driver}
         raw={state.raw}
         rawText={state.rawText}
+        classicColumns={state.classicColumns}
+        classicRows={state.classicRows}
+        sql={state.sql}
+        elapsedMs={state.elapsedMs}
+        schema={state.schema}
+        connectionName={state.connectionName}
+        timestamp={state.timestamp}
       />
     );
   }
