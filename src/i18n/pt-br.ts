@@ -902,6 +902,14 @@ export const ptBR = {
   shortcutsPanel: {
     conflictTitle: "Outra ação usa o mesmo atalho",
   },
+  explain: {
+    viewTree: "Árvore",
+    viewRaw: "JSON bruto",
+    totalCost: "custo total",
+    copy: "Copiar",
+    copyRaw: "Copiar JSON bruto",
+    parseFailed: "Não foi possível interpretar o plano retornado pelo driver. Veja a aba JSON bruto.",
+  },
   dataTransfer: {
     stopConfirm: "Parar a transferência? Tabelas em andamento terminam o chunk atual e depois encerram.",
     stepEndpoints: "Origem + destino",

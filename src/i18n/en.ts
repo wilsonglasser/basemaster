@@ -900,6 +900,14 @@ export const en: Dict = {
   shortcutsPanel: {
     conflictTitle: "Another action uses the same shortcut",
   },
+  explain: {
+    viewTree: "Tree",
+    viewRaw: "Raw JSON",
+    totalCost: "total cost",
+    copy: "Copy",
+    copyRaw: "Copy raw JSON",
+    parseFailed: "Could not parse the plan returned by the driver. See the Raw JSON tab.",
+  },
   dataTransfer: {
     stopConfirm: "Stop the transfer? Running tables finish the current chunk and then stop.",
     stepEndpoints: "Source + target",

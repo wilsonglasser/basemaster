@@ -45,6 +45,7 @@ import { useGridSearch } from "@/lib/use-grid-search";
 
 import { QueryEditor } from "./query-editor";
 import { ResultGrid, type ResultGridHandle } from "./result-grid";
+import { ExplainView } from "./explain-view";
 
 interface QueryTabProps {
   tabId: string;
@@ -63,6 +64,7 @@ type RunState =
   | { kind: "idle" }
   | { kind: "running" }
   | { kind: "results"; batch: QueryRunBatch; view: ResultView }
+  | { kind: "explain"; driver: string; raw: unknown; rawText: string }
   | { kind: "error"; message: string };
 
 export function QueryTab({
@@ -236,12 +238,73 @@ export function QueryTab({
     setRun({ kind: "error", message: t("query.cancelledByUser") });
   };
 
-  const handleExplain = () => {
+  const extractExplainJsonText = (batch: QueryRunBatch): string | null => {
+    // Ambos drivers retornam o JSON numa única coluna da primeira row
+    // do primeiro SELECT. PG pode vir como jsonb (type=json) ou string;
+    // MySQL vem sempre como string. Se vier em múltiplas linhas, junta.
+    for (const r of batch.results) {
+      if (r.kind !== "select") continue;
+      const pieces: string[] = [];
+      for (const row of r.rows) {
+        const cell = row[0];
+        if (!cell) continue;
+        if (cell.type === "json") {
+          return JSON.stringify(cell.value);
+        }
+        if (cell.type === "string") {
+          pieces.push(cell.value);
+        }
+      }
+      if (pieces.length > 0) return pieces.join("\n");
+    }
+    return null;
+  };
+
+  const handleExplain = async () => {
     const sqlNow = sqlRef.current.trim().replace(/;\s*$/, "");
     if (!sqlNow) return;
     const isPg = conn?.driver === "postgres";
-    const prefix = isPg ? "EXPLAIN (ANALYZE, FORMAT TEXT)" : "EXPLAIN ANALYZE";
-    void runSql(`${prefix} ${sqlNow}`, schemaRef.current);
+    const prefix = isPg
+      ? "EXPLAIN (ANALYZE, FORMAT JSON, BUFFERS)"
+      : "EXPLAIN FORMAT=JSON";
+    const token = ++runTokenRef.current;
+    setRun({ kind: "running" });
+    try {
+      if (!useConnections.getState().active.has(connectionId)) {
+        await useConnections.getState().open(connectionId);
+      }
+      if (runTokenRef.current !== token) return;
+      const batch = await ipc.db.runQuery(
+        connectionId,
+        `${prefix} ${sqlNow}`,
+        schemaRef.current,
+      );
+      if (runTokenRef.current !== token) return;
+      // Procura a primeira célula textual nos resultados — é lá que mora o JSON.
+      const rawText = extractExplainJsonText(batch);
+      if (!rawText) {
+        setRun({
+          kind: "error",
+          message: "EXPLAIN não retornou JSON — driver pode não suportar FORMAT JSON.",
+        });
+        return;
+      }
+      let parsed: unknown = rawText;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        // Alguns drivers já devolvem estrutura parseada (ex: jsonb do PG).
+      }
+      setRun({
+        kind: "explain",
+        driver: conn?.driver ?? "unknown",
+        raw: parsed,
+        rawText,
+      });
+    } catch (e) {
+      if (runTokenRef.current !== token) return;
+      setRun({ kind: "error", message: String(e) });
+    }
   };
 
   const handleRunRef = useRef(handleRun);
@@ -788,6 +851,15 @@ function ResultArea({
           {state.message}
         </pre>
       </div>
+    );
+  }
+  if (state.kind === "explain") {
+    return (
+      <ExplainView
+        driver={state.driver}
+        raw={state.raw}
+        rawText={state.rawText}
+      />
     );
   }
 
