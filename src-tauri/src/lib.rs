@@ -73,6 +73,24 @@ pub fn run() {
                 Err(e) => return Err(Box::new(e)),
             };
             app.manage(state::AppState::new(store));
+
+            // Safety net: a janela inicia invisível (visible:false em
+            // tauri.conf.json) e o main.tsx chama show() assim que monta.
+            // Se por algum motivo o bundle não carregar em 5s, força
+            // show() aqui pra não deixar a janela invisível pra sempre.
+            if let Some(window) = app.get_webview_window("main") {
+                let w = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    if let Ok(visible) = w.is_visible() {
+                        if !visible {
+                            tracing::warn!("frontend didn't show() in 5s — forcing");
+                            let _ = w.show();
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
