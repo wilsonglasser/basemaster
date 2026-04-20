@@ -46,6 +46,7 @@ signed/
 
 # Claude Code / agentes
 .claude/
+CLAUDE.md
 
 # Certificados e chaves
 *.key
