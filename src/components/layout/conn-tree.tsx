@@ -1824,13 +1824,17 @@ function TableNode({
   };
 
   const openSelectAll = () => {
+    const isPg = conn.driver === "postgres";
+    const qi = isPg
+      ? `"${table.name.replace(/"/g, '""')}"`
+      : `\`${table.name.replace(/`/g, "``")}\``;
     newTab({
       label: t("tree.queryLabel", { name: table.name }),
       kind: {
         kind: "query",
         connectionId: conn.id,
         schema: table.schema,
-        initialSql: `SELECT *\n  FROM \`${table.name}\`\n LIMIT 200;`,
+        initialSql: `SELECT *\n  FROM ${qi}\n LIMIT 200;`,
         autoRun: true,
       },
       accentColor: conn.color,
