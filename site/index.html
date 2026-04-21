@@ -3,15 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BaseMaster — The desktop database manager, reimagined</title>
+    <title>BaseMaster — The database tool devs actually ship with</title>
     <meta
       name="description"
-      content="Open-source desktop database manager in Rust — fast, native, multi-driver. MySQL, MariaDB, PostgreSQL, SQLite. No Electron."
+      content="Move data between environments in seconds. Dynamic SQL dumps. Bulk-edit grids. Native, multi-driver, built for developers."
     />
-    <meta property="og:title" content="BaseMaster" />
+    <meta property="og:title" content="BaseMaster — a DB tool built for devs" />
     <meta
       property="og:description"
-      content="Open-source desktop database manager in Rust. Fast, native, multi-driver."
+      content="Fast data transfer, dynamic dumps, bulk editing. Native desktop client for MySQL, MariaDB, PostgreSQL and SQLite."
     />
     <meta property="og:image" content="/public/logo.png" />
     <meta property="og:type" content="website" />
@@ -148,14 +148,14 @@
           class="mx-auto mb-6 h-20 w-20 rounded-2xl shadow-[0_0_60px_rgba(47,124,255,0.4)]"
         />
         <h1 class="mx-auto max-w-3xl text-balance text-4xl font-extrabold leading-[1.1] tracking-tight text-white md:text-6xl">
-          The desktop database manager,
+          The database tool
           <span class="bg-gradient-to-r from-brand-300 via-brand-400 to-violet-400 bg-clip-text text-transparent">
-            reimagined.
+            devs actually ship with.
           </span>
         </h1>
         <p class="mx-auto mt-6 max-w-2xl text-balance text-lg text-white/70 md:text-xl">
-          An open-source desktop client for MySQL, MariaDB, PostgreSQL and SQLite.
-          Built in Rust. Fast, native, multi-driver. <span class="text-white">No Electron.</span>
+          Move data between environments in seconds. Dump dynamically. Edit grids in bulk.
+          MySQL, MariaDB, PostgreSQL, SQLite — <span class="text-white">one native binary, zero friction</span>.
         </p>
         <div class="mt-10 flex flex-wrap items-center justify-center gap-3">
           <a
@@ -208,31 +208,31 @@
     <section id="features" class="mx-auto max-w-6xl px-6 py-24">
       <div class="mx-auto max-w-2xl text-center">
         <h2 class="text-3xl font-bold tracking-tight text-white md:text-4xl">
-          Everything a DBA needs. Nothing a DBA doesn't.
+          Built for the daily developer loop.
         </h2>
         <p class="mt-3 text-white/60">
-          Multi-driver, full SQL workflow, editable grid, AI assistance, MCP integration. Shipped as a single native binary.
+          Clone data between envs, fix a row without writing DDL, dump a schema in seconds, wire your AI agent into the database. The boring parts, fast.
         </p>
       </div>
 
       <div class="mt-14 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         <div class="card rounded-xl p-6 transition-colors">
-          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/20 text-brand-300">
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3h4v4"/><path d="M21 3 12 12"/><path d="M7 21H3v-4"/><path d="m3 21 9-9"/><path d="M21 17v4h-4"/><path d="m21 21-9-9"/><path d="M3 7V3h4"/><path d="M3 3l9 9"/></svg>
           </div>
-          <h3 class="font-semibold text-white">Multi-driver</h3>
+          <h3 class="font-semibold text-white">Copy data between environments</h3>
           <p class="mt-1 text-sm text-white/60">
-            MySQL, MariaDB, PostgreSQL, SQLite (with optional SQLCipher). One app, every server.
+            Prod snapshot to local in one wizard. Intra-table parallelism, automatic FK handling, triggers copied, DDL translated across MySQL ↔ Postgres. The "please send me a dump" tax, gone.
           </p>
         </div>
 
         <div class="card rounded-xl p-6 transition-colors">
-          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-300">
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/20 text-amber-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </div>
-          <h3 class="font-semibold text-white">Full SQL editor</h3>
+          <h3 class="font-semibold text-white">Dynamic SQL dumps</h3>
           <p class="mt-1 text-sm text-white/60">
-            CodeMirror 6 with schema-aware autocomplete, format, <kbd class="rounded border border-white/15 bg-white/5 px-1 text-[10px]">Ctrl+Enter</kbd> to run the statement under the cursor.
+            Pick tables, filter rows, choose structure-only or data-only, stream to <code class="text-white/80">.sql</code> or <code class="text-white/80">.zip</code>. Extended INSERTs, hex BLOBs, single-transaction — all configurable. No <code>mysqldump</code> gymnastics.
           </p>
         </div>
 
@@ -240,29 +240,29 @@
           <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/20 text-violet-300">
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
           </div>
-          <h3 class="font-semibold text-white">Editable grid (Navicat-style)</h3>
+          <h3 class="font-semibold text-white">Bulk-edit the grid</h3>
           <p class="mt-1 text-sm text-white/60">
-            Glide Data Grid canvas. 100k+ rows, multi-fill, paste multi-row, edits pending until explicit apply.
+            Multi-cell fill, paste whole CSVs into a rectangle, pending edits until you hit <kbd class="rounded border border-white/15 bg-white/5 px-1 text-[10px]">Ctrl+S</kbd>. Fixing a staging row is faster than writing the UPDATE.
           </p>
         </div>
 
         <div class="card rounded-xl p-6 transition-colors">
-          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/20 text-amber-300">
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 22l-6-4-6 4 1.5-8.5L2 9h7z"/></svg>
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/20 text-brand-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
           </div>
-          <h3 class="font-semibold text-white">AI agent (12 providers)</h3>
+          <h3 class="font-semibold text-white">One app, every stack</h3>
           <p class="mt-1 text-sm text-white/60">
-            19 tools for schema inspection, query generation, EXPLAIN, writes with approval. Anthropic, OpenAI, Gemini, OpenRouter, Groq, more.
+            MySQL, MariaDB, PostgreSQL, SQLite. Switch connections without switching apps — side-by-side tabs for when you're mid-migration.
           </p>
         </div>
 
         <div class="card rounded-xl p-6 transition-colors">
-          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-300">
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3h4v4"/><path d="M21 3 12 12"/><path d="M7 21H3v-4"/><path d="m3 21 9-9"/><path d="M21 17v4h-4"/><path d="m21 21-9-9"/><path d="M3 7V3h4"/><path d="M3 3l9 9"/></svg>
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           </div>
-          <h3 class="font-semibold text-white">Data transfer</h3>
+          <h3 class="font-semibold text-white">SQL editor that gets out of the way</h3>
           <p class="mt-1 text-sm text-white/60">
-            Copy between any pair of connections. Intra-table parallelism, FKs, triggers, cross-dialect DDL translation.
+            CodeMirror 6, schema-aware autocomplete, per-statement execution with <kbd class="rounded border border-white/15 bg-white/5 px-1 text-[10px]">Ctrl+Enter</kbd>. CSV / JSON / Excel import with fuzzy auto-mapping.
           </p>
         </div>
 
@@ -270,9 +270,9 @@
           <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-pink-500/20 text-pink-300">
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2"/><path d="M16 3l-4 4-4-4"/></svg>
           </div>
-          <h3 class="font-semibold text-white">Docker discovery</h3>
+          <h3 class="font-semibold text-white">Docker auto-discovery</h3>
           <p class="mt-1 text-sm text-white/60">
-            Detects MySQL/Postgres containers running locally and one-clicks them into your tree.
+            Finds every MySQL/Postgres container running locally (including WSL) and one-clicks them into your tree. Matches your <code>docker-compose</code> without you typing ports.
           </p>
         </div>
 
@@ -280,19 +280,19 @@
           <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-300">
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
           </div>
-          <h3 class="font-semibold text-white">EXPLAIN visualizer</h3>
+          <h3 class="font-semibold text-white">EXPLAIN, actually readable</h3>
           <p class="mt-1 text-sm text-white/60">
-            Six modes: grid, tree, flame chart, statistics, info, raw JSON. Find slow scans, bad estimates, missing indexes.
+            Grid, tree, flame chart, per-node statistics and raw JSON. Spot the full scan before it hits production.
           </p>
         </div>
 
         <div class="card rounded-xl p-6 transition-colors">
           <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-fuchsia-500/20 text-fuchsia-300">
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 1 1 10 0v4"/></svg>
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 22l-6-4-6 4 1.5-8.5L2 9h7z"/></svg>
           </div>
-          <h3 class="font-semibold text-white">MCP server</h3>
+          <h3 class="font-semibold text-white">AI agent + MCP server</h3>
           <p class="mt-1 text-sm text-white/60">
-            Expose your connections to external AI clients (Claude Code, Cursor) via JSON-RPC over stdio.
+            Built-in agent across 12 providers — generate queries, explain plans, apply safe writes with per-call approval. Or expose your connections to Claude Code / Cursor via MCP.
           </p>
         </div>
 
@@ -300,9 +300,9 @@
           <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-rose-500/20 text-rose-300">
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
-          <h3 class="font-semibold text-white">Zero telemetry</h3>
+          <h3 class="font-semibold text-white">Your data stays yours</h3>
           <p class="mt-1 text-sm text-white/60">
-            Passwords in the OS keyring. No cloud sync unless you ask for it. No phoning home.
+            Passwords in the OS keyring. No telemetry, no cloud sync, no phoning home. Single native binary — open the exe and you're connected.
           </p>
         </div>
       </div>
@@ -313,10 +313,10 @@
       <div class="mx-auto max-w-6xl px-6 py-24">
         <div class="mx-auto max-w-2xl text-center">
           <h2 class="text-3xl font-bold tracking-tight text-white md:text-4xl">
-            Built for how DBAs actually work.
+            Fits into whatever you're already doing.
           </h2>
           <p class="mt-3 text-white/60">
-            Multi-tab, multi-connection, column-level filters, schema editor, transfer wizard.
+            Side-by-side tabs, one-shot EXPLAIN, schema edits without leaving the grid, a transfer wizard that doesn't need a manual.
           </p>
         </div>
         <div class="mt-12 grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -340,11 +340,10 @@
     <section id="compare" class="mx-auto max-w-6xl px-6 py-24">
       <div class="mx-auto max-w-2xl text-center">
         <h2 class="text-3xl font-bold tracking-tight text-white md:text-4xl">
-          Why BaseMaster?
+          Where BaseMaster fits.
         </h2>
         <p class="mt-3 text-white/60">
-          The other clients are either paid and closed, Electron-heavy, or terminal-only.
-          BaseMaster is the one that isn't.
+          Honest comparison — BaseMaster isn't trying to replace everything, it's trying to be the one you keep open all day.
         </p>
       </div>
 
@@ -352,69 +351,69 @@
         <table class="mx-auto w-full max-w-4xl overflow-hidden rounded-xl border border-white/10 text-sm">
           <thead class="bg-white/[0.03]">
             <tr class="text-left">
-              <th class="px-4 py-3 font-medium text-white/60"></th>
+              <th class="px-4 py-3 font-medium text-white/60">Dev need</th>
               <th class="px-4 py-3 font-semibold text-white">BaseMaster</th>
-              <th class="px-4 py-3 font-medium text-white/60">Navicat</th>
-              <th class="px-4 py-3 font-medium text-white/60">DBeaver</th>
-              <th class="px-4 py-3 font-medium text-white/60">TablePlus</th>
+              <th class="px-4 py-3 font-medium text-white/60">GUI suites</th>
+              <th class="px-4 py-3 font-medium text-white/60">IDE plugins</th>
+              <th class="px-4 py-3 font-medium text-white/60">CLI (psql/mysql)</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-white/5 text-white/80">
             <tr>
-              <td class="px-4 py-3 text-white/60">Open source</td>
-              <td class="px-4 py-3 text-emerald-400">✓ MIT</td>
-              <td class="px-4 py-3 text-red-400">✗</td>
-              <td class="px-4 py-3 text-emerald-400">✓ Apache</td>
-              <td class="px-4 py-3 text-red-400">✗</td>
-            </tr>
-            <tr>
-              <td class="px-4 py-3 text-white/60">Free (personal use)</td>
-              <td class="px-4 py-3 text-emerald-400">✓</td>
-              <td class="px-4 py-3 text-red-400">$$$</td>
-              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-white/60">Clone prod→local fast</td>
+              <td class="px-4 py-3 text-emerald-400">✓ parallel wizard</td>
+              <td class="px-4 py-3 text-amber-400">step-heavy</td>
               <td class="px-4 py-3 text-amber-400">limited</td>
+              <td class="px-4 py-3 text-amber-400">script-only</td>
             </tr>
             <tr>
-              <td class="px-4 py-3 text-white/60">Native UI</td>
-              <td class="px-4 py-3 text-emerald-400">✓ Tauri (no Electron)</td>
+              <td class="px-4 py-3 text-white/60">Bulk-edit a grid</td>
+              <td class="px-4 py-3 text-emerald-400">✓ multi-fill, paste CSV</td>
               <td class="px-4 py-3 text-emerald-400">✓</td>
-              <td class="px-4 py-3 text-amber-400">Eclipse SWT</td>
-              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-amber-400">basic</td>
+              <td class="px-4 py-3 text-red-400">—</td>
             </tr>
             <tr>
-              <td class="px-4 py-3 text-white/60">Editable grid with pending apply</td>
+              <td class="px-4 py-3 text-white/60">Configurable SQL dump</td>
+              <td class="px-4 py-3 text-emerald-400">✓ tables, filters, zip</td>
               <td class="px-4 py-3 text-emerald-400">✓</td>
-              <td class="px-4 py-3 text-emerald-400">✓</td>
-              <td class="px-4 py-3 text-amber-400">partial</td>
-              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-red-400">—</td>
+              <td class="px-4 py-3 text-amber-400">mysqldump flags</td>
             </tr>
             <tr>
-              <td class="px-4 py-3 text-white/60">Data transfer between connections</td>
-              <td class="px-4 py-3 text-emerald-400">✓ w/ parallelism</td>
-              <td class="px-4 py-3 text-emerald-400">✓</td>
-              <td class="px-4 py-3 text-amber-400">via export/import</td>
-              <td class="px-4 py-3 text-amber-400">via export/import</td>
+              <td class="px-4 py-3 text-white/60">Docker auto-discovery</td>
+              <td class="px-4 py-3 text-emerald-400">✓ incl. WSL</td>
+              <td class="px-4 py-3 text-red-400">—</td>
+              <td class="px-4 py-3 text-red-400">—</td>
+              <td class="px-4 py-3 text-red-400">—</td>
             </tr>
             <tr>
-              <td class="px-4 py-3 text-white/60">Built-in AI agent</td>
-              <td class="px-4 py-3 text-emerald-400">✓ 12 providers + MCP</td>
+              <td class="px-4 py-3 text-white/60">Built-in AI + MCP</td>
+              <td class="px-4 py-3 text-emerald-400">✓ 12 providers</td>
               <td class="px-4 py-3 text-amber-400">limited</td>
-              <td class="px-4 py-3 text-red-400">✗</td>
-              <td class="px-4 py-3 text-red-400">✗</td>
+              <td class="px-4 py-3 text-amber-400">via ext</td>
+              <td class="px-4 py-3 text-red-400">—</td>
             </tr>
             <tr>
-              <td class="px-4 py-3 text-white/60">Navicat .ncx import</td>
-              <td class="px-4 py-3 text-emerald-400">✓ Blowfish decrypt</td>
-              <td class="px-4 py-3 text-emerald-400">✓</td>
-              <td class="px-4 py-3 text-red-400">✗</td>
-              <td class="px-4 py-3 text-red-400">✗</td>
+              <td class="px-4 py-3 text-white/60">Resource usage</td>
+              <td class="px-4 py-3 text-emerald-400">native, &lt;100MB</td>
+              <td class="px-4 py-3 text-amber-400">heavy</td>
+              <td class="px-4 py-3 text-amber-400">inside IDE</td>
+              <td class="px-4 py-3 text-emerald-400">tiny</td>
             </tr>
             <tr>
-              <td class="px-4 py-3 text-white/60">Zero telemetry</td>
+              <td class="px-4 py-3 text-white/60">Open source (MIT)</td>
               <td class="px-4 py-3 text-emerald-400">✓</td>
-              <td class="px-4 py-3 text-amber-400">?</td>
-              <td class="px-4 py-3 text-amber-400">opt-out</td>
-              <td class="px-4 py-3 text-amber-400">?</td>
+              <td class="px-4 py-3 text-amber-400">varies</td>
+              <td class="px-4 py-3 text-amber-400">varies</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 text-white/60">Telemetry</td>
+              <td class="px-4 py-3 text-emerald-400">zero</td>
+              <td class="px-4 py-3 text-amber-400">often opt-out</td>
+              <td class="px-4 py-3 text-amber-400">varies</td>
+              <td class="px-4 py-3 text-emerald-400">zero</td>
             </tr>
           </tbody>
         </table>
@@ -494,10 +493,10 @@
     <section class="border-t border-white/5">
       <div class="mx-auto max-w-3xl px-6 py-20 text-center">
         <h2 class="text-2xl font-bold tracking-tight text-white md:text-3xl">
-          Free today. Free forever.
+          MIT. No paywall, ever.
         </h2>
         <p class="mx-auto mt-3 max-w-xl text-white/60">
-          BaseMaster is maintained by one developer. If it saves you time, consider fueling the next release.
+          Built by one developer in the gaps. If BaseMaster saves you a dump script today, a beer goes a long way toward the next feature.
         </p>
         <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
           <a
