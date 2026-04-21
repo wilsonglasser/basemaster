@@ -69,7 +69,7 @@ export function AiSidebar() {
   return (
     <aside
       style={{ width }}
-      className="relative flex shrink-0 flex-col border-l border-border bg-card/40"
+      className="relative flex shrink-0 flex-col border-l border-border bg-sidebar text-sidebar-foreground"
     >
       <header className="flex h-14 items-center gap-2 border-b border-border px-3">
         <div className="grid h-8 w-8 place-items-center rounded-md bg-conn-accent/10 text-conn-accent">

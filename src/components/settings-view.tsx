@@ -127,7 +127,7 @@ function Section({
 }) {
   return (
     <section className="mb-8">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
         {icon}
         {title}
       </h2>

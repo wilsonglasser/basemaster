@@ -104,7 +104,7 @@ export function TabBar({ className }: TabBarProps) {
   return (
     <div
       className={cn(
-        "flex h-10 items-stretch border-b border-border bg-card/30",
+        "flex h-10 items-stretch border-b border-border bg-chrome text-chrome-foreground",
         className,
       )}
     >

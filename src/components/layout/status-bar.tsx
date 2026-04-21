@@ -36,7 +36,7 @@ export function StatusBar({ className }: StatusBarProps) {
   return (
     <footer
       className={cn(
-        "flex h-7 items-center gap-3 border-t border-border bg-card/40 px-3 text-[11px] text-muted-foreground",
+        "flex h-7 items-center gap-3 border-t border-border bg-chrome px-3 text-[11px] text-muted-foreground",
         className,
       )}
     >

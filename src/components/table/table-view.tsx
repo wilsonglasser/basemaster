@@ -1477,7 +1477,7 @@ function Toolbar({
             <select
               value={limit}
               onChange={(e) => onLimit(Number(e.target.value))}
-              className="rounded border border-border bg-background px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring/40"
+              className="rounded border border-border bg-background px-1.5 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring/40"
             >
               {LIMIT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>

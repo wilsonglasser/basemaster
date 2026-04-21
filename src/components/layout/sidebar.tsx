@@ -127,7 +127,7 @@ export function Sidebar({ className }: SidebarProps) {
       ref={sidebarRef}
       style={{ width }}
       className={cn(
-        "relative flex shrink-0 flex-col border-r border-border bg-card/40",
+        "relative flex shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground",
         className,
       )}
     >

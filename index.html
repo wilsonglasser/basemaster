@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BaseMaster</title>
     <style>
-      html, body { background: #0a0a0a; color: #e5e5e5; margin: 0 }
+      /* só background pro splash — cor do texto vem do CSS do app
+         (senão esse color fixo vaza pra todos os textos em light mode). */
+      html, body { background: #0a0a0a; margin: 0 }
       #root { min-height: 100vh }
       /* Splash: aparece de cara, React substitui ao montar. */
       .bm-splash {

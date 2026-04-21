@@ -666,7 +666,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-border bg-card/40 p-5">
+    <section className="rounded-lg border border-border bg-card p-5 shadow-sm">
       <div className="mb-4 flex items-baseline gap-2">
         <h2 className="text-sm font-semibold tracking-wide">{title}</h2>
         {subtitle && (
