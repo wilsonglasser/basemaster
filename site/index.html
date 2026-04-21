@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BaseMaster — The desktop database manager, reimagined</title>
+    <meta
+      name="description"
+      content="Open-source desktop database manager in Rust — fast, native, multi-driver. MySQL, MariaDB, PostgreSQL, SQLite. No Electron."
+    />
+    <meta property="og:title" content="BaseMaster" />
+    <meta
+      property="og:description"
+      content="Open-source desktop database manager in Rust. Fast, native, multi-driver."
+    />
+    <meta property="og:image" content="/public/logo.png" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="/public/favicon.ico" />
+    <link rel="apple-touch-icon" href="/public/logo.png" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: "#eef6ff",
+                100: "#d9eaff",
+                200: "#bcdaff",
+                300: "#8dc0ff",
+                400: "#589dff",
+                500: "#2f7cff",
+                600: "#185df0",
+                700: "#1448d4",
+                800: "#173ca8",
+                900: "#183885",
+                950: "#12235a",
+              },
+            },
+            fontFamily: {
+              sans: [
+                "Inter",
+                "system-ui",
+                "-apple-system",
+                "Segoe UI",
+                "Roboto",
+                "sans-serif",
+              ],
+              mono: [
+                "JetBrains Mono",
+                "Menlo",
+                "Monaco",
+                "Consolas",
+                "monospace",
+              ],
+            },
+          },
+        },
+      };
+    </script>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <style>
+      html {
+        background: #0a0a0a;
+        color-scheme: dark;
+      }
+      body {
+        background: #0a0a0a;
+        color: #e5e5e5;
+      }
+      .gradient-bg {
+        background:
+          radial-gradient(ellipse 80% 50% at 50% -10%, rgba(47, 124, 255, 0.25), transparent 60%),
+          radial-gradient(ellipse 40% 30% at 20% 40%, rgba(139, 92, 246, 0.12), transparent 60%),
+          #0a0a0a;
+      }
+      .grid-pattern {
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+        background-size: 40px 40px;
+        mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 40%, transparent 80%);
+      }
+      .shine {
+        background:
+          linear-gradient(135deg, rgba(47, 124, 255, 0.8), rgba(139, 92, 246, 0.6));
+      }
+      .card {
+        background: linear-gradient(180deg, rgba(23, 23, 23, 0.8), rgba(10, 10, 10, 0.8));
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        backdrop-filter: blur(10px);
+      }
+      .card:hover {
+        border-color: rgba(47, 124, 255, 0.3);
+      }
+    </style>
+  </head>
+
+  <body class="min-h-screen font-sans antialiased">
+    <!-- Navbar -->
+    <header class="sticky top-0 z-50 border-b border-white/5 bg-black/60 backdrop-blur">
+      <div class="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
+        <a href="#top" class="flex items-center gap-2 text-white">
+          <img src="/public/logo.png" alt="BaseMaster" class="h-7 w-7 rounded-md" />
+          <span class="font-semibold tracking-tight">BaseMaster</span>
+        </a>
+        <nav class="hidden items-center gap-5 text-sm text-white/70 md:flex">
+          <a class="hover:text-white" href="#features">Features</a>
+          <a class="hover:text-white" href="#screenshots">Screenshots</a>
+          <a class="hover:text-white" href="#compare">Compare</a>
+          <a class="hover:text-white" href="#download">Download</a>
+        </nav>
+        <div class="ml-auto flex items-center gap-3">
+          <a
+            href="https://github.com/wilsonglasser/basemaster"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-1.5 rounded-md border border-white/10 px-3 py-1.5 text-xs text-white/80 hover:border-white/30 hover:text-white"
+          >
+            <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="currentColor">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+            GitHub
+          </a>
+          <a
+            href="#download"
+            class="inline-flex items-center gap-1.5 rounded-md bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_0_20px_rgba(47,124,255,0.4)] hover:bg-brand-400"
+          >
+            Download
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <!-- Hero -->
+    <section id="top" class="gradient-bg relative overflow-hidden">
+      <div class="grid-pattern absolute inset-0"></div>
+      <div class="relative mx-auto max-w-6xl px-6 pb-16 pt-20 text-center md:pb-24 md:pt-32">
+        <img
+          src="/public/logo.png"
+          alt=""
+          class="mx-auto mb-6 h-20 w-20 rounded-2xl shadow-[0_0_60px_rgba(47,124,255,0.4)]"
+        />
+        <h1 class="mx-auto max-w-3xl text-balance text-4xl font-extrabold leading-[1.1] tracking-tight text-white md:text-6xl">
+          The desktop database manager,
+          <span class="bg-gradient-to-r from-brand-300 via-brand-400 to-violet-400 bg-clip-text text-transparent">
+            reimagined.
+          </span>
+        </h1>
+        <p class="mx-auto mt-6 max-w-2xl text-balance text-lg text-white/70 md:text-xl">
+          An open-source desktop client for MySQL, MariaDB, PostgreSQL and SQLite.
+          Built in Rust. Fast, native, multi-driver. <span class="text-white">No Electron.</span>
+        </p>
+        <div class="mt-10 flex flex-wrap items-center justify-center gap-3">
+          <a
+            href="#download"
+            class="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_0_30px_rgba(47,124,255,0.5)] hover:bg-brand-400"
+          >
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download for Windows
+          </a>
+          <a
+            href="https://github.com/wilsonglasser/basemaster"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-2 rounded-lg border border-white/15 px-5 py-3 text-sm font-semibold text-white hover:border-white/40"
+          >
+            Source on GitHub
+          </a>
+        </div>
+
+        <div class="mx-auto mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-white/50">
+          <span class="inline-flex items-center gap-1.5">
+            <span class="h-1.5 w-1.5 rounded-full bg-brand-400"></span>
+            MIT licensed
+          </span>
+          <span class="inline-flex items-center gap-1.5">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+            Windows · macOS · Linux
+          </span>
+          <span class="inline-flex items-center gap-1.5">
+            <span class="h-1.5 w-1.5 rounded-full bg-violet-400"></span>
+            Rust + Tauri 2
+          </span>
+          <span class="inline-flex items-center gap-1.5">
+            <span class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+            Zero telemetry
+          </span>
+        </div>
+
+        <div class="mt-14">
+          <img
+            src="/public/screens/screen_1.png"
+            alt="BaseMaster screenshot"
+            class="mx-auto rounded-xl border border-white/10 shadow-[0_20px_80px_rgba(0,0,0,0.6)]"
+          />
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="mx-auto max-w-6xl px-6 py-24">
+      <div class="mx-auto max-w-2xl text-center">
+        <h2 class="text-3xl font-bold tracking-tight text-white md:text-4xl">
+          Everything a DBA needs. Nothing a DBA doesn't.
+        </h2>
+        <p class="mt-3 text-white/60">
+          Multi-driver, full SQL workflow, editable grid, AI assistance, MCP integration. Shipped as a single native binary.
+        </p>
+      </div>
+
+      <div class="mt-14 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/20 text-brand-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">Multi-driver</h3>
+          <p class="mt-1 text-sm text-white/60">
+            MySQL, MariaDB, PostgreSQL, SQLite (with optional SQLCipher). One app, every server.
+          </p>
+        </div>
+
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">Full SQL editor</h3>
+          <p class="mt-1 text-sm text-white/60">
+            CodeMirror 6 with schema-aware autocomplete, format, <kbd class="rounded border border-white/15 bg-white/5 px-1 text-[10px]">Ctrl+Enter</kbd> to run the statement under the cursor.
+          </p>
+        </div>
+
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/20 text-violet-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">Editable grid (Navicat-style)</h3>
+          <p class="mt-1 text-sm text-white/60">
+            Glide Data Grid canvas. 100k+ rows, multi-fill, paste multi-row, edits pending until explicit apply.
+          </p>
+        </div>
+
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/20 text-amber-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 22l-6-4-6 4 1.5-8.5L2 9h7z"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">AI agent (12 providers)</h3>
+          <p class="mt-1 text-sm text-white/60">
+            19 tools for schema inspection, query generation, EXPLAIN, writes with approval. Anthropic, OpenAI, Gemini, OpenRouter, Groq, more.
+          </p>
+        </div>
+
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3h4v4"/><path d="M21 3 12 12"/><path d="M7 21H3v-4"/><path d="m3 21 9-9"/><path d="M21 17v4h-4"/><path d="m21 21-9-9"/><path d="M3 7V3h4"/><path d="M3 3l9 9"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">Data transfer</h3>
+          <p class="mt-1 text-sm text-white/60">
+            Copy between any pair of connections. Intra-table parallelism, FKs, triggers, cross-dialect DDL translation.
+          </p>
+        </div>
+
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-pink-500/20 text-pink-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2"/><path d="M16 3l-4 4-4-4"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">Docker discovery</h3>
+          <p class="mt-1 text-sm text-white/60">
+            Detects MySQL/Postgres containers running locally and one-clicks them into your tree.
+          </p>
+        </div>
+
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">EXPLAIN visualizer</h3>
+          <p class="mt-1 text-sm text-white/60">
+            Six modes: grid, tree, flame chart, statistics, info, raw JSON. Find slow scans, bad estimates, missing indexes.
+          </p>
+        </div>
+
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-fuchsia-500/20 text-fuchsia-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 1 1 10 0v4"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">MCP server</h3>
+          <p class="mt-1 text-sm text-white/60">
+            Expose your connections to external AI clients (Claude Code, Cursor) via JSON-RPC over stdio.
+          </p>
+        </div>
+
+        <div class="card rounded-xl p-6 transition-colors">
+          <div class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-rose-500/20 text-rose-300">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3 class="font-semibold text-white">Zero telemetry</h3>
+          <p class="mt-1 text-sm text-white/60">
+            Passwords in the OS keyring. No cloud sync unless you ask for it. No phoning home.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Screenshots -->
+    <section id="screenshots" class="border-y border-white/5 bg-white/[0.015]">
+      <div class="mx-auto max-w-6xl px-6 py-24">
+        <div class="mx-auto max-w-2xl text-center">
+          <h2 class="text-3xl font-bold tracking-tight text-white md:text-4xl">
+            Built for how DBAs actually work.
+          </h2>
+          <p class="mt-3 text-white/60">
+            Multi-tab, multi-connection, column-level filters, schema editor, transfer wizard.
+          </p>
+        </div>
+        <div class="mt-12 grid grid-cols-1 gap-6 md:grid-cols-2">
+          <figure class="card rounded-xl p-2">
+            <img src="/public/screens/screen_1.png" alt="BaseMaster grid with multi-tab" class="rounded-lg" />
+          </figure>
+          <figure class="card rounded-xl p-2">
+            <img src="/public/screens/screen_2.png" alt="BaseMaster query editor" class="rounded-lg" />
+          </figure>
+          <figure class="card rounded-xl p-2">
+            <img src="/public/screens/screen_3.png" alt="BaseMaster structure editor" class="rounded-lg" />
+          </figure>
+          <figure class="card rounded-xl p-2">
+            <img src="/public/screens/screen_4.png" alt="BaseMaster data transfer" class="rounded-lg" />
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- Compare -->
+    <section id="compare" class="mx-auto max-w-6xl px-6 py-24">
+      <div class="mx-auto max-w-2xl text-center">
+        <h2 class="text-3xl font-bold tracking-tight text-white md:text-4xl">
+          Why BaseMaster?
+        </h2>
+        <p class="mt-3 text-white/60">
+          The other clients are either paid and closed, Electron-heavy, or terminal-only.
+          BaseMaster is the one that isn't.
+        </p>
+      </div>
+
+      <div class="mt-12 overflow-x-auto">
+        <table class="mx-auto w-full max-w-4xl overflow-hidden rounded-xl border border-white/10 text-sm">
+          <thead class="bg-white/[0.03]">
+            <tr class="text-left">
+              <th class="px-4 py-3 font-medium text-white/60"></th>
+              <th class="px-4 py-3 font-semibold text-white">BaseMaster</th>
+              <th class="px-4 py-3 font-medium text-white/60">Navicat</th>
+              <th class="px-4 py-3 font-medium text-white/60">DBeaver</th>
+              <th class="px-4 py-3 font-medium text-white/60">TablePlus</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/5 text-white/80">
+            <tr>
+              <td class="px-4 py-3 text-white/60">Open source</td>
+              <td class="px-4 py-3 text-emerald-400">✓ MIT</td>
+              <td class="px-4 py-3 text-red-400">✗</td>
+              <td class="px-4 py-3 text-emerald-400">✓ Apache</td>
+              <td class="px-4 py-3 text-red-400">✗</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 text-white/60">Free (personal use)</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-red-400">$$$</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-amber-400">limited</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 text-white/60">Native UI</td>
+              <td class="px-4 py-3 text-emerald-400">✓ Tauri (no Electron)</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-amber-400">Eclipse SWT</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 text-white/60">Editable grid with pending apply</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-amber-400">partial</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 text-white/60">Data transfer between connections</td>
+              <td class="px-4 py-3 text-emerald-400">✓ w/ parallelism</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-amber-400">via export/import</td>
+              <td class="px-4 py-3 text-amber-400">via export/import</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 text-white/60">Built-in AI agent</td>
+              <td class="px-4 py-3 text-emerald-400">✓ 12 providers + MCP</td>
+              <td class="px-4 py-3 text-amber-400">limited</td>
+              <td class="px-4 py-3 text-red-400">✗</td>
+              <td class="px-4 py-3 text-red-400">✗</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 text-white/60">Navicat .ncx import</td>
+              <td class="px-4 py-3 text-emerald-400">✓ Blowfish decrypt</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-red-400">✗</td>
+              <td class="px-4 py-3 text-red-400">✗</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 text-white/60">Zero telemetry</td>
+              <td class="px-4 py-3 text-emerald-400">✓</td>
+              <td class="px-4 py-3 text-amber-400">?</td>
+              <td class="px-4 py-3 text-amber-400">opt-out</td>
+              <td class="px-4 py-3 text-amber-400">?</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section id="download" class="border-t border-white/5 bg-gradient-to-b from-brand-950/30 to-transparent">
+      <div class="mx-auto max-w-6xl px-6 py-24">
+        <div class="mx-auto max-w-2xl text-center">
+          <h2 class="text-3xl font-bold tracking-tight text-white md:text-4xl">
+            Download
+          </h2>
+          <p class="mt-3 text-white/60">
+            Native binaries for Windows, macOS and Linux. From the latest GitHub release.
+          </p>
+        </div>
+
+        <div class="mt-12 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <a
+            href="https://github.com/wilsonglasser/basemaster/releases/latest"
+            target="_blank"
+            rel="noreferrer"
+            class="card rounded-xl p-6 text-center transition-colors"
+          >
+            <svg class="mx-auto h-10 w-10 text-white/70" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M0 3.449L9.75 2.1v9.451H0V3.449zM10.949 1.949L24 0v11.4H10.949V1.949zM0 12.6h9.75V22.1L0 20.751V12.6zm10.949 0H24V24l-13.051-1.699V12.6z"/>
+            </svg>
+            <div class="mt-3 font-semibold text-white">Windows</div>
+            <div class="mt-1 text-xs text-white/50">.msi installer · .exe portable</div>
+            <div class="mt-4 inline-flex items-center gap-1.5 rounded-md bg-brand-500 px-3 py-1.5 text-xs font-medium text-white">
+              Download
+            </div>
+          </a>
+
+          <a
+            href="https://github.com/wilsonglasser/basemaster/releases/latest"
+            target="_blank"
+            rel="noreferrer"
+            class="card rounded-xl p-6 text-center transition-colors"
+          >
+            <svg class="mx-auto h-10 w-10 text-white/70" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+            </svg>
+            <div class="mt-3 font-semibold text-white">macOS</div>
+            <div class="mt-1 text-xs text-white/50">Apple Silicon · .dmg</div>
+            <div class="mt-4 inline-flex items-center gap-1.5 rounded-md bg-brand-500 px-3 py-1.5 text-xs font-medium text-white">
+              Download
+            </div>
+          </a>
+
+          <a
+            href="https://github.com/wilsonglasser/basemaster/releases/latest"
+            target="_blank"
+            rel="noreferrer"
+            class="card rounded-xl p-6 text-center transition-colors"
+          >
+            <svg class="mx-auto h-10 w-10 text-white/70" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 0 0-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.250-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 0 0-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 0 1-.004-.021l-.004-.024a1.807 1.807 0 0 1-.15.706.953.953 0 0 1-.213.335.71.71 0 0 1-.088.069c-.06-.042-.11-.097-.15-.158-.144-.254-.2-.535-.17-.8.005-.041.02-.08.03-.12.12-.412.3-.777.556-.907.013-.006.025-.01.037-.012zm-2.962.059h.01c.053 0 .105.009.155.022.14.04.258.126.357.241.197.232.31.567.31.912v.004c-.008.176-.03.355-.083.52-.05.153-.12.297-.21.418-.03.034-.063.063-.097.095a1.07 1.07 0 0 1-.154-.086.954.954 0 0 1-.231-.18 1.145 1.145 0 0 1-.22-.401 1.593 1.593 0 0 1-.062-.569c.028-.223.109-.447.21-.607a.784.784 0 0 1 .215-.19.523.523 0 0 1 .24-.093zm1.51 2.275c.345 0 .685.139.912.378.192.2.29.454.323.72.034.267-.007.539-.1.79-.03.08-.067.155-.107.229l-.013.022a.65.65 0 0 1-.052-.064c-.18-.225-.4-.388-.637-.466a1.267 1.267 0 0 0-.373-.065 1.1 1.1 0 0 0-.326.046 1.046 1.046 0 0 0-.273.116c-.09.055-.173.122-.244.196a.816.816 0 0 0-.105.122c-.032.047-.042.108-.066.156-.025.046-.05.09-.065.116-.013.02-.022.037-.028.05a.115.115 0 0 1-.02-.011 4.93 4.93 0 0 1-.36-.222c-.2-.13-.356-.262-.376-.372a.74.74 0 0 1 .087-.383c.06-.107.144-.193.239-.258.095-.064.2-.107.305-.129.105-.02.21-.02.311 0a.787.787 0 0 1 .272.097.806.806 0 0 1 .115.09.68.68 0 0 1 .115.162c-.025-.026-.048-.054-.07-.083a.893.893 0 0 1-.15-.313c-.006-.023-.01-.046-.014-.07a.998.998 0 0 1 0-.34c.034-.227.145-.438.303-.59a.796.796 0 0 1 .215-.148z"/>
+            </svg>
+            <div class="mt-3 font-semibold text-white">Linux</div>
+            <div class="mt-1 text-xs text-white/50">.deb · .rpm · .AppImage</div>
+            <div class="mt-4 inline-flex items-center gap-1.5 rounded-md bg-brand-500 px-3 py-1.5 text-xs font-medium text-white">
+              Download
+            </div>
+          </a>
+        </div>
+
+        <div class="mt-10 text-center text-xs text-white/50">
+          Or install via <code class="rounded bg-white/5 px-1.5 py-0.5 font-mono">winget install WilsonGlasser.BaseMaster</code> once published — or
+          <a class="text-brand-400 hover:text-brand-300" href="https://github.com/wilsonglasser/basemaster#building-from-source">build from source</a>.
+        </div>
+      </div>
+    </section>
+
+    <!-- Support -->
+    <section class="border-t border-white/5">
+      <div class="mx-auto max-w-3xl px-6 py-20 text-center">
+        <h2 class="text-2xl font-bold tracking-tight text-white md:text-3xl">
+          Free today. Free forever.
+        </h2>
+        <p class="mx-auto mt-3 max-w-xl text-white/60">
+          BaseMaster is maintained by one developer. If it saves you time, consider fueling the next release.
+        </p>
+        <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <a
+            href="https://ko-fi.com/wilsonglasser"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-2 rounded-md bg-[#ff5e5b] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#ff4846]"
+          >
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.658-3.734 4.352.24 7.422-2.831 6.649-6.916zm-11.062 3.511c-1.246 1.453-4.011 3.976-4.011 3.976s-.121.119-.31.023c-.076-.057-.108-.089-.108-.089-.443-.445-3.368-3.049-4.034-3.954-.709-.965-1.041-2.7-.091-3.71.951-1.01 3.005-1.086 4.363.407 0 0 1.565-1.782 3.468-.963 1.904.82 1.832 3.011.723 4.31zm6.173.478c-.928.116-1.682.028-1.682.028V7.284h1.77s1.971.551 1.971 2.638c0 1.913-.985 2.667-2.059 3.015z"/></svg>
+            Ko-fi
+          </a>
+          <a
+            href="https://buymeacoffee.com/wilsonglasser"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-2 rounded-md bg-[#ffdd00] px-5 py-2.5 text-sm font-semibold text-black hover:bg-[#ffd400]"
+          >
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M20.216 6.415l-.132-.666c-.119-.598-.388-1.163-1.001-1.379-.197-.069-.42-.098-.57-.241-.152-.143-.196-.366-.231-.572-.065-.378-.125-.756-.192-1.133-.057-.325-.102-.69-.25-.987-.195-.4-.597-.634-.996-.788a5.723 5.723 0 0 0-.626-.194c-1-.263-2.05-.36-3.077-.416a25.834 25.834 0 0 0-3.7.062c-.915.083-1.88.184-2.75.5-.318.116-.646.256-.888.501-.297.302-.393.77-.177 1.146.154.267.415.456.692.58.36.162.737.284 1.123.366 1.075.238 2.189.331 3.287.37 1.218.05 2.437.01 3.65-.118.299-.033.598-.073.896-.119.352-.054.578-.513.474-.834-.124-.383-.457-.531-.834-.473-.466.074-.96.108-1.382.146-1.177.08-2.358.082-3.536.006a22.228 22.228 0 0 1-1.157-.107c-.086-.01-.18-.025-.258-.036-.243-.036-.484-.08-.724-.13-.111-.027-.111-.185 0-.212h.005c.277-.06.557-.108.838-.147h.002c.131-.009.263-.032.394-.048a25.076 25.076 0 0 1 3.426-.12c.674.019 1.347.067 2.017.144l.228.031c.267.04.533.088.798.145.392.085.895.113 1.07.542.055.137.08.288.111.431l.319 1.484a.237.237 0 0 1-.199.284h-.003c-.037.006-.075.01-.112.015a36.704 36.704 0 0 1-4.743.295 37.059 37.059 0 0 1-4.699-.304c-.14-.017-.293-.042-.417-.06-.326-.048-.649-.108-.973-.161-.393-.065-.768-.032-1.123.161-.29.16-.527.404-.675.701-.154.316-.199.66-.267 1-.069.34-.176.707-.135 1.056.087.753.613 1.365 1.37 1.502a39.69 39.69 0 0 0 11.343.376.483.483 0 0 1 .535.53l-.071.697-1.018 9.907c-.041.41-.047.832-.125 1.237-.122.637-.553 1.028-1.182 1.171-.577.131-1.165.2-1.756.205-.656.004-1.31-.025-1.966-.022-.699.004-1.556-.06-2.095-.58-.475-.458-.54-1.174-.605-1.793l-.731-7.013-.322-3.094c-.037-.351-.286-.695-.678-.678-.336.015-.718.3-.678.679l.228 2.185.949 9.112c.147 1.344 1.174 2.068 2.446 2.272.742.12 1.503.144 2.257.156.966.016 1.942.053 2.892-.122 1.408-.258 2.465-1.198 2.616-2.657.34-3.332.683-6.663 1.024-9.995l.215-2.087a.484.484 0 0 1 .39-.426c.402-.078.787-.212 1.074-.518.455-.488.546-1.124.385-1.766zm-1.478.772c-.145.137-.363.201-.578.233-2.416.359-4.866.54-7.308.46-1.748-.06-3.477-.254-5.207-.498-.17-.024-.353-.055-.47-.18-.22-.236-.111-.71-.054-.995.052-.26.152-.609.463-.646.484-.057 1.046.148 1.526.22.577.088 1.156.159 1.737.212 2.48.226 5.002.19 7.472-.14.45-.06.899-.13 1.345-.21.399-.072.84-.206 1.08.206.166.281.188.657.162.974a.544.544 0 0 1-.169.364zm-6.159 3.9c-.862.37-1.84.788-3.109.788a5.884 5.884 0 0 1-1.569-.217l.877 9.004c.065.78.717 1.38 1.5 1.38 0 0 1.243.065 1.658.065.447 0 1.786-.065 1.786-.065.783 0 1.434-.6 1.499-1.38l.94-9.95a3.996 3.996 0 0 0-1.322-.238c-.826 0-1.491.284-2.26.613z"/></svg>
+            Buy Me a Coffee
+          </a>
+          <a
+            href="https://github.com/sponsors/wilsonglasser"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-2 rounded-md border border-white/15 px-5 py-2.5 text-sm font-semibold text-white hover:border-white/40"
+          >
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            Sponsor
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-white/5">
+      <div class="mx-auto flex max-w-6xl flex-col items-center gap-4 px-6 py-10 text-xs text-white/50 md:flex-row md:justify-between">
+        <div class="flex items-center gap-2">
+          <img src="/public/logo.png" alt="" class="h-5 w-5 rounded" />
+          <span>BaseMaster · MIT licensed</span>
+        </div>
+        <div class="flex items-center gap-5">
+          <a
+            href="https://github.com/wilsonglasser/basemaster"
+            target="_blank"
+            rel="noreferrer"
+            class="hover:text-white"
+          >GitHub</a>
+          <a
+            href="https://github.com/wilsonglasser/basemaster/releases"
+            target="_blank"
+            rel="noreferrer"
+            class="hover:text-white"
+          >Releases</a>
+          <a
+            href="https://github.com/wilsonglasser/basemaster/issues"
+            target="_blank"
+            rel="noreferrer"
+            class="hover:text-white"
+          >Report bug</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

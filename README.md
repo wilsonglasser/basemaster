@@ -26,14 +26,15 @@
 
 ## Download
 
-Pre-built binaries are available on the [Releases](https://github.com/wilsonglasser/basemaster/releases/latest) page:
+Pre-built binaries from the [latest release](https://github.com/wilsonglasser/basemaster/releases/latest). Tauri-action names assets using the current version — replace `X.Y.Z` with the tag you want.
 
-| Platform | Architecture | Format |
-|----------|--------------|--------|
-| Windows | x86_64 | `.msi` (installer) / `.exe` (portable) |
-| macOS | Apple Silicon | `.dmg` |
-| macOS | Intel | `.dmg` |
-| Linux | x86_64 | `.deb` / `.rpm` / `.AppImage` |
+| Platform | Architecture | Direct links |
+|----------|--------------|--------------|
+| **Windows** | x86_64 | [`.msi` installer](https://github.com/wilsonglasser/basemaster/releases/latest) · [`.exe` setup](https://github.com/wilsonglasser/basemaster/releases/latest) |
+| **macOS** | Apple Silicon | [`.dmg`](https://github.com/wilsonglasser/basemaster/releases/latest) |
+| **Linux** | x86_64 | [`.deb`](https://github.com/wilsonglasser/basemaster/releases/latest) · [`.rpm`](https://github.com/wilsonglasser/basemaster/releases/latest) · [`.AppImage`](https://github.com/wilsonglasser/basemaster/releases/latest) |
+
+All links go to the latest release page — pick the file that matches your OS. Coming soon: `winget install WilsonGlasser.BaseMaster`.
 
 ---
 

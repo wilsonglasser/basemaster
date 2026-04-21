@@ -91,7 +91,7 @@ jobs:
             - **Linux**: `.deb`, `.rpm`, `.AppImage`
 
             🤖 Build automatizado via GitHub Actions.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.platform.args }}
 
