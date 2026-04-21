@@ -114,3 +114,22 @@ jobs:
           github-artifact-id: ${{ needs.release.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: signed
+
+  # Auto-submete PR pra microsoft/winget-pkgs a cada tag nova.
+  # Opt-in via variável `USE_WINGET=true` em Settings → Variables.
+  # Requer secret `WINGET_TOKEN` (fine-grained PAT no seu fork de
+  # winget-pkgs, com Contents + Pull requests write).
+  publish-winget:
+    name: Publish to winget
+    needs: release
+    runs-on: windows-latest
+    if: ${{ vars.USE_WINGET == 'true' && startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - name: Submit manifest to microsoft/winget-pkgs
+        uses: vedantmgoyal2009/winget-releaser@v2
+        with:
+          identifier: WilsonGlasser.BaseMaster
+          # NSIS setup.exe é o installer preferencial pro winget.
+          # Se quiser usar o .msi em vez: troca por `\.msi$`.
+          installers-regex: '\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
