@@ -29,7 +29,7 @@ import {
   useContextMenu,
   type ContextEntry,
 } from "@/hooks/use-context-menu";
-import { useTheme } from "@/hooks/use-theme";
+import { useTheme } from "@/state/theme";
 import { ExportDialog } from "@/components/export-dialog";
 import { RecordFormView } from "@/components/table/record-form-view";
 import { writeInMemory } from "@/lib/export";
@@ -105,7 +105,7 @@ export function TableView({
   initialView = "data",
   initialEdit = false,
 }: TableViewProps) {
-  const { theme } = useTheme();
+  const theme = useTheme((s) => s.effectiveMode());
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === connectionId),
   );

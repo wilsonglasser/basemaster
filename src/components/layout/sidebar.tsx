@@ -5,7 +5,7 @@ import { Container, Database, Folder as FolderIcon, Moon, Plug, Plus, Search, Se
 import { useContextMenu, type ContextEntry } from "@/hooks/use-context-menu";
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import { useTheme } from "@/hooks/use-theme";
+import { useTheme } from "@/state/theme";
 import { useConnections } from "@/state/connections";
 import { useDockerDiscover } from "@/state/docker-discover";
 import { useT } from "@/state/i18n";
@@ -33,7 +33,9 @@ function readInitialWidth(): number {
 }
 
 export function Sidebar({ className }: SidebarProps) {
-  const { theme, toggle } = useTheme();
+  const mode = useTheme((s) => s.effectiveMode());
+  const setToggle = useTheme((s) => s.setToggle);
+  const cycleMode = () => setToggle(mode === "dark" ? "light" : "dark");
   const connections = useConnections((s) => s.connections);
   const loading = useConnections((s) => s.loading);
   const openOrFocus = useTabs((s) => s.openOrFocus);
@@ -183,11 +185,11 @@ export function Sidebar({ className }: SidebarProps) {
       <footer className="flex h-12 items-center justify-between border-t border-border px-3">
         <button
           type="button"
-          onClick={toggle}
+          onClick={cycleMode}
           className="grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title={theme === "dark" ? t("sidebar.themeLight") : t("sidebar.themeDark")}
+          title={mode === "dark" ? t("sidebar.themeLight") : t("sidebar.themeDark")}
         >
-          {theme === "dark" ? (
+          {mode === "dark" ? (
             <Sun className="h-4 w-4" />
           ) : (
             <Moon className="h-4 w-4" />

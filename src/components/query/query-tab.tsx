@@ -24,7 +24,7 @@ import {
 
 import type { SQLNamespace } from "@codemirror/lang-sql";
 
-import { useTheme } from "@/hooks/use-theme";
+import { useTheme } from "@/state/theme";
 import { ipc } from "@/lib/ipc";
 import { ExportDialog } from "@/components/export-dialog";
 import { writeInMemory } from "@/lib/export";
@@ -90,7 +90,7 @@ export function QueryTab({
   savedQueryName,
 }: QueryTabProps) {
   const t = useT();
-  const { theme } = useTheme();
+  const theme = useTheme((s) => s.effectiveMode());
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === connectionId),
   );

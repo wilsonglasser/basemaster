@@ -1,13 +1,13 @@
-import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, Globe, Keyboard, Moon, Plug, Server, Sparkles, Sun, Upload } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, Keyboard, Monitor, Moon, Palette, Plug, Server, Sparkles, Sun, Upload } from "lucide-react";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 
-import { useTheme, type Theme } from "@/hooks/use-theme";
 import { MODEL_CATALOG, parseModelKey, providerMeta, PROVIDERS, type ProviderId } from "@/lib/ai/catalog";
 import { ShortcutsPanel } from "@/components/shortcuts-panel";
 import { useAiAgent } from "@/state/ai-agent";
-import { useI18n, useT, type Lang } from "@/state/i18n";
+import { useI18n, useT, type Lang, type TKey } from "@/state/i18n";
+import { DARK_PRESETS, LIGHT_PRESETS, useTheme } from "@/state/theme";
 import { ipc } from "@/lib/ipc";
 import type { McpStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -17,124 +17,308 @@ const LANGS: Array<{ value: Lang; label: string; flag: string }> = [
   { value: "en", label: "English", flag: "🇺🇸" },
 ];
 
-const THEMES: Array<{ value: Theme; labelKey: "themeLight" | "themeDark" }> = [
-  { value: "light", labelKey: "themeLight" },
-  { value: "dark", labelKey: "themeDark" },
+type TabId = "appearance" | "ai" | "mcp" | "connections" | "shortcuts";
+
+const TABS: Array<{ id: TabId; labelKey: TKey; icon: React.ReactNode }> = [
+  { id: "appearance", labelKey: "settingsNav.appearance", icon: <Palette className="h-4 w-4" /> },
+  { id: "ai", labelKey: "settingsNav.ai", icon: <Sparkles className="h-4 w-4" /> },
+  { id: "mcp", labelKey: "settingsNav.mcp", icon: <Server className="h-4 w-4" /> },
+  { id: "connections", labelKey: "settingsNav.connections", icon: <Plug className="h-4 w-4" /> },
+  { id: "shortcuts", labelKey: "settingsNav.shortcuts", icon: <Keyboard className="h-4 w-4" /> },
 ];
 
 export function SettingsView() {
   const t = useT();
-  const lang = useI18n((s) => s.lang);
-  const setLang = useI18n((s) => s.setLang);
-  const { theme, setTheme } = useTheme();
+  const [tab, setTab] = useState<TabId>("appearance");
+  const active = TABS.find((x) => x.id === tab) ?? TABS[0];
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="mx-auto max-w-2xl px-6 py-8">
-        <h1 className="mb-6 text-lg font-semibold">
+    <div className="flex h-full overflow-hidden">
+      <nav className="flex w-52 shrink-0 flex-col gap-0.5 border-r border-border bg-sidebar px-2 py-4">
+        <h1 className="px-3 pb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           {t("sidebar.settings")}
         </h1>
+        {TABS.map(({ id, labelKey, icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={cn(
+              "flex items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors",
+              tab === id
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+            )}
+          >
+            <span className="grid h-4 w-4 place-items-center">{icon}</span>
+            <span>{t(labelKey)}</span>
+          </button>
+        ))}
+      </nav>
 
-        <Section
-          icon={<Globe className="h-4 w-4" />}
-          title={t("sidebar.language")}
-        >
-          <div className="grid gap-1">
-            {LANGS.map((l) => (
-              <OptionRow
-                key={l.value}
-                selected={l.value === lang}
-                onClick={() => setLang(l.value)}
-              >
-                <span className="text-lg leading-none">{l.flag}</span>
-                <span className="flex-1 text-sm">{l.label}</span>
-                <code className="text-[10px] text-muted-foreground">
-                  {l.value}
-                </code>
-              </OptionRow>
-            ))}
-          </div>
-        </Section>
+      <main className="flex-1 overflow-auto">
+        <div className="mx-auto max-w-2xl px-8 py-8">
+          <h2 className="mb-6 flex items-center gap-2 text-lg font-semibold">
+            {active.icon}
+            {t(active.labelKey)}
+          </h2>
+          {tab === "appearance" && <AppearancePanel />}
+          {tab === "ai" && <AiAgentPanel />}
+          {tab === "mcp" && <McpPanel />}
+          {tab === "connections" && <ConnectionsPortabilityPanel />}
+          {tab === "shortcuts" && <ShortcutsPanel />}
+        </div>
+      </main>
+    </div>
+  );
+}
 
-        <Section
-          icon={<Plug className="h-4 w-4" />}
-          title={t("settings.sectionPortability")}
-        >
-          <ConnectionsPortabilityPanel />
-        </Section>
+function AppearancePanel() {
+  const t = useT();
+  const lang = useI18n((s) => s.lang);
+  const setLang = useI18n((s) => s.setLang);
 
-        <Section
-          icon={<Keyboard className="h-4 w-4" />}
-          title={t("settings.sectionShortcuts")}
-        >
-          <ShortcutsPanel />
-        </Section>
+  const toggle = useTheme((s) => s.toggle);
+  const setToggle = useTheme((s) => s.setToggle);
+  const darkPreset = useTheme((s) => s.darkPreset);
+  const lightPreset = useTheme((s) => s.lightPreset);
+  const setDarkPreset = useTheme((s) => s.setDarkPreset);
+  const setLightPreset = useTheme((s) => s.setLightPreset);
+  const customDarkBg = useTheme((s) => s.customDarkBg);
+  const customLightBg = useTheme((s) => s.customLightBg);
+  const setCustomDarkBg = useTheme((s) => s.setCustomDarkBg);
+  const setCustomLightBg = useTheme((s) => s.setCustomLightBg);
 
-        <Section
-          icon={<Sparkles className="h-4 w-4" />}
-          title={t("settings.sectionAi")}
-        >
-          <AiAgentPanel />
-        </Section>
+  return (
+    <div className="flex flex-col gap-8">
+      {/* Language */}
+      <div>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("appearance.language")}
+        </h3>
+        <div className="grid gap-1">
+          {LANGS.map((l) => (
+            <OptionRow
+              key={l.value}
+              selected={l.value === lang}
+              onClick={() => setLang(l.value)}
+            >
+              <span className="text-lg leading-none">{l.flag}</span>
+              <span className="flex-1 text-sm">{l.label}</span>
+              <code className="text-[10px] text-muted-foreground">{l.value}</code>
+            </OptionRow>
+          ))}
+        </div>
+      </div>
 
-        <Section
-          icon={<Server className="h-4 w-4" />}
-          title={t("settings.sectionMcp")}
-        >
-          <McpPanel />
-        </Section>
+      {/* Mode (system / light / dark) */}
+      <div>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("appearance.mode")}
+        </h3>
+        <div className="grid grid-cols-3 gap-2">
+          <ModeButton
+            active={toggle === "system"}
+            onClick={() => setToggle("system")}
+            icon={<Monitor className="h-4 w-4" />}
+            label={t("appearance.modeSystem")}
+          />
+          <ModeButton
+            active={toggle === "light"}
+            onClick={() => setToggle("light")}
+            icon={<Sun className="h-4 w-4" />}
+            label={t("appearance.modeLight")}
+          />
+          <ModeButton
+            active={toggle === "dark"}
+            onClick={() => setToggle("dark")}
+            icon={<Moon className="h-4 w-4" />}
+            label={t("appearance.modeDark")}
+          />
+        </div>
+      </div>
 
-        <Section
-          icon={theme === "dark" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-          title={t("sidebar.toggleTheme")}
-        >
-          <div className="grid grid-cols-2 gap-2">
-            {THEMES.map((th) => (
-              <button
-                key={th.value}
-                type="button"
-                onClick={() => setTheme(th.value)}
-                className={cn(
-                  "flex items-center justify-center gap-2 rounded-md border px-4 py-3 text-sm transition-colors",
-                  theme === th.value
-                    ? "border-conn-accent bg-conn-accent/10 text-foreground"
-                    : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {th.value === "light" ? (
-                  <Sun className="h-4 w-4" />
-                ) : (
-                  <Moon className="h-4 w-4" />
-                )}
-                {t(`sidebar.${th.labelKey}`)}
-              </button>
-            ))}
-          </div>
-        </Section>
+      {/* Dark flavor */}
+      <div>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("appearance.darkFlavor")}
+        </h3>
+        <div className="grid grid-cols-2 gap-2">
+          {DARK_PRESETS.map((p) => (
+            <PresetCard
+              key={p.id}
+              active={darkPreset === p.id}
+              onClick={() => setDarkPreset(p.id)}
+              name={p.name}
+              tokens={p.tokens}
+            />
+          ))}
+          <PresetCard
+            active={darkPreset === "custom-dark"}
+            onClick={() => setDarkPreset("custom-dark")}
+            name={t("appearance.presetCustomDark")}
+            tokens={null}
+            customHex={customDarkBg}
+          />
+        </div>
+        {darkPreset === "custom-dark" && (
+          <CustomColorRow
+            label={t("appearance.customBase")}
+            value={customDarkBg}
+            onChange={setCustomDarkBg}
+          />
+        )}
+      </div>
+
+      {/* Light flavor */}
+      <div>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("appearance.lightFlavor")}
+        </h3>
+        <div className="grid grid-cols-2 gap-2">
+          {LIGHT_PRESETS.map((p) => (
+            <PresetCard
+              key={p.id}
+              active={lightPreset === p.id}
+              onClick={() => setLightPreset(p.id)}
+              name={p.name}
+              tokens={p.tokens}
+            />
+          ))}
+          <PresetCard
+            active={lightPreset === "custom-light"}
+            onClick={() => setLightPreset("custom-light")}
+            name={t("appearance.presetCustomLight")}
+            tokens={null}
+            customHex={customLightBg}
+          />
+        </div>
+        {lightPreset === "custom-light" && (
+          <CustomColorRow
+            label={t("appearance.customBase")}
+            value={customLightBg}
+            onChange={setCustomLightBg}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function Section({
+function ModeButton({
+  active,
+  onClick,
   icon,
-  title,
-  children,
+  label,
 }: {
+  active: boolean;
+  onClick: () => void;
   icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
+  label: string;
 }) {
   return (
-    <section className="mb-8">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-        {icon}
-        {title}
-      </h2>
-      {children}
-    </section>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center justify-center gap-2 rounded-md border px-4 py-3 text-sm transition-colors",
+        active
+          ? "border-conn-accent bg-conn-accent/10 text-foreground"
+          : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
+
+function PresetCard({
+  active,
+  onClick,
+  name,
+  tokens,
+  customHex,
+}: {
+  active: boolean;
+  onClick: () => void;
+  name: string;
+  tokens: {
+    background: string;
+    foreground: string;
+    card: string;
+    connAccent: string;
+  } | null;
+  customHex?: string;
+}) {
+  // Swatch com amostras dos 4 tokens principais. Pra custom-*, usa o hex
+  // pro bg e gera um acento derivado (não puxa o preset completo aqui
+  // pra evitar cálculo pesado na render de cada card).
+  const bg = tokens?.background ?? customHex ?? "#888";
+  const fg = tokens?.foreground ?? (customHex && isDark(customHex) ? "#eee" : "#222");
+  const accent = tokens?.connAccent ?? "oklch(0.6 0.15 250)";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "group relative flex flex-col gap-2 rounded-md border p-3 text-left transition-colors",
+        active
+          ? "border-conn-accent ring-1 ring-conn-accent/40"
+          : "border-border hover:bg-accent/30",
+      )}
+    >
+      <div
+        className="flex h-16 items-center justify-between gap-2 rounded-sm border border-border/60 px-2 py-1.5"
+        style={{ background: bg, color: fg }}
+      >
+        <span className="font-mono text-[11px]">Aa</span>
+        <span
+          className="h-3 w-3 rounded-full"
+          style={{ background: accent }}
+        />
+      </div>
+      <span className="text-xs font-medium">{name}</span>
+      {active && (
+        <Check className="absolute right-2 top-2 h-3.5 w-3.5 text-conn-accent" />
+      )}
+    </button>
+  );
+}
+
+function CustomColorRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (hex: string) => void;
+}) {
+  return (
+    <label className="mt-3 flex items-center gap-3 rounded-md border border-border bg-card/40 px-3 py-2">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <input
+        type="color"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent"
+      />
+      <code className="font-mono text-xs">{value}</code>
+    </label>
+  );
+}
+
+function isDark(hex: string): boolean {
+  const s = hex.replace("#", "");
+  const full = s.length === 3 ? s.split("").map((c) => c + c).join("") : s;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  // Luma aproximada (Rec. 709) — só pra decidir se contraste vai com fg claro ou escuro.
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
+}
+
 
 function AiAgentPanel() {
   const t = useT();

@@ -4,6 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ArrowLeftToLine } from "lucide-react";
 
 import { AiApprovalDialog } from "@/components/ai-approval-dialog";
+import { UpdateDialog } from "@/components/update-dialog";
 import { AiSidebar } from "@/components/layout/ai-sidebar";
 import { CommandPalette } from "@/components/command-palette";
 import { ShortcutBindings } from "@/components/shortcut-bindings";
@@ -37,6 +38,8 @@ import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { useTabState } from "@/state/tab-state";
 import { useTabs, type Tab } from "@/state/tabs";
+import { installThemeEffect } from "@/state/theme";
+import { useUpdater } from "@/state/updater";
 
 const REATTACH_EVENT = "basemaster://reattach-tab";
 
@@ -88,10 +91,24 @@ function MainApp() {
   useEffect(() => {
     const disposeA = installGlobalShortcuts();
     const disposeB = installBrowserDefaultPrevention();
+    const disposeC = installThemeEffect();
     return () => {
       disposeA();
       disposeB();
+      disposeC();
     };
+  }, []);
+
+  // Update check no boot: silent=true respeita versões na lista de
+  // "ignorar esta versão". Delay curto pra não brigar com o paint inicial.
+  // Em dev o endpoint não está disponível e o check sempre falha, então
+  // gate por DEV pra não poluir logs/UI.
+  useEffect(() => {
+    if (import.meta.env.DEV) return;
+    const t = setTimeout(() => {
+      void useUpdater.getState().checkNow({ silent: true });
+    }, 2500);
+    return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -206,6 +223,7 @@ function MainApp() {
       <ShortcutBindings />
       <ShortcutsCheatsheet />
       <CommandPalette />
+      <UpdateDialog />
     </div>
   );
 }

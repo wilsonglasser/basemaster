@@ -70,6 +70,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater: assinatura Ed25519 dos artefatos. Sem esses secrets o
+          # build ainda passa, mas os .sig não são gerados e o updater
+          # não vai conseguir verificar.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Sentry e Apple signing: *não* passar envs aqui. Secrets não
           # criados viram strings vazias, e tanto o tauri-action (Apple)
           # quanto o binário (Sentry empty DSN) podem quebrar no release
@@ -114,6 +119,73 @@ jobs:
           github-artifact-id: ${{ needs.release.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: signed
+
+  # Monta o latest.json (manifest do Tauri updater) a partir dos .sig
+  # dos 3 builds, e anexa como asset do release. O pubkey correspondente
+  # à chave de assinatura mora em tauri.conf.json; o plugin updater checa
+  # a signature antes de instalar.
+  publish-latest-json:
+    name: Publish latest.json
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build latest.json and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          # Artefatos do updater (gerados pelo createUpdaterArtifacts=true).
+          WIN_ZIP="BaseMaster_${VERSION}_x64-setup.nsis.zip"
+          MAC_TAR="BaseMaster.app.tar.gz"
+          LINUX_APPIMAGE="base-master_${VERSION}_amd64.AppImage"
+
+          mkdir -p sigs
+          gh release download "${TAG}" --pattern "*.sig" --dir ./sigs
+
+          sig() {
+            if [ -f "sigs/$1.sig" ]; then cat "sigs/$1.sig"; else echo ""; fi
+          }
+
+          WIN_SIG=$(sig "${WIN_ZIP}")
+          MAC_SIG=$(sig "${MAC_TAR}")
+          LINUX_SIG=$(sig "${LINUX_APPIMAGE}")
+
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          NOTES="See release notes at https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+
+          jq -n \
+            --arg version "${TAG}" \
+            --arg notes "${NOTES}" \
+            --arg pub_date "${PUB_DATE}" \
+            --arg win_sig "${WIN_SIG}" \
+            --arg win_url "${BASE_URL}/${WIN_ZIP}" \
+            --arg mac_sig "${MAC_SIG}" \
+            --arg mac_url "${BASE_URL}/${MAC_TAR}" \
+            --arg linux_sig "${LINUX_SIG}" \
+            --arg linux_url "${BASE_URL}/${LINUX_APPIMAGE}" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: (
+                ({} +
+                 (if $win_sig != "" then { "windows-x86_64": { signature: $win_sig, url: $win_url } } else {} end) +
+                 (if $mac_sig != "" then { "darwin-aarch64": { signature: $mac_sig, url: $mac_url } } else {} end) +
+                 (if $linux_sig != "" then { "linux-x86_64": { signature: $linux_sig, url: $linux_url } } else {} end))
+              )
+            }' > latest.json
+
+          cat latest.json
+          gh release upload "${TAG}" latest.json --clobber
 
   # Auto-submete PR pra microsoft/winget-pkgs a cada tag nova.
   # Opt-in via variável `USE_WINGET=true` em Settings → Variables.

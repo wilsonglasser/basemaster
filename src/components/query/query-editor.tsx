@@ -16,7 +16,6 @@ import {
 } from "@codemirror/language";
 import { searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState } from "@codemirror/state";
-import { oneDark } from "@codemirror/theme-one-dark";
 import {
   EditorView,
   drawSelection,
@@ -25,6 +24,8 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view";
+
+import { useTheme } from "@/state/theme";
 
 interface QueryEditorProps {
   value: string;
@@ -76,6 +77,8 @@ export function QueryEditor({
   const onChangeRef = useRef(onChange);
   const onFormatRef = useRef(onFormat);
   const sqlCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
+  const cmTheme = useTheme((s) => s.effectivePreset().cmTheme);
 
   // Mantém callbacks atuais sem recriar o editor.
   useEffect(() => {
@@ -133,7 +136,7 @@ export function QueryEditor({
             },
           },
         ]),
-        oneDark,
+        themeCompartment.current.of(cmTheme),
         editorTheme,
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
@@ -166,6 +169,15 @@ export function QueryEditor({
       ),
     });
   }, [schema, defaultSchema]);
+
+  // Troca o theme do CodeMirror quando o preset do app muda.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: themeCompartment.current.reconfigure(cmTheme),
+    });
+  }, [cmTheme]);
 
   // Sincroniza valor externo (apenas se realmente diferiu — evita loop).
   useEffect(() => {

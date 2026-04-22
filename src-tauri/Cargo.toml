@@ -22,6 +22,8 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-window-state = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 tauri-plugin-prevent-default = { version = "5", features = ["platform-windows"] }
 # Pra decriptar senhas em exports do Navicat (.ncx) — Blowfish ECB.
 blowfish = "0.9"
