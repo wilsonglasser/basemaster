@@ -133,7 +133,7 @@ export function Sidebar({ className }: SidebarProps) {
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-1 px-4 pt-4 pb-2">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-1 px-4">
         <span className="flex-1 truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           {t("sidebar.connections")}
         </span>
