@@ -1,7 +1,7 @@
 {
   "name": "basemaster",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -32,8 +32,14 @@
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "@tauri-apps/plugin-window-state": "^2.4.1",
     "@types/papaparse": "^5.5.2",
+    "@uiw/codemirror-theme-darcula": "^4.25.9",
+    "@uiw/codemirror-theme-github": "^4.25.9",
+    "@uiw/codemirror-theme-solarized": "^4.25.9",
+    "@uiw/codemirror-theme-tokyo-night": "^4.25.9",
     "ai": "^6.0.168",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
