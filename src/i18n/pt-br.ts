@@ -200,6 +200,34 @@ export const ptBR = {
     triggersLabel: "Triggers",
     dbLabelSchema: "schema",
     dbLabelDatabase: "database",
+    destructiveAck:
+      "Eu entendo que esta ação é destrutiva e irreversível, e tenho certeza absoluta que quero prosseguir.",
+    dropTableMenuOne: "Apagar tabela…",
+    dropTableMenuMany: "Apagar {count} tabelas…",
+    truncateTableMenuOne: "Truncate (apagar todas as linhas)…",
+    truncateTableMenuMany: "Truncate {count} tabelas (apagar linhas)…",
+    emptyTableMenuOne: "Empty (DELETE FROM)…",
+    emptyTableMenuMany: "Empty {count} tabelas (DELETE FROM)…",
+    dropTableTitleOne: "Apagar 1 tabela",
+    dropTableTitleMany: "Apagar {count} tabelas",
+    dropTableBody:
+      "DROP TABLE — estrutura e dados serão removidos permanentemente. Não há undo.",
+    dropTableConfirmOne: "Apagar tabela",
+    dropTableConfirmMany: "Apagar {count} tabelas",
+    truncateTableTitleOne: "Truncate 1 tabela",
+    truncateTableTitleMany: "Truncate {count} tabelas",
+    truncateTableBody:
+      "TRUNCATE TABLE — apaga TODAS as linhas e reseta auto-increment. Triggers NÃO disparam. Não há undo.",
+    truncateTableConfirmOne: "Truncate tabela",
+    truncateTableConfirmMany: "Truncate {count} tabelas",
+    emptyTableTitleOne: "Esvaziar 1 tabela",
+    emptyTableTitleMany: "Esvaziar {count} tabelas",
+    emptyTableBody:
+      "DELETE FROM — apaga TODAS as linhas (mais lento, dispara triggers, NÃO reseta auto-increment). Não há undo.",
+    emptyTableConfirmOne: "Esvaziar tabela",
+    emptyTableConfirmMany: "Esvaziar {count} tabelas",
+    bulkOpFailed: "Falha na operação: {error}",
+    bulkOpFailures: "Falhas:\n{list}",
   },
   table: {
     view: {

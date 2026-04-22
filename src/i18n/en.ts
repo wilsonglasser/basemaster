@@ -198,6 +198,34 @@ export const en: Dict = {
     triggersLabel: "Triggers",
     dbLabelSchema: "schema",
     dbLabelDatabase: "database",
+    destructiveAck:
+      "I understand this action is destructive and irreversible, and I'm absolutely sure I want to proceed.",
+    dropTableMenuOne: "Drop table…",
+    dropTableMenuMany: "Drop {count} tables…",
+    truncateTableMenuOne: "Truncate table…",
+    truncateTableMenuMany: "Truncate {count} tables…",
+    emptyTableMenuOne: "Empty table (DELETE FROM)…",
+    emptyTableMenuMany: "Empty {count} tables (DELETE FROM)…",
+    dropTableTitleOne: "Drop 1 table",
+    dropTableTitleMany: "Drop {count} tables",
+    dropTableBody:
+      "DROP TABLE — structure and data will be removed permanently. No undo.",
+    dropTableConfirmOne: "Drop table",
+    dropTableConfirmMany: "Drop {count} tables",
+    truncateTableTitleOne: "Truncate 1 table",
+    truncateTableTitleMany: "Truncate {count} tables",
+    truncateTableBody:
+      "TRUNCATE TABLE — wipes ALL rows and resets auto-increment. Triggers do NOT fire. No undo.",
+    truncateTableConfirmOne: "Truncate table",
+    truncateTableConfirmMany: "Truncate {count} tables",
+    emptyTableTitleOne: "Empty 1 table",
+    emptyTableTitleMany: "Empty {count} tables",
+    emptyTableBody:
+      "DELETE FROM — wipes ALL rows (slower, fires triggers, does NOT reset auto-increment). No undo.",
+    emptyTableConfirmOne: "Empty table",
+    emptyTableConfirmMany: "Empty {count} tables",
+    bulkOpFailed: "Operation failed: {error}",
+    bulkOpFailures: "Failures:\n{list}",
   },
   table: {
     view: {

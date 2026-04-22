@@ -32,6 +32,7 @@ import {
 import type { Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { confirmDestructive } from "@/state/destructive-confirm";
 import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
 import { useTabs } from "@/state/tabs";
@@ -302,21 +303,102 @@ export function TablesListView({
     }
   };
 
-  const deleteTable = async (name: string) => {
-    const confirmed = window.confirm(
-      t("tablesList.confirmDelete", { name }),
+  /** Targets de bulk: se a tabela passada está na seleção, opera em
+   *  todas selecionadas; senão só nela. Right-click respeita o set. */
+  const bulkTargets = (name: string): string[] => {
+    if (selected.has(name) && selected.size > 1) return Array.from(selected);
+    return [name];
+  };
+
+  const reportFailures = (
+    results: { table: string; error: string | null }[],
+  ) => {
+    const failed = results.filter((r) => r.error);
+    if (failed.length === 0) return;
+    alert(
+      t("tablesList.pasteFailures", {
+        list: failed.map((r) => `${r.table}: ${r.error}`).join("\n"),
+      }),
     );
-    if (!confirmed) return;
+  };
+
+  const deleteTables = async (name: string) => {
+    const targets = bulkTargets(name);
+    const many = targets.length > 1;
+    const ok = await confirmDestructive({
+      title: many
+        ? t("tree.dropTableTitleMany", { count: targets.length })
+        : t("tree.dropTableTitleOne"),
+      description: t("tree.dropTableBody"),
+      items: targets,
+      confirmLabel: many
+        ? t("tree.dropTableConfirmMany", { count: targets.length })
+        : t("tree.dropTableConfirmOne"),
+      checkboxLabel: t("tree.destructiveAck"),
+    });
+    if (!ok) return;
     try {
-      const sql = `DROP TABLE \`${name.replace(/`/g, "``")}\``;
-      const res = await ipc.db.runQuery(connectionId, sql, schema);
-      const err = res.results.find((r) => r.kind === "error");
-      if (err && err.kind === "error") {
-        alert(t("tablesList.deleteFailed", { error: err.message }));
-        return;
-      }
+      const results = await ipc.db.dropTables(connectionId, schema, targets);
       invalidateSchema(connectionId, schema);
       await ensureSnapshot(connectionId, schema);
+      // Limpa seleção das que de fato sumiram.
+      const dropped = new Set(results.filter((r) => !r.error).map((r) => r.table));
+      setSelected((prev) => {
+        const next = new Set(prev);
+        dropped.forEach((d) => next.delete(d));
+        return next;
+      });
+      reportFailures(results);
+    } catch (e) {
+      alert(t("tablesList.deleteFailed", { error: String(e) }));
+    }
+  };
+
+  const truncateTables = async (name: string) => {
+    const targets = bulkTargets(name);
+    const many = targets.length > 1;
+    const ok = await confirmDestructive({
+      title: many
+        ? t("tree.truncateTableTitleMany", { count: targets.length })
+        : t("tree.truncateTableTitleOne"),
+      description: t("tree.truncateTableBody"),
+      items: targets,
+      confirmLabel: many
+        ? t("tree.truncateTableConfirmMany", { count: targets.length })
+        : t("tree.truncateTableConfirmOne"),
+      checkboxLabel: t("tree.destructiveAck"),
+    });
+    if (!ok) return;
+    try {
+      const results = await ipc.db.truncateTables(connectionId, schema, targets);
+      invalidateSchema(connectionId, schema);
+      await ensureSnapshot(connectionId, schema);
+      reportFailures(results);
+    } catch (e) {
+      alert(t("tablesList.deleteFailed", { error: String(e) }));
+    }
+  };
+
+  const emptyTables = async (name: string) => {
+    const targets = bulkTargets(name);
+    const many = targets.length > 1;
+    const ok = await confirmDestructive({
+      title: many
+        ? t("tree.emptyTableTitleMany", { count: targets.length })
+        : t("tree.emptyTableTitleOne"),
+      description: t("tree.emptyTableBody"),
+      items: targets,
+      confirmLabel: many
+        ? t("tree.emptyTableConfirmMany", { count: targets.length })
+        : t("tree.emptyTableConfirmOne"),
+      checkboxLabel: t("tree.destructiveAck"),
+    });
+    if (!ok) return;
+    try {
+      const results = await ipc.db.emptyTables(connectionId, schema, targets);
+      invalidateSchema(connectionId, schema);
+      await ensureSnapshot(connectionId, schema);
+      reportFailures(results);
     } catch (e) {
       alert(t("tablesList.deleteFailed", { error: String(e) }));
     }
@@ -504,12 +586,36 @@ export function TablesListView({
         ],
       },
       { separator: true },
-      {
-        icon: <Trash2 className="h-3.5 w-3.5" />,
-        label: t("common.delete"),
-        variant: "destructive",
-        onClick: () => deleteTable(name),
-      },
+      ...((): ContextEntry[] => {
+        const count = bulkTargets(name).length;
+        const many = count > 1;
+        return [
+          {
+            icon: <Trash2 className="h-3.5 w-3.5" />,
+            label: many
+              ? t("tree.truncateTableMenuMany", { count })
+              : t("tree.truncateTableMenuOne"),
+            variant: "destructive",
+            onClick: () => truncateTables(name),
+          },
+          {
+            icon: <Trash2 className="h-3.5 w-3.5" />,
+            label: many
+              ? t("tree.emptyTableMenuMany", { count })
+              : t("tree.emptyTableMenuOne"),
+            variant: "destructive",
+            onClick: () => emptyTables(name),
+          },
+          {
+            icon: <Trash2 className="h-3.5 w-3.5" />,
+            label: many
+              ? t("tree.dropTableMenuMany", { count })
+              : t("tree.dropTableMenuOne"),
+            variant: "destructive",
+            onClick: () => deleteTables(name),
+          },
+        ];
+      })(),
     ]);
     ctxMenu.openAt(e);
   };
@@ -568,9 +674,16 @@ export function TablesListView({
           />
           <ToolbarBtn
             icon={<Trash2 className="h-3.5 w-3.5" />}
-            label={t("common.delete")}
+            label={
+              selected.size > 1
+                ? `${t("common.delete")} (${selected.size})`
+                : t("common.delete")
+            }
             disabled={selected.size === 0}
-            onClick={() => onlySelectedName && deleteTable(onlySelectedName)}
+            onClick={() => {
+              const first = selected.values().next().value;
+              if (first) deleteTables(first);
+            }}
             destructive
           />
         </div>

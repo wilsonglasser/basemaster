@@ -481,6 +481,11 @@ export type InsertResult =
   | { kind: "ok"; last_insert_id: number }
   | { kind: "err"; message: string };
 
+export interface TableOpResult {
+  table: string;
+  error: string | null;
+}
+
 export type QueryRunResult =
   | {
       kind: "select";

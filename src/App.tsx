@@ -4,6 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ArrowLeftToLine } from "lucide-react";
 
 import { AiApprovalDialog } from "@/components/ai-approval-dialog";
+import { DestructiveConfirmDialog } from "@/components/destructive-confirm-dialog";
 import { UpdateDialog } from "@/components/update-dialog";
 import { AiSidebar } from "@/components/layout/ai-sidebar";
 import { CommandPalette } from "@/components/command-palette";
@@ -220,6 +221,7 @@ function MainApp() {
       <CreateTableDialog />
       <DockerDiscoverDialog />
       <AiApprovalDialog />
+      <DestructiveConfirmDialog />
       <ShortcutBindings />
       <ShortcutsCheatsheet />
       <CommandPalette />

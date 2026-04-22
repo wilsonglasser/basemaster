@@ -29,6 +29,7 @@ import type {
   SchemaInfo,
   SchemaSnapshot,
   TableInfo,
+  TableOpResult,
   TableOptions,
   TransferDone,
   TransferOptions,
@@ -154,6 +155,19 @@ export const ipc = {
       to: string,
     ) =>
       invoke<void>("rename_table", { connectionId, schema, from, to }),
+
+    dropTables: (connectionId: Uuid, schema: string, tables: string[]) =>
+      invoke<TableOpResult[]>("drop_tables", { connectionId, schema, tables }),
+
+    truncateTables: (connectionId: Uuid, schema: string, tables: string[]) =>
+      invoke<TableOpResult[]>("truncate_tables", {
+        connectionId,
+        schema,
+        tables,
+      }),
+
+    emptyTables: (connectionId: Uuid, schema: string, tables: string[]) =>
+      invoke<TableOpResult[]>("empty_tables", { connectionId, schema, tables }),
 
     renameSchema: (connectionId: Uuid, from: string, to: string) =>
       invoke<void>("rename_schema", { connectionId, from, to }),

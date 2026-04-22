@@ -57,6 +57,11 @@ import { useSchemaCache } from "@/state/schema-cache";
 import { HighlightText } from "@/components/ui/highlight-text";
 import { matches, useSidebarFilter } from "@/state/sidebar-filter";
 import { useSidebarSelection } from "@/state/sidebar-selection";
+import {
+  sameMultiScope,
+  useSidebarMultiSelect,
+} from "@/state/sidebar-multi-select";
+import { confirmDestructive } from "@/state/destructive-confirm";
 import { useTabs } from "@/state/tabs";
 
 type DdlKind = "view" | "function" | "procedure" | "trigger";
@@ -1454,6 +1459,7 @@ function CategoryGroup({
   const newTab = useTabs((s) => s.openOrFocus);
   const sidebarSelected = useSidebarSelection((s) => s.selected);
   const setSidebarSelected = useSidebarSelection((s) => s.setSelected);
+  const setOrderedList = useSidebarMultiSelect((s) => s.setOrderedList);
   const tablesSelected =
     sidebarSelected?.kind === "category" &&
     sidebarSelected.connectionId === conn.id &&
@@ -1477,6 +1483,15 @@ function CategoryGroup({
     }
     return { tableList: tL, viewList: v };
   }, [tables, query, schemaMatches]);
+
+  // Mantém o store de multi-select sincronizado com a lista visível —
+  // shift+click precisa do range ordenado pra funcionar.
+  useEffect(() => {
+    setOrderedList(
+      { connectionId: conn.id, schema },
+      tableList.map((t) => t.name),
+    );
+  }, [conn.id, schema, tableList, setOrderedList]);
 
   const selectCategory = (category: "tables" | "views" | "queries") => {
     setSidebarSelected({
@@ -1729,6 +1744,18 @@ function TableNode({
     sidebarSelected.schema === table.schema &&
     sidebarSelected.table === table.name;
 
+  const isView = table.kind === "view" || table.kind === "materialized_view";
+  // Views ficam fora do multi-select (DROP VIEW != DROP TABLE).
+  const multiScope = { connectionId: conn.id, schema: table.schema };
+  const multiSelected = useSidebarMultiSelect((s) =>
+    !isView && sameMultiScope(s.scope, multiScope) ? s.selected : null,
+  );
+  const isMultiSelected =
+    !isView && multiSelected != null && multiSelected.has(table.name);
+  const handleMultiClick = useSidebarMultiSelect((s) => s.handleClick);
+  const ensureMultiContains = useSidebarMultiSelect((s) => s.ensureContains);
+  const clearMulti = useSidebarMultiSelect((s) => s.clear);
+
   const closeTabsForTable = useTabs((s) => s.closeMany);
 
   const runMaintenance = (action: MaintenanceAction) => {
@@ -1861,6 +1888,169 @@ function TableNode({
     }
   };
 
+  /** Tabelas alvo da ação destrutiva: respeita o multi-select se o
+   *  table clicado faz parte dele; senão, opera só em si mesmo. */
+  const destructiveTargets = (): string[] => {
+    if (isView) return [table.name];
+    if (multiSelected && multiSelected.has(table.name) && multiSelected.size > 1) {
+      return Array.from(multiSelected);
+    }
+    return [table.name];
+  };
+
+  const closeTabsForTables = (names: Set<string>) => {
+    closeTabsForTable(
+      (tab) =>
+        tab.kind.kind === "table" &&
+        tab.kind.connectionId === conn.id &&
+        tab.kind.schema === table.schema &&
+        names.has(tab.kind.table),
+    );
+  };
+
+  const reportFailures = (results: { table: string; error: string | null }[]) => {
+    const failed = results.filter((r) => r.error);
+    if (failed.length === 0) return;
+    const list = failed.map((r) => `${r.table}: ${r.error}`).join("\n");
+    alert(t("tree.bulkOpFailures", { list }));
+  };
+
+  const dropSelected = async () => {
+    const targets = destructiveTargets();
+    const many = targets.length > 1;
+    const ok = await confirmDestructive({
+      title: many
+        ? t("tree.dropTableTitleMany", { count: targets.length })
+        : t("tree.dropTableTitleOne"),
+      description: t("tree.dropTableBody"),
+      items: targets,
+      confirmLabel: many
+        ? t("tree.dropTableConfirmMany", { count: targets.length })
+        : t("tree.dropTableConfirmOne"),
+      checkboxLabel: t("tree.destructiveAck"),
+    });
+    if (!ok) return;
+    try {
+      // View → DROP VIEW (caso de tabela única + isView).
+      const results = isView
+        ? [
+            {
+              table: table.name,
+              error: await (async () => {
+                try {
+                  const isPg = conn.driver === "postgres";
+                  const qi = isPg
+                    ? `"${table.name.replace(/"/g, '""')}"`
+                    : `\`${table.name.replace(/`/g, "``")}\``;
+                  await ipc.db.runQuery(
+                    conn.id,
+                    `DROP VIEW ${qi}`,
+                    table.schema,
+                  );
+                  return null as string | null;
+                } catch (e) {
+                  return String(e);
+                }
+              })(),
+            },
+          ]
+        : await ipc.db.dropTables(conn.id, table.schema, targets);
+      closeTabsForTables(new Set(targets));
+      invalidateSchema(conn.id, table.schema);
+      ensureSnapshot(conn.id, table.schema).catch(() => {});
+      clearMulti();
+      reportFailures(results);
+    } catch (e) {
+      alert(t("tree.bulkOpFailed", { error: String(e) }));
+    }
+  };
+
+  const truncateSelected = async () => {
+    const targets = destructiveTargets();
+    const many = targets.length > 1;
+    const ok = await confirmDestructive({
+      title: many
+        ? t("tree.truncateTableTitleMany", { count: targets.length })
+        : t("tree.truncateTableTitleOne"),
+      description: t("tree.truncateTableBody"),
+      items: targets,
+      confirmLabel: many
+        ? t("tree.truncateTableConfirmMany", { count: targets.length })
+        : t("tree.truncateTableConfirmOne"),
+      checkboxLabel: t("tree.destructiveAck"),
+    });
+    if (!ok) return;
+    try {
+      const results = await ipc.db.truncateTables(
+        conn.id,
+        table.schema,
+        targets,
+      );
+      // Não fecha tabs — só apaga linhas; o user continua editando estrutura.
+      invalidateSchema(conn.id, table.schema);
+      ensureSnapshot(conn.id, table.schema).catch(() => {});
+      reportFailures(results);
+    } catch (e) {
+      alert(t("tree.bulkOpFailed", { error: String(e) }));
+    }
+  };
+
+  const emptySelected = async () => {
+    const targets = destructiveTargets();
+    const many = targets.length > 1;
+    const ok = await confirmDestructive({
+      title: many
+        ? t("tree.emptyTableTitleMany", { count: targets.length })
+        : t("tree.emptyTableTitleOne"),
+      description: t("tree.emptyTableBody"),
+      items: targets,
+      confirmLabel: many
+        ? t("tree.emptyTableConfirmMany", { count: targets.length })
+        : t("tree.emptyTableConfirmOne"),
+      checkboxLabel: t("tree.destructiveAck"),
+    });
+    if (!ok) return;
+    try {
+      const results = await ipc.db.emptyTables(conn.id, table.schema, targets);
+      invalidateSchema(conn.id, table.schema);
+      ensureSnapshot(conn.id, table.schema).catch(() => {});
+      reportFailures(results);
+    } catch (e) {
+      alert(t("tree.bulkOpFailed", { error: String(e) }));
+    }
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (isView) {
+      // Views ficam fora do multi-select.
+      clearMulti();
+      setSidebarSelected({
+        kind: "table",
+        connectionId: conn.id,
+        schema: table.schema,
+        table: table.name,
+        color: conn.color,
+      });
+      return;
+    }
+    handleMultiClick(multiScope, table.name, {
+      ctrl: e.ctrlKey || e.metaKey,
+      shift: e.shiftKey,
+    });
+    setSidebarSelected({
+      kind: "table",
+      connectionId: conn.id,
+      schema: table.schema,
+      table: table.name,
+      color: conn.color,
+    });
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (!isView) ensureMultiContains(multiScope, table.name);
+    menu.openAt(e);
+  };
+
   const menu = useContextMenu([
     {
       icon: <TableIcon className="h-3.5 w-3.5" />,
@@ -1959,6 +2149,40 @@ function TableNode({
           accentColor: conn.color,
         }),
     },
+    { separator: true },
+    // Truncate / Empty só fazem sentido em tabela; em view são ocultados.
+    ...((): ContextEntry[] => {
+      const count = destructiveTargets().length;
+      const many = count > 1;
+      const items: ContextEntry[] = [];
+      if (!isView) {
+        items.push({
+          icon: <Trash2 className="h-3.5 w-3.5" />,
+          label: many
+            ? t("tree.truncateTableMenuMany", { count })
+            : t("tree.truncateTableMenuOne"),
+          onClick: truncateSelected,
+          variant: "destructive",
+        });
+        items.push({
+          icon: <Trash2 className="h-3.5 w-3.5" />,
+          label: many
+            ? t("tree.emptyTableMenuMany", { count })
+            : t("tree.emptyTableMenuOne"),
+          onClick: emptySelected,
+          variant: "destructive",
+        });
+      }
+      items.push({
+        icon: <Trash2 className="h-3.5 w-3.5" />,
+        label: many
+          ? t("tree.dropTableMenuMany", { count })
+          : t("tree.dropTableMenuOne"),
+        onClick: dropSelected,
+        variant: "destructive",
+      });
+      return items;
+    })(),
   ]);
 
   return (
@@ -1968,7 +2192,9 @@ function TableNode({
           "group flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs transition-colors",
           isSelected
             ? "bg-conn-accent/25 text-foreground ring-1 ring-conn-accent/60"
-            : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+            : isMultiSelected
+              ? "bg-conn-accent/15 text-foreground ring-1 ring-conn-accent/40"
+              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
         )}
         title={[
           table.comment,
@@ -1982,16 +2208,8 @@ function TableNode({
         ]
           .filter(Boolean)
           .join(" · ") || undefined}
-        onClick={() =>
-          setSidebarSelected({
-            kind: "table",
-            connectionId: conn.id,
-            schema: table.schema,
-            table: table.name,
-            color: conn.color,
-          })
-        }
-        onContextMenu={menu.openAt}
+        onClick={handleClick}
+        onContextMenu={handleContextMenu}
         onDoubleClick={openTable}
       >
         <span className="w-4" />

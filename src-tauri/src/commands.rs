@@ -415,6 +415,124 @@ pub async fn rename_table(
     Ok(())
 }
 
+/// Resultado por tabela em operações em lote (drop/truncate/empty).
+/// Sucessos vêm sem `error`; falhas vêm com a mensagem do driver.
+#[derive(serde::Serialize)]
+pub struct TableOpResult {
+    pub table: String,
+    pub error: Option<String>,
+}
+
+/// Driver string da conexão (sem precisar do trait — vem do profile).
+async fn driver_kind(state: &AppState, id: Uuid) -> R<String> {
+    let p = state.store.connections().get(id).await.map_err(err)?;
+    Ok(p.driver)
+}
+
+/// DROP TABLE em lote. Continua nas próximas se uma falhar — devolve
+/// um vetor com sucesso/erro por tabela.
+#[tauri::command]
+pub async fn drop_tables(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    tables: Vec<String>,
+) -> R<Vec<TableOpResult>> {
+    let d = driver_for(&state, connection_id).await?;
+    let mut out = Vec::with_capacity(tables.len());
+    for t in tables {
+        let sql = format!("DROP TABLE {}", d.quote_ident(&t));
+        let res = d.execute(Some(&schema), &sql).await;
+        out.push(TableOpResult {
+            table: t,
+            error: res.err().map(|e| e.to_string()),
+        });
+    }
+    Ok(out)
+}
+
+/// TRUNCATE TABLE em lote. SQLite não suporta TRUNCATE — usa
+/// `DELETE FROM` + reset do `sqlite_sequence`. Postgres adiciona
+/// `RESTART IDENTITY CASCADE` pra resetar sequences e propagar FKs.
+#[tauri::command]
+pub async fn truncate_tables(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    tables: Vec<String>,
+) -> R<Vec<TableOpResult>> {
+    let d = driver_for(&state, connection_id).await?;
+    let kind = driver_kind(&state, connection_id).await?;
+    let mut out = Vec::with_capacity(tables.len());
+    for t in tables {
+        let qi = d.quote_ident(&t);
+        let res = match kind.as_str() {
+            "sqlite" => {
+                // SQLite: DELETE + reset do contador de AUTOINCREMENT.
+                // sqlite_sequence só existe se a tabela usa AUTOINCREMENT;
+                // o segundo statement é silencioso quando ela não existe.
+                let r1 = d
+                    .execute(Some(&schema), &format!("DELETE FROM {}", qi))
+                    .await;
+                if let Err(e) = r1 {
+                    Err(e)
+                } else {
+                    // Tenta resetar o contador; ignora erro (tabela sem rowid/AI).
+                    let _ = d
+                        .execute(
+                            Some(&schema),
+                            &format!(
+                                "DELETE FROM sqlite_sequence WHERE name = '{}'",
+                                t.replace('\'', "''")
+                            ),
+                        )
+                        .await;
+                    Ok(())
+                }
+            }
+            "postgres" => {
+                d.execute(
+                    Some(&schema),
+                    &format!("TRUNCATE TABLE {} RESTART IDENTITY CASCADE", qi),
+                )
+                .await
+                .map(|_| ())
+            }
+            _ => d
+                .execute(Some(&schema), &format!("TRUNCATE TABLE {}", qi))
+                .await
+                .map(|_| ()),
+        };
+        out.push(TableOpResult {
+            table: t,
+            error: res.err().map(|e| e.to_string()),
+        });
+    }
+    Ok(out)
+}
+
+/// `DELETE FROM` em lote — apaga todas as linhas mas dispara triggers
+/// e não reseta auto-increment. Funciona em todos os dialetos.
+#[tauri::command]
+pub async fn empty_tables(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    tables: Vec<String>,
+) -> R<Vec<TableOpResult>> {
+    let d = driver_for(&state, connection_id).await?;
+    let mut out = Vec::with_capacity(tables.len());
+    for t in tables {
+        let sql = format!("DELETE FROM {}", d.quote_ident(&t));
+        let res = d.execute(Some(&schema), &sql).await;
+        out.push(TableOpResult {
+            table: t,
+            error: res.err().map(|e| e.to_string()),
+        });
+    }
+    Ok(out)
+}
+
 /// Renomeia um schema inteiro: MySQL não tem `RENAME DATABASE`, então
 /// simula via CREATE novo → RENAME TABLE de cada objeto → DROP antigo.
 /// Emite `schema_rename:progress` + `:done` pra UI mostrar o andamento.
