@@ -237,10 +237,7 @@ pub trait Driver: Send + Sync {
     ///
     /// Note: this method does NOT use `async_trait` — see comment in `Txn`
     /// trait about the HRTB bounds sqlx requires.
-    fn begin_txn<'a>(
-        &'a self,
-        _schema: Option<&'a str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Txn>>> + Send + 'a>> {
+    fn begin_txn<'a>(&'a self, _schema: Option<&'a str>) -> TxnFuture<'a> {
         Box::pin(async {
             Err(crate::Error::Unsupported(
                 "begin_txn não implementado pelo driver".into(),
@@ -329,6 +326,11 @@ pub trait Driver: Send + Sync {
         Ok(q)
     }
 }
+
+/// Boxed future that resolves to a boxed `Txn`. Type alias exists to keep
+/// trait-method signatures readable (clippy::type_complexity).
+pub type TxnFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Box<dyn Txn>>> + Send + 'a>>;
 
 /// Transaction handle pinned to a single connection. `execute`/`query` run
 /// in the tx context (SAME conn). `commit`/`rollback` finalize.

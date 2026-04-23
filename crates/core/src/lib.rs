@@ -13,7 +13,7 @@ pub mod value;
 pub use connection::{ConnectionConfig, SshTunnelConfig, TlsMode};
 pub use driver::{
     Driver, ExecuteResult, Filter, FilterNode, FilterOp, GroupOp, OrderBy, PageOptions,
-    QueryResult, SchemaSnapshot, SortDir, Txn,
+    QueryResult, SchemaSnapshot, SortDir, Txn, TxnFuture,
 };
 pub use error::{Error, Result};
 pub use schema::{
