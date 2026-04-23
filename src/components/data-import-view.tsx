@@ -24,7 +24,7 @@ import { useSchemaCache } from "@/state/schema-cache";
 const CHUNK = 500;
 
 interface Props {
-  /** Pré-seleção opcional. */
+  /** Optional preselection. */
   initialConnectionId?: Uuid;
   initialSchema?: string;
   initialTable?: string;
@@ -60,7 +60,7 @@ export function DataImportView({
   const [table, setTable] = useState<string | null>(initialTable ?? null);
   const [cols, setCols] = useState<Column[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
-  /** Quais targets foram editados manualmente (não sobrescrever em re-automap). */
+  /** Which targets were edited manually (don't overwrite on re-automap). */
   const [manualTargets, setManualTargets] = useState<Set<string>>(new Set());
   const [fuzzySuggestions, setFuzzySuggestions] = useState<
     Record<string, { source: string; score: number }>
@@ -80,7 +80,7 @@ export function DataImportView({
     if (connId && schema) void ensureTables(connId, schema).catch(() => void 0);
   }, [connId, schema, ensureTables]);
 
-  // Carrega colunas da tabela destino pra mostrar mapeamento.
+  // Load target table columns to show the mapping.
   useEffect(() => {
     setCols([]);
     if (!connId || !schema || !table) return;
@@ -94,8 +94,8 @@ export function DataImportView({
     };
   }, [connId, schema, table]);
 
-  // Auto-map inicial — roda só quando muda o dataset ou colunas-destino.
-  // Preserva edições manuais se a mesma tabela/arquivo for re-selecionada.
+  // Initial auto-map — only runs when the dataset or target columns change.
+  // Preserves manual edits if the same table/file is re-selected.
   useEffect(() => {
     if (!parsed || cols.length === 0) return;
     runAutoMap({ preserveManual: true });
@@ -179,11 +179,11 @@ export function DataImportView({
     setStatus({ kind: "running", done: 0, total });
 
     try {
-      // Pre-compute índices source.
+      // Pre-compute source indices.
       const sourceIdx = new Map<string, number>();
       parsed.columns.forEach((c, i) => sourceIdx.set(c, i));
 
-      // Pares (targetCol, sourceIdx).
+      // Pairs (targetCol, sourceIdx).
       const pairs: Array<{ target: string; idx: number }> = [];
       for (const [target, source] of Object.entries(mapping)) {
         const idx = sourceIdx.get(source);
@@ -237,7 +237,7 @@ export function DataImportView({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-4 p-4">
-          {/* 1. Arquivo */}
+          {/* 1. File */}
           <Card title="1. Arquivo">
             <div className="flex items-center gap-2">
               <button
@@ -302,7 +302,7 @@ export function DataImportView({
             </Card>
           )}
 
-          {/* 3. Destino */}
+          {/* 3. Target */}
           {parsed && (
             <Card title="3. Destino">
               <div className="grid grid-cols-3 gap-2">
@@ -352,7 +352,7 @@ export function DataImportView({
             </Card>
           )}
 
-          {/* 4. Mapeamento */}
+          {/* 4. Mapping */}
           {cols.length > 0 && parsed && (
             <Card title="4. Mapeamento de colunas">
               <div className="mb-2 flex items-center justify-between">
@@ -439,7 +439,7 @@ export function DataImportView({
             </Card>
           )}
 
-          {/* 5. Importar */}
+          {/* 5. Import */}
           {canImport && (
             <Card title="5. Importar">
               <button

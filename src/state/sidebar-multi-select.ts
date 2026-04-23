@@ -3,18 +3,18 @@ import { create } from "zustand";
 import type { Uuid } from "@/lib/types";
 
 /**
- * Seleção múltipla de tabelas na sidebar (árvore de conexões).
- * Escopo: (connectionId, schema). Mudou o escopo, limpa.
+ * Multi-select of tables in the sidebar (connection tree).
+ * Scope: (connectionId, schema). Scope changed → clears.
  *
- * Comportamento (Navicat-like):
- *  - Click simples: substitui a seleção pela tabela clicada (ou limpa
- *    se vier de outro escopo).
- *  - Ctrl+click: toggla a tabela na seleção dentro do mesmo escopo.
- *  - Shift+click: estende um range entre o anchor e a tabela atual.
+ * Behavior (Navicat-like):
+ *  - Simple click: replaces the selection with the clicked table (or
+ *    clears if coming from another scope).
+ *  - Ctrl+click: toggles the table in the selection within the same scope.
+ *  - Shift+click: extends a range between the anchor and the current table.
  *
- * O `tables` em ordem é guardado pelo nó da árvore via `setOrderedList`
- * — necessário pra Shift+click saber o range. Cada categoria de
- * tabelas chama isso quando renderiza.
+ * The ordered `tables` is kept by the tree node via `setOrderedList`
+ * — needed so Shift+click knows the range. Each table category
+ * calls this on render.
  */
 export interface SidebarMultiScope {
   connectionId: Uuid;
@@ -23,22 +23,22 @@ export interface SidebarMultiScope {
 
 interface SidebarMultiState {
   scope: SidebarMultiScope | null;
-  /** Conjunto de nomes de tabela selecionados no escopo atual. */
+  /** Set of selected table names in the current scope. */
   selected: Set<string>;
-  /** Última tabela clicada — anchor para shift+click. */
+  /** Last clicked table — anchor for shift+click. */
   anchor: string | null;
-  /** Lista ordenada de tabelas do escopo (informada pela UI). */
+  /** Ordered list of tables in the scope (provided by the UI). */
   ordered: string[];
 
   setOrderedList: (scope: SidebarMultiScope, ordered: string[]) => void;
-  /** Decide single/ctrl/shift baseado nas modifier keys. */
+  /** Decides single/ctrl/shift based on modifier keys. */
   handleClick: (
     scope: SidebarMultiScope,
     table: string,
     mods: { ctrl: boolean; shift: boolean },
   ) => void;
-  /** Garante que `table` esteja na seleção. Se não estiver e não for
-   *  ctrl/shift, substitui. Usado pelo right-click. */
+  /** Makes sure `table` is in the selection. If not and not ctrl/shift,
+   *  replaces. Used by right-click. */
   ensureContains: (scope: SidebarMultiScope, table: string) => void;
   clear: () => void;
   isSelected: (scope: SidebarMultiScope, table: string) => boolean;
@@ -59,8 +59,8 @@ export const useSidebarMultiSelect = create<SidebarMultiState>((set, get) => ({
   setOrderedList(scope, ordered) {
     const cur = get();
     if (sameScope(cur.scope, scope)) {
-      // Mesmo escopo: só atualiza ordem (tabelas podem ter sido
-      // adicionadas/removidas), sem mexer na seleção. Filtra removidas.
+      // Same scope: just update order (tables may have been
+      // added/removed), without touching the selection. Filter out removed ones.
       const setOrd = new Set(ordered);
       const filtered = new Set<string>();
       cur.selected.forEach((t) => setOrd.has(t) && filtered.add(t));

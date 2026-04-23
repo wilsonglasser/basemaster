@@ -3,15 +3,10 @@ import { listen } from "@tauri-apps/api/event";
 import {
   ArrowRight,
   Check,
-  ChevronDown,
-  ChevronRight,
   Database,
   Loader2,
-  Pause,
   Play,
   RotateCcw,
-  Settings2,
-  Square,
   X,
 } from "lucide-react";
 
@@ -30,8 +25,17 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { appConfirm } from "@/state/app-dialog";
 import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
+import { OptionsStep } from "@/components/data-transfer/options-step";
+import { ProgressStep } from "@/components/data-transfer/progress-step";
+import {
+  buildDefaultTransferOptions,
+  readPersistedTransferOptions,
+  writePersistedTransferOptions,
+  type PersistedTransferOptions,
+} from "@/components/data-transfer/persisted-options";
 
 type Step = "endpoints" | "tables" | "options" | "progress";
 
@@ -42,7 +46,7 @@ interface Props {
   initialTargetConnectionId?: Uuid;
   initialTargetSchema?: string;
   initialTables?: string[];
-  /** Se true, pula direto pra step de opções. */
+  /** If true, jumps straight to the options step. */
   initialAutoAdvance?: boolean;
 }
 
@@ -88,9 +92,9 @@ export function DataTransferWizard({
   const [selectedTables, setSelectedTables] = useState<Set<string>>(
     new Set(initialTables ?? []),
   );
-  // Deriva direto do prop em vez de capturar em useState — assim se o
-  // wizard é re-renderizado após rehydrate do session-restore (initialTables
-  // chegou depois do primeiro mount), ainda pegamos a preseleção certa.
+  // Derive directly from the prop instead of capturing in useState — so if
+  // the wizard re-renders after session-restore rehydrate (initialTables
+  // arrived after the first mount), we still catch the right preselection.
   const preseededTables = useMemo(
     () => new Set(initialTables ?? []),
     [initialTables],
@@ -98,52 +102,116 @@ export function DataTransferWizard({
   const [tableFilter, setTableFilter] = useState("");
 
   // --- options
-  const [dropTarget, setDropTarget] = useState(true);
-  const [createTables, setCreateTables] = useState(true);
-  const [emptyTarget, setEmptyTarget] = useState(false);
-  const [chunkSize, setChunkSize] = useState(1000);
-  const [continueOnError, setContinueOnError] = useState(false);
-  // Default: cores do usuário, clamp em 8 (limite do pool MySQL).
+  // Defaults persisted in localStorage — the last configuration used is
+  // memorized and becomes the starting point next time. Individual missing
+  // keys fall back to the structured default (for users who never ran a transfer).
+  const persistedOpts = useMemo(() => readPersistedTransferOptions(), []);
   const cpuCores = useMemo(() => {
     const hw = typeof navigator !== "undefined"
       ? navigator.hardwareConcurrency ?? 4
       : 4;
     return Math.max(1, Math.min(8, hw));
   }, []);
-  const [concurrency, setConcurrency] = useState(cpuCores);
-  const [insertMode, setInsertMode] = useState<InsertMode>("insert");
-  const [disableFkChecks, setDisableFkChecks] = useState(true);
-  const [disableUniqueChecks, setDisableUniqueChecks] = useState(true);
-  // Default pending check — wizard consulta o target pra decidir:
-  // log_bin=OFF → seguro ligar (no-op). log_bin=ON → deixa user decidir.
-  const [disableBinlog, setDisableBinlog] = useState(false);
+  const defaults = useMemo(
+    () => buildDefaultTransferOptions(cpuCores),
+    [cpuCores],
+  );
+  const get = <K extends keyof PersistedTransferOptions>(
+    k: K,
+  ): PersistedTransferOptions[K] =>
+    (persistedOpts?.[k] ?? defaults[k]) as PersistedTransferOptions[K];
+
+  const [dropTarget, setDropTarget] = useState(get("dropTarget"));
+  const [createTables, setCreateTables] = useState(get("createTables"));
+  const [emptyTarget, setEmptyTarget] = useState(get("emptyTarget"));
+  const [chunkSize, setChunkSize] = useState(get("chunkSize"));
+  const [continueOnError, setContinueOnError] = useState(get("continueOnError"));
+  const [concurrency, setConcurrency] = useState(get("concurrency"));
+  const [insertMode, setInsertMode] = useState<InsertMode>(get("insertMode"));
+  const [disableFkChecks, setDisableFkChecks] = useState(get("disableFkChecks"));
+  const [disableUniqueChecks, setDisableUniqueChecks] = useState(
+    get("disableUniqueChecks"),
+  );
+  // Default pending check — the wizard queries the target to decide:
+  // log_bin=OFF → safe to enable (no-op). log_bin=ON → let the user decide.
+  const [disableBinlog, setDisableBinlog] = useState(get("disableBinlog"));
   const [binlogCheckDone, setBinlogCheckDone] = useState(false);
-  const [useTransaction, setUseTransaction] = useState(true);
-  const [lockTarget, setLockTarget] = useState(false);
-  const [maxStmtKb, setMaxStmtKb] = useState(1024);
-  const [useKeyset, setUseKeyset] = useState(true);
+  const [useTransaction, setUseTransaction] = useState(get("useTransaction"));
+  const [lockTarget, setLockTarget] = useState(get("lockTarget"));
+  const [maxStmtKb, setMaxStmtKb] = useState(get("maxStmtKb"));
+  const [useKeyset, setUseKeyset] = useState(get("useKeyset"));
   // Navicat-style
-  const [createTargetSchema, setCreateTargetSchema] = useState(true);
-  const [createRecords, setCreateRecords] = useState(true);
-  const [completeInserts, setCompleteInserts] = useState(true);
-  const [extendedInserts, setExtendedInserts] = useState(true);
-  const [hexBlob, setHexBlob] = useState(true);
-  const [singleTransaction, setSingleTransaction] = useState(false);
-  const [lockSource, setLockSource] = useState(false);
-  const [preserveZeroAutoInc, setPreserveZeroAutoInc] = useState(true);
-  const [copyTriggers, setCopyTriggers] = useState(true);
-  const [intraTableWorkers, setIntraTableWorkers] = useState(1);
-  const [intraTableMinRows, setIntraTableMinRows] = useState(10000);
+  const [createTargetSchema, setCreateTargetSchema] = useState(
+    get("createTargetSchema"),
+  );
+  const [createRecords, setCreateRecords] = useState(get("createRecords"));
+  const [completeInserts, setCompleteInserts] = useState(get("completeInserts"));
+  const [extendedInserts, setExtendedInserts] = useState(get("extendedInserts"));
+  const [hexBlob, setHexBlob] = useState(get("hexBlob"));
+  const [singleTransaction, setSingleTransaction] = useState(
+    get("singleTransaction"),
+  );
+  const [lockSource, setLockSource] = useState(get("lockSource"));
+  const [preserveZeroAutoInc, setPreserveZeroAutoInc] = useState(
+    get("preserveZeroAutoInc"),
+  );
+  const [copyTriggers, setCopyTriggers] = useState(get("copyTriggers"));
+  const [intraTableWorkers, setIntraTableWorkers] = useState(
+    get("intraTableWorkers"),
+  );
+  const [intraTableMinRows, setIntraTableMinRows] = useState(
+    get("intraTableMinRows"),
+  );
+
+  // Persist to localStorage on every change — native debouncing via React
+  // batching; to avoid slider thrash, saving on unmount is also unnecessary
+  // (localStorage is sync + cheap at the scope of this blob).
+  useEffect(() => {
+    writePersistedTransferOptions({
+      dropTarget,
+      createTables,
+      emptyTarget,
+      chunkSize,
+      continueOnError,
+      concurrency,
+      insertMode,
+      disableFkChecks,
+      disableUniqueChecks,
+      disableBinlog,
+      useTransaction,
+      lockTarget,
+      maxStmtKb,
+      useKeyset,
+      createTargetSchema,
+      createRecords,
+      completeInserts,
+      extendedInserts,
+      hexBlob,
+      singleTransaction,
+      lockSource,
+      preserveZeroAutoInc,
+      copyTriggers,
+      intraTableWorkers,
+      intraTableMinRows,
+    });
+  }, [
+    dropTarget, createTables, emptyTarget, chunkSize, continueOnError,
+    concurrency, insertMode, disableFkChecks, disableUniqueChecks,
+    disableBinlog, useTransaction, lockTarget, maxStmtKb, useKeyset,
+    createTargetSchema, createRecords, completeInserts, extendedInserts,
+    hexBlob, singleTransaction, lockSource, preserveZeroAutoInc,
+    copyTriggers, intraTableWorkers, intraTableMinRows,
+  ]);
 
   // --- progress
   const [perTable, setPerTable] = useState<Map<string, TableProgress>>(new Map());
   const [doneTable, setDoneTable] = useState<Map<string, TableDone>>(new Map());
-  /** Mapa table → workerId → último payload do worker. Usado pra
-   *  drill-down no UI quando intra-table parallelism tá ativo. */
+  /** Map table → workerId → latest worker payload. Used for
+   *  drill-down in the UI when intra-table parallelism is active. */
   const [workersByTable, setWorkersByTable] = useState<
     Map<string, Map<number, TableWorkerProgress>>
   >(new Map());
-  /** Mensagens informativas emitidas pelo backend por tabela. */
+  /** Informational messages emitted by the backend, per table. */
   const [notesByTable, setNotesByTable] = useState<Map<string, TableNote[]>>(
     new Map(),
   );
@@ -174,13 +242,12 @@ export function DataTransferWizard({
     }
   };
   const handleStop = async () => {
-    if (!window.confirm(t("dataTransfer.stopConfirm"))) {
-      return;
-    }
+    const ok = await appConfirm(t("dataTransfer.stopConfirm"));
+    if (!ok) return;
     try {
       setStopping(true);
       await ipc.transfer.stop();
-      // Se estava pausado, sai da pausa pra workers acordarem e verem o stop.
+      // If paused, unpause so workers wake up and see the stop.
       if (paused) {
         await ipc.transfer.resume();
         setPaused(false);
@@ -190,7 +257,7 @@ export function DataTransferWizard({
     }
   };
 
-  // --- load schemas quando conn mudar
+  // --- load schemas when conn changes
   useEffect(() => {
     if (!sourceConn) return;
     (async () => {
@@ -211,7 +278,7 @@ export function DataTransferWizard({
         if (!activeSet.has(targetConn)) await openConn(targetConn);
         const list = await ipc.db.listSchemas(targetConn);
         setTargetSchemas(list);
-        // Binlog check é MySQL-only. Skipa se o target for PG.
+        // Binlog check is MySQL-only. Skip if the target is PG.
         const connInfo = useConnections
           .getState()
           .connections.find((c) => c.id === targetConn);
@@ -221,7 +288,7 @@ export function DataTransferWizard({
             const enabled = await ipc.transfer.checkBinlogEnabled(targetConn);
             if (!enabled) setDisableBinlog(true);
           } catch {
-            // ignora — mantém default
+            // ignore — keep default
           }
           setBinlogCheckDone(true);
         }
@@ -231,10 +298,10 @@ export function DataTransferWizard({
     })();
   }, [targetConn, activeSet, openConn, binlogCheckDone]);
 
-  // --- load tables da source quando schema mudar.
-  // Garante que a conexão está aberta antes de listar — no restore de
-  // sessão o wizard monta com sourceConn/sourceSchema já setados, mas a
-  // conexão ainda não foi reaberta; precisamos esperar (ou abrir aqui).
+  // --- load tables from source when schema changes.
+  // Ensure the connection is open before listing — on session restore the
+  // wizard mounts with sourceConn/sourceSchema already set, but the
+  // connection hasn't been reopened yet; we need to wait (or open here).
   useEffect(() => {
     if (!sourceConn || !sourceSchema) {
       setAllTables([]);
@@ -270,9 +337,9 @@ export function DataTransferWizard({
   }, [sourceConn, sourceSchema, activeSet, openConn, preseededTables]);
 
   const reloadTables = () => {
-    // Força re-run do effect mudando o error pra null e incrementando nada:
-    // a forma mais simples é re-setar sourceSchema pra ele mesmo não ajuda
-    // (React não re-dispara). Então chamamos direto.
+    // Force re-run of the effect by clearing the error and incrementing nothing:
+    // the simplest way is re-setting sourceSchema to itself, which doesn't help
+    // (React won't re-fire). So we call it directly.
     if (!sourceConn || !sourceSchema) return;
     let cancelled = false;
     (async () => {
@@ -297,7 +364,7 @@ export function DataTransferWizard({
     })();
   };
 
-  // --- listener de eventos de progresso
+  // --- progress event listener
   useEffect(() => {
     if (!running) return;
     const progressUnlisten = listen<TableProgress>("transfer:progress", (e) => {
@@ -380,8 +447,8 @@ export function DataTransferWizard({
   const selectAll = () => setSelectedTables(new Set(allTables.map((t) => t.name)));
   const selectNone = () => setSelectedTables(new Set());
 
-  /** Executa a transferência. Se `onlyTables` vem, só recorre essas
-   *  (mantém os sucessos anteriores no progresso). */
+  /** Runs the transfer. If `onlyTables` is given, only those are re-run
+   *  (previous successes are kept in the progress view). */
   const handleRun = async (onlyTables?: string[]) => {
     if (!sourceConn || !targetConn) return;
     const tablesToRun = onlyTables ?? Array.from(selectedTables);
@@ -394,8 +461,8 @@ export function DataTransferWizard({
     setPaused(false);
     setStopping(false);
 
-    // Se é retry, limpa só os entries das tabelas que vão rodar agora
-    // (preserva o check verde das que funcionaram antes).
+    // If this is a retry, clear only the entries for the tables about to run
+    // (preserves the green check for those that succeeded before).
     if (onlyTables) {
       setPerTable((prev) => {
         const next = new Map(prev);
@@ -478,7 +545,7 @@ export function DataTransferWizard({
     handleRun([table]);
   };
 
-  // --- Progresso geral (soma as linhas done/total de todas as tabelas)
+  // --- Overall progress (sums done/total rows across all tables)
   const overallRows = useMemo(() => {
     let done = 0;
     let total = 0;
@@ -486,12 +553,12 @@ export function DataTransferWizard({
       done += p.done;
       total += p.total;
     }
-    // Conta tabelas já done como done=total final (refinamento pra 100%)
+    // Count tables already done as done=final-total (refinement for 100%)
     for (const d of doneTable.values()) {
       if (!d.error) {
         const p = perTable.get(d.table);
         if (p) {
-          // Se o done parcial < rows finais, usa rows finais.
+          // If partial done < final rows, use final rows.
           done += Math.max(0, d.rows - p.done);
         } else {
           done += d.rows;
@@ -510,8 +577,8 @@ export function DataTransferWizard({
       ? (tablesDone / totalTables) * 100
       : 0;
 
-  // Atualiza o título da aba com % enquanto roda — feedback mesmo com
-  // a aba em background.
+  // Update the tab title with % while running — feedback even when
+  // the tab is in the background.
   useEffect(() => {
     if (running) {
       patchTab(tabId, {
@@ -526,8 +593,8 @@ export function DataTransferWizard({
     }
   }, [running, finalSummary, overallPct, tabId, patchTab]);
 
-  // Barra de progresso no ícone da taskbar — feedback mesmo com a
-  // janela minimizada. Limpa quando termina (ok, erro ou stopped).
+  // Progress bar on the taskbar icon — feedback even with the
+  // window minimized. Clears when done (ok, error or stopped).
   useEffect(() => {
     if (running) {
       const status = paused ? "paused" : "normal";
@@ -535,7 +602,7 @@ export function DataTransferWizard({
     } else if (finalSummary) {
       const status = finalSummary.failed > 0 ? "error" : "normal";
       ipc.taskbar.setProgress(status, 100).catch(() => {});
-      // Some com a barra depois de uns segundos pra não ficar fixo.
+      // Hide the bar after a few seconds so it doesn't stay pinned.
       const id = window.setTimeout(() => {
         ipc.taskbar.setProgress("none").catch(() => {});
       }, 4000);
@@ -710,8 +777,8 @@ function StepperHeader({
       {steps.map((s, i) => {
         const done = i < activeIdx;
         const active = i === activeIdx;
-        // Pulo direto só pra passos já visitados (done) — evita pular
-        // adiante sem preencher o necessário. "progress" nunca é clicável.
+        // Direct jump only for already-visited (done) steps — avoids jumping
+        // ahead without filling in what's needed. "progress" is never clickable.
         const clickable = !!onJump && done && s.id !== "progress";
         return (
           <div
@@ -1006,800 +1073,6 @@ function TablesStep({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function OptionsStep(props: {
-  dropTarget: boolean;
-  setDropTarget: (v: boolean) => void;
-  createTables: boolean;
-  setCreateTables: (v: boolean) => void;
-  emptyTarget: boolean;
-  setEmptyTarget: (v: boolean) => void;
-  chunkSize: number;
-  setChunkSize: (v: number) => void;
-  continueOnError: boolean;
-  setContinueOnError: (v: boolean) => void;
-  concurrency: number;
-  setConcurrency: (v: number) => void;
-  insertMode: InsertMode;
-  setInsertMode: (v: InsertMode) => void;
-  disableFkChecks: boolean;
-  setDisableFkChecks: (v: boolean) => void;
-  disableUniqueChecks: boolean;
-  setDisableUniqueChecks: (v: boolean) => void;
-  disableBinlog: boolean;
-  setDisableBinlog: (v: boolean) => void;
-  useTransaction: boolean;
-  setUseTransaction: (v: boolean) => void;
-  lockTarget: boolean;
-  setLockTarget: (v: boolean) => void;
-  maxStmtKb: number;
-  setMaxStmtKb: (v: number) => void;
-  useKeyset: boolean;
-  setUseKeyset: (v: boolean) => void;
-  createTargetSchema: boolean;
-  setCreateTargetSchema: (v: boolean) => void;
-  createRecords: boolean;
-  setCreateRecords: (v: boolean) => void;
-  completeInserts: boolean;
-  setCompleteInserts: (v: boolean) => void;
-  extendedInserts: boolean;
-  setExtendedInserts: (v: boolean) => void;
-  hexBlob: boolean;
-  setHexBlob: (v: boolean) => void;
-  singleTransaction: boolean;
-  setSingleTransaction: (v: boolean) => void;
-  lockSource: boolean;
-  setLockSource: (v: boolean) => void;
-  preserveZeroAutoInc: boolean;
-  setPreserveZeroAutoInc: (v: boolean) => void;
-  copyTriggers: boolean;
-  setCopyTriggers: (v: boolean) => void;
-  intraTableWorkers: number;
-  setIntraTableWorkers: (v: number) => void;
-  intraTableMinRows: number;
-  setIntraTableMinRows: (v: number) => void;
-  targetIsMysql: boolean;
-  crossDialect: boolean;
-}) {
-  const {
-    dropTarget,
-    setDropTarget,
-    createTables,
-    setCreateTables,
-    emptyTarget,
-    setEmptyTarget,
-    chunkSize,
-    setChunkSize,
-    continueOnError,
-    setContinueOnError,
-    concurrency,
-    setConcurrency,
-    insertMode,
-    setInsertMode,
-    disableFkChecks,
-    setDisableFkChecks,
-    disableUniqueChecks,
-    setDisableUniqueChecks,
-    disableBinlog,
-    setDisableBinlog,
-    useTransaction,
-    setUseTransaction,
-    lockTarget,
-    setLockTarget,
-    maxStmtKb,
-    setMaxStmtKb,
-    useKeyset,
-    setUseKeyset,
-    createTargetSchema,
-    setCreateTargetSchema,
-    createRecords,
-    setCreateRecords,
-    completeInserts,
-    setCompleteInserts,
-    extendedInserts,
-    setExtendedInserts,
-    hexBlob,
-    setHexBlob,
-    singleTransaction,
-    setSingleTransaction,
-    lockSource,
-    setLockSource,
-    preserveZeroAutoInc,
-    setPreserveZeroAutoInc,
-    copyTriggers,
-    setCopyTriggers,
-    intraTableWorkers,
-    setIntraTableWorkers,
-    intraTableMinRows,
-    setIntraTableMinRows,
-    targetIsMysql,
-    crossDialect,
-  } = props;
-  const t = useT();
-  return (
-    <div className="mx-auto max-w-2xl">
-      {crossDialect && (
-        <div className="mb-4 rounded-md border border-conn-accent/30 bg-conn-accent/5 p-3 text-xs text-muted-foreground">
-          {t("dataTransfer.crossDialectNote")}
-        </div>
-      )}
-      <div className="mb-5 flex items-center gap-2">
-        <Settings2 className="h-4 w-4 text-muted-foreground" />
-        <h3 className="text-sm font-semibold">{t("dataTransfer.optionsHeader")}</h3>
-      </div>
-
-      <Card title={t("dataTransfer.cardTableOptions")}>
-        <Toggle
-          label={t("dataTransfer.optCreateTables")}
-          value={createTables}
-          onChange={setCreateTables}
-          hint={t("dataTransfer.optCreateTablesHint")}
-        />
-        <Toggle
-          label={t("dataTransfer.optDropTarget")}
-          value={dropTarget}
-          onChange={setDropTarget}
-          hint={t("dataTransfer.optDropTargetHint")}
-        />
-        <Toggle
-          label={t("dataTransfer.optEmptyTarget")}
-          value={emptyTarget}
-          onChange={setEmptyTarget}
-          hint={t("dataTransfer.optEmptyTargetHint")}
-        />
-        {targetIsMysql && !crossDialect && (
-          <Toggle
-            label={t("dataTransfer.optCopyTriggers")}
-            value={copyTriggers}
-            onChange={setCopyTriggers}
-            hint={t("dataTransfer.optCopyTriggersHint")}
-          />
-        )}
-      </Card>
-
-      <Card title={t("dataTransfer.cardRecordOptions")}>
-        <Toggle
-          label={t("dataTransfer.optCreateRecords")}
-          value={createRecords}
-          onChange={setCreateRecords}
-          hint={t("dataTransfer.optCreateRecordsHint")}
-        />
-        <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">{t("dataTransfer.optInsertMode")}</span>
-          <select
-            value={insertMode}
-            onChange={(e) => setInsertMode(e.target.value as InsertMode)}
-            className="w-full rounded border border-border bg-popover px-2 py-1 text-xs text-popover-foreground focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
-          >
-            <option value="insert">{t("dataTransfer.optInsertModeInsert")}</option>
-            {targetIsMysql && (
-              <>
-                <option value="insert_ignore">{t("dataTransfer.optInsertModeIgnore")}</option>
-                <option value="replace">{t("dataTransfer.optInsertModeReplace")}</option>
-              </>
-            )}
-          </select>
-        </label>
-        <Toggle
-          label={t("dataTransfer.optCompleteInserts")}
-          value={completeInserts}
-          onChange={setCompleteInserts}
-          hint={t("dataTransfer.optCompleteInsertsHint")}
-        />
-        <Toggle
-          label={t("dataTransfer.optExtendedInserts")}
-          value={extendedInserts}
-          onChange={setExtendedInserts}
-          hint={t("dataTransfer.optExtendedInsertsHint")}
-        />
-        {targetIsMysql && (
-          <Toggle
-            label={t("dataTransfer.optHexBlob")}
-            value={hexBlob}
-            onChange={setHexBlob}
-            hint={t("dataTransfer.optHexBlobHint")}
-          />
-        )}
-        {targetIsMysql && (
-          <Toggle
-            label={t("dataTransfer.optPreserveZeroAi")}
-            value={preserveZeroAutoInc}
-            onChange={setPreserveZeroAutoInc}
-            hint={t("dataTransfer.optPreserveZeroAiHint")}
-          />
-        )}
-        <Toggle
-          label={t("dataTransfer.optUseTransaction")}
-          value={useTransaction}
-          onChange={setUseTransaction}
-          hint={t("dataTransfer.optUseTransactionHint")}
-        />
-        {targetIsMysql && (
-          <Toggle
-            label={t("dataTransfer.optLockTarget")}
-            value={lockTarget}
-            onChange={setLockTarget}
-            hint={t("dataTransfer.optLockTargetHint")}
-          />
-        )}
-      </Card>
-
-      <Card title={t("dataTransfer.cardPerformance")}>
-        {targetIsMysql && (
-          <>
-            <Toggle
-              label={t("dataTransfer.optDisableFkChecks")}
-              value={disableFkChecks}
-              onChange={setDisableFkChecks}
-              hint={t("dataTransfer.optDisableFkChecksHint")}
-            />
-            <Toggle
-              label={t("dataTransfer.optDisableUniqueChecks")}
-              value={disableUniqueChecks}
-              onChange={setDisableUniqueChecks}
-              hint={t("dataTransfer.optDisableUniqueChecksHint")}
-            />
-            <Toggle
-              label={t("dataTransfer.optDisableBinlog")}
-              value={disableBinlog}
-              onChange={setDisableBinlog}
-              hint={t("dataTransfer.optDisableBinlogHint")}
-            />
-          </>
-        )}
-        <Toggle
-          label={t("dataTransfer.optKeyset")}
-          value={useKeyset}
-          onChange={setUseKeyset}
-          hint={t("dataTransfer.optKeysetHint")}
-        />
-        <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">{t("dataTransfer.optChunkSize")}</span>
-          <input
-            type="number"
-            min={1}
-            value={chunkSize}
-            onChange={(e) => setChunkSize(Math.max(1, Number(e.target.value)))}
-            className="w-32 rounded border border-border bg-background px-2 py-1 text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
-          />
-        </label>
-        <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">{t("dataTransfer.optMaxStmtKb")}</span>
-          <input
-            type="number"
-            min={16}
-            max={64 * 1024}
-            value={maxStmtKb}
-            onChange={(e) => setMaxStmtKb(Math.max(16, Number(e.target.value)))}
-            className="w-32 rounded border border-border bg-background px-2 py-1 text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
-          />
-        </label>
-        <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">
-            {t("dataTransfer.optParallelTables")}
-            <span className="ml-1 text-muted-foreground">
-              ({concurrency}{" "}
-              {concurrency === 1
-                ? t("dataTransfer.workerSingular")
-                : t("dataTransfer.workerPlural")})
-            </span>
-          </span>
-          <input
-            type="range"
-            min={1}
-            max={8}
-            value={concurrency}
-            onChange={(e) => setConcurrency(Number(e.target.value))}
-            className="w-full accent-conn-accent"
-          />
-        </label>
-        <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">
-            {t("dataTransfer.optParallelIntra")}
-            <span className="ml-1 text-muted-foreground">
-              ({intraTableWorkers === 1
-                ? t("dataTransfer.intraOff")
-                : t("dataTransfer.intraWorkers", { n: intraTableWorkers })})
-            </span>
-          </span>
-          <input
-            type="range"
-            min={1}
-            max={8}
-            value={intraTableWorkers}
-            onChange={(e) => setIntraTableWorkers(Number(e.target.value))}
-            className="w-full accent-conn-accent"
-          />
-        </label>
-        <div className="-mt-2 ml-[192px] text-[10px] text-muted-foreground">
-          {t("dataTransfer.optParallelIntraNote")}
-        </div>
-        <label className="grid grid-cols-[180px_1fr] items-center gap-3">
-          <span className="text-xs">{t("dataTransfer.optIntraThreshold")}</span>
-          <input
-            type="number"
-            min={1}
-            value={intraTableMinRows}
-            onChange={(e) =>
-              setIntraTableMinRows(Math.max(1, Number(e.target.value)))
-            }
-            disabled={intraTableWorkers === 1}
-            className="w-32 rounded border border-border bg-background px-2 py-1 text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40 disabled:opacity-50"
-          />
-        </label>
-      </Card>
-
-      <Card title={t("dataTransfer.cardOtherOptions")}>
-        <Toggle
-          label={t("dataTransfer.optCreateTargetSchema")}
-          value={createTargetSchema}
-          onChange={setCreateTargetSchema}
-          hint={t("dataTransfer.optCreateTargetSchemaHint")}
-        />
-        <Toggle
-          label={t("dataTransfer.optContinueOnError")}
-          value={continueOnError}
-          onChange={setContinueOnError}
-          hint={t("dataTransfer.optContinueOnErrorHint")}
-        />
-        {targetIsMysql && (
-          <Toggle
-            label={t("dataTransfer.optLockSource")}
-            value={lockSource}
-            onChange={setLockSource}
-            hint={t("dataTransfer.optLockSourceHint")}
-          />
-        )}
-        <Toggle
-          label={t("dataTransfer.optSingleTransaction")}
-          value={singleTransaction}
-          onChange={setSingleTransaction}
-          hint={t("dataTransfer.optSingleTransactionHint")}
-        />
-      </Card>
-
-      <p className="mt-4 text-[11px] text-muted-foreground">
-        {t("dataTransfer.v12Hint")}
-      </p>
-    </div>
-  );
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-3 rounded-lg border border-border bg-card/30 p-5">
-      <h4 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </h4>
-      <div className="grid gap-3">{children}</div>
-    </div>
-  );
-}
-
-function Toggle({
-  label,
-  value,
-  onChange,
-  hint,
-}: {
-  label: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-  hint?: string;
-}) {
-  return (
-    <label className="flex cursor-pointer items-start gap-2 text-xs">
-      <input
-        type="checkbox"
-        checked={value}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-3.5 w-3.5"
-      />
-      <div>
-        <div>{label}</div>
-        {hint && <div className="text-[10px] text-muted-foreground">{hint}</div>}
-      </div>
-    </label>
-  );
-}
-
-function ProgressStep({
-  tables,
-  perTable,
-  doneTable,
-  running,
-  finalSummary,
-  startError,
-  failedTables,
-  onRetryFailed,
-  onRetrySingle,
-  overallDone,
-  overallTotal,
-  overallPct,
-  tablesDone,
-  totalTables,
-  paused,
-  stopping,
-  onPause,
-  onResume,
-  onStop,
-  workersByTable,
-  notesByTable,
-}: {
-  tables: string[];
-  perTable: Map<string, TableProgress>;
-  doneTable: Map<string, TableDone>;
-  running: boolean;
-  finalSummary: { total_rows: number; elapsed_ms: number; failed: number } | null;
-  startError: string | null;
-  failedTables: string[];
-  onRetryFailed: () => void;
-  onRetrySingle: (table: string) => void;
-  overallDone: number;
-  overallTotal: number;
-  overallPct: number;
-  tablesDone: number;
-  totalTables: number;
-  paused: boolean;
-  stopping: boolean;
-  onPause: () => void;
-  onResume: () => void;
-  onStop: () => void;
-  workersByTable: Map<string, Map<number, TableWorkerProgress>>;
-  notesByTable: Map<string, TableNote[]>;
-}) {
-  const t = useT();
-  // Quando só 1 tabela, o "progresso geral" é redundante com o checklist.
-  const showOverall = totalTables > 1;
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggleExpand = (t: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(t)) next.delete(t);
-      else next.add(t);
-      return next;
-    });
-  return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      {startError && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
-          <pre className="whitespace-pre-wrap break-all font-mono">{startError}</pre>
-        </div>
-      )}
-
-      {/* Sumário final (quando acabou) */}
-      {finalSummary && (
-        <div
-          className={cn(
-            "flex items-start gap-3 rounded-md border p-4 text-sm",
-            finalSummary.failed > 0
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
-              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
-          )}
-        >
-          <div className="flex-1">
-            <div className="font-medium">
-              {finalSummary.failed > 0
-                ? t("dataTransfer.doneWithErrors")
-                : t("dataTransfer.doneOk")}
-            </div>
-            <div className="mt-1 text-xs opacity-80">
-              {t("dataTransfer.summaryLine", {
-                rows: finalSummary.total_rows.toLocaleString(),
-                seconds: (finalSummary.elapsed_ms / 1000).toFixed(1),
-              })}
-              {finalSummary.failed > 0 &&
-                t("dataTransfer.summaryFailuresSuffix", {
-                  failed: finalSummary.failed,
-                })}
-            </div>
-          </div>
-          {finalSummary.failed > 0 && failedTables.length > 0 && !running && (
-            <button
-              type="button"
-              onClick={onRetryFailed}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/30"
-            >
-              <RotateCcw className="h-3 w-3" />
-              {t("dataTransfer.retryFailures", {
-                n: failedTables.length,
-                plural: failedTables.length === 1 ? "" : "s",
-              })}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Controles: pause/resume/stop — só durante execução */}
-      {running && (
-        <div className="flex items-center gap-2 rounded-md border border-border bg-card/40 p-3">
-          {paused ? (
-            <button
-              type="button"
-              onClick={onResume}
-              className="inline-flex items-center gap-1.5 rounded-md bg-conn-accent px-3 py-1.5 text-xs font-medium text-conn-accent-foreground hover:opacity-90"
-            >
-              <Play className="h-3 w-3" />
-              {t("dataTransfer.resume")}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onPause}
-              disabled={stopping}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Pause className="h-3 w-3" />
-              {t("dataTransfer.pause")}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onStop}
-            disabled={stopping}
-            className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {stopping ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Square className="h-3 w-3" />
-            )}
-            {stopping ? t("dataTransfer.stopping") : t("dataTransfer.stop")}
-          </button>
-          <div className="ml-auto text-[11px] text-muted-foreground">
-            {paused
-              ? t("dataTransfer.paused")
-              : stopping
-                ? t("dataTransfer.encerrando")
-                : t("dataTransfer.running")}
-          </div>
-        </div>
-      )}
-
-      {/* Progresso geral — escondido quando é só 1 tabela (redundante) */}
-      {showOverall && (
-      <div className="rounded-md border border-border bg-card/40 p-4">
-        <div className="mb-2 flex items-baseline justify-between gap-3 text-xs">
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-medium text-foreground">
-              {t("dataTransfer.overall")}
-            </span>
-            <span className="tabular-nums text-muted-foreground">
-              {t("dataTransfer.tablesDoneFormat", { done: tablesDone, total: totalTables })}
-            </span>
-          </div>
-          <div className="flex items-baseline gap-3 tabular-nums text-muted-foreground">
-            <span>
-              {overallDone.toLocaleString()}
-              {overallTotal > 0 && ` / ${overallTotal.toLocaleString()}`} linhas
-            </span>
-            <span className="text-sm font-semibold text-foreground">
-              {Math.floor(overallPct)}%
-            </span>
-          </div>
-        </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className={cn(
-              "h-full transition-all duration-300",
-              finalSummary?.failed && finalSummary.failed > 0
-                ? "bg-amber-500"
-                : "bg-conn-accent",
-            )}
-            style={{ width: `${overallPct}%` }}
-          />
-        </div>
-      </div>
-      )}
-
-      {/* Checklist por tabela */}
-      <div className="space-y-1">
-        {tables.map((tbl) => {
-          const p = perTable.get(tbl);
-          const d = doneTable.get(tbl);
-          const pct =
-            p && p.total > 0 ? Math.min(100, (p.done / p.total) * 100) : d && !d.error ? 100 : 0;
-          const status: "pending" | "running" | "done" | "error" = d
-            ? d.error
-              ? "error"
-              : "done"
-            : p
-              ? "running"
-              : "pending";
-
-          const rowsLine = d
-            ? t("dataTransfer.summaryLine", {
-                rows: d.rows.toLocaleString(),
-                seconds: (d.elapsed_ms / 1000).toFixed(1),
-              })
-            : p
-              ? `${p.done.toLocaleString()}${p.total > 0 ? ` / ${p.total.toLocaleString()}` : ""}`
-              : "—";
-
-          const workers = workersByTable.get(tbl);
-          const hasWorkers = workers && workers.size > 0;
-          const isExpanded = expanded.has(tbl);
-          return (
-            <div
-              key={tbl}
-              className={cn(
-                "rounded-md border px-3 py-2 transition-colors",
-                status === "error"
-                  ? "border-destructive/40 bg-destructive/5"
-                  : status === "done"
-                    ? "border-emerald-500/30 bg-emerald-500/5"
-                    : status === "running"
-                      ? "border-conn-accent/40 bg-conn-accent/5"
-                      : "border-border bg-card/30",
-              )}
-            >
-              <div
-                className={cn(
-                  "flex items-center gap-2 text-xs",
-                  hasWorkers && "cursor-pointer",
-                )}
-                onClick={hasWorkers ? () => toggleExpand(tbl) : undefined}
-              >
-                {hasWorkers && (
-                  <span className="grid h-4 w-4 place-items-center text-muted-foreground">
-                    {isExpanded ? (
-                      <ChevronDown className="h-3 w-3" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3" />
-                    )}
-                  </span>
-                )}
-                {status === "done" ? (
-                  <Check className="h-4 w-4 shrink-0 text-emerald-500" />
-                ) : status === "error" ? (
-                  <X className="h-4 w-4 shrink-0 text-destructive" />
-                ) : status === "running" ? (
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-conn-accent" />
-                ) : (
-                  <span className="h-4 w-4 shrink-0 rounded-full border border-muted-foreground/40" />
-                )}
-                <span className="flex-1 truncate font-mono font-medium">{tbl}</span>
-                <span className="shrink-0 text-right tabular-nums text-muted-foreground">
-                  {rowsLine}
-                </span>
-                {status === "running" && p && p.total > 0 && (
-                  <span className="w-10 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
-                    {Math.floor(pct)}%
-                  </span>
-                )}
-                {status === "error" && !running && (
-                  <button
-                    type="button"
-                    onClick={() => onRetrySingle(tbl)}
-                    className="grid h-5 w-5 place-items-center rounded text-muted-foreground transition-colors hover:bg-amber-500/20 hover:text-amber-400"
-                    title={t("dataTransfer.retrySingleTitle")}
-                  >
-                    <RotateCcw className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-              {/* Barra por tabela */}
-              {(status === "running" || status === "done") && (
-                <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={cn(
-                      "h-full transition-all duration-300",
-                      status === "done" ? "bg-emerald-500" : "bg-conn-accent",
-                    )}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-              )}
-              {/* Erro em texto full — quebra linha pra não estourar o card */}
-              {d?.error && (
-                <div className="mt-2 rounded border border-destructive/30 bg-destructive/10 p-2">
-                  <pre className="whitespace-pre-wrap break-all font-mono text-[10px] leading-snug text-destructive">
-                    {d.error}
-                  </pre>
-                </div>
-              )}
-              {/* Notas do backend (ex: intra-parallel ativado / desativado) */}
-              {(notesByTable.get(tbl) ?? []).map((note, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    "mt-1 rounded border px-2 py-1 text-[10px]",
-                    note.level === "warn"
-                      ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                      : "border-conn-accent/30 bg-conn-accent/5 text-muted-foreground",
-                  )}
-                >
-                  {note.message}
-                </div>
-              ))}
-              {/* Drill-down: workers do intra-table parallelism */}
-              {isExpanded && hasWorkers && (
-                <WorkerList workers={workers!} />
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {running && !finalSummary && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          Transferindo…
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Grid com os workers de uma tabela (intra-table parallelism).
- *  Cada worker mostra sua faixa de PK [low, high), linhas feitas,
- *  tempo decorrido e status. Ordenado por worker_id. */
-function WorkerList({
-  workers,
-}: {
-  workers: Map<number, TableWorkerProgress>;
-}) {
-  const sorted = useMemo(() => {
-    return Array.from(workers.values()).sort((a, b) => a.worker_id - b.worker_id);
-  }, [workers]);
-  return (
-    <div className="mt-2 grid gap-1 rounded border border-border/60 bg-background/40 p-2">
-      <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        Workers ({sorted.length})
-      </div>
-      {sorted.map((w) => {
-        const status: "pending" | "running" | "done" | "error" = w.finished
-          ? w.error
-            ? "error"
-            : "done"
-          : "running";
-        return (
-          <div
-            key={w.worker_id}
-            className={cn(
-              "flex items-baseline gap-2 rounded px-2 py-1 text-[11px]",
-              status === "error"
-                ? "bg-destructive/10"
-                : status === "done"
-                  ? "bg-emerald-500/10"
-                  : "bg-conn-accent/10",
-            )}
-          >
-            <span className="shrink-0">
-              {status === "done" ? (
-                <Check className="h-3 w-3 text-emerald-500" />
-              ) : status === "error" ? (
-                <X className="h-3 w-3 text-destructive" />
-              ) : (
-                <Loader2 className="h-3 w-3 animate-spin text-conn-accent" />
-              )}
-            </span>
-            <span className="w-16 shrink-0 tabular-nums text-muted-foreground">
-              #{w.worker_id}
-            </span>
-            <span className="flex-1 truncate font-mono text-muted-foreground">
-              PK [{w.low_pk} .. {w.high_pk})
-            </span>
-            <span className="shrink-0 tabular-nums">
-              {w.done.toLocaleString()} linhas
-            </span>
-            <span className="w-14 shrink-0 text-right tabular-nums text-muted-foreground">
-              {(w.elapsed_ms / 1000).toFixed(1)}s
-            </span>
-            {w.error && (
-              <span
-                className="ml-2 max-w-[50%] shrink truncate font-mono text-destructive"
-                title={w.error}
-              >
-                {w.error}
-              </span>
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }

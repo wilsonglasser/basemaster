@@ -22,6 +22,7 @@ import { useContextMenu, type ContextEntry } from "@/hooks/use-context-menu";
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useAiAgent } from "@/state/ai-agent";
+import { appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useDockerDiscover } from "@/state/docker-discover";
 import { useSidebarSelection } from "@/state/sidebar-selection";
@@ -58,9 +59,9 @@ export function TabBar({ className }: TabBarProps) {
     return null;
   };
 
-  /** Confirma se há abas dirty entre as candidatas a fechar. Retorna
-   *  `true` se ok seguir. ASYNC porque Tauri expõe confirm/ask como
-   *  comando IPC, não JS síncrono. */
+  /** Confirms if there are dirty tabs among the close candidates. Returns
+   *  `true` if ok to proceed. ASYNC because Tauri exposes confirm/ask as
+   *  an IPC command, not sync JS. */
   const confirmDirty = async (candidates: Tab[]): Promise<boolean> => {
     const dirtyTabs = candidates.filter((t) => t.dirty);
     if (dirtyTabs.length === 0) return true;
@@ -81,12 +82,12 @@ export function TabBar({ className }: TabBarProps) {
       });
     } catch (e) {
       console.error("[tab-bar] ask() falhou:", e);
-      // Fail-safe: se o diálogo não abre, NÃO fecha silenciosamente.
+      // Fail-safe: if the dialog doesn't open, do NOT close silently.
       return false;
     }
   };
 
-  // CRÍTICO: leitura direta via getState() pra evitar closure stale.
+  // CRITICAL: read directly via getState() to avoid stale closures.
   const safeClose = async (id: string) => {
     const currentTabs = useTabs.getState().tabs;
     const tab = currentTabs.find((t) => t.id === id);
@@ -162,9 +163,9 @@ function AiToggleButton() {
   );
 }
 
-/** Botão + no final do tab-bar. Em vez de abrir uma aba fixa (welcome),
- *  mostra um menu contextual com opções baseadas na conexão/schema
- *  atualmente focados na sidebar. Padrão Navicat. */
+/** "+" button at the end of the tab bar. Instead of opening a fixed tab
+ *  (welcome), shows a context menu with options based on the connection/
+ *  schema currently focused in the sidebar. Navicat-style. */
 function NewTabButton() {
   const t = useT();
   const open = useTabs((s) => s.open);
@@ -172,7 +173,7 @@ function NewTabButton() {
   const sidebarSel = useSidebarSelection((s) => s.selected);
   const connections = useConnections((s) => s.connections);
 
-  // Descobre conexão+schema focados. Prioridade: sidebar selection.
+  // Figures out the focused connection+schema. Priority: sidebar selection.
   let focusConnId: string | null = null;
   let focusSchema: string | null = null;
   if (sidebarSel) {
@@ -215,9 +216,9 @@ function NewTabButton() {
     });
   };
 
-  const openCreateDatabase = () => {
+  const openCreateDatabase = async () => {
     if (!focusConn) return;
-    const name = window.prompt(
+    const name = await appPrompt(
       focusConn.driver === "postgres"
         ? t("tabs.newDatabasePromptPg")
         : t("tabs.newDatabasePromptMysql"),
@@ -408,8 +409,8 @@ function TabItem({
 
   // Drag-out estilo Chrome: mousedown + mousemove mostra o ghost seguindo
   // o cursor. No mouseup, se o cursor estiver abaixo do tab-bar, dispara
-  // detach na posição atual (user escolhe onde a janela nasce). Se ainda
-  // estiver no tab-bar, é um clique normal, nada acontece.
+  // detach at current position (user chooses where the window spawns). If
+  // still in the tab-bar, it's a normal click, nothing happens.
   // Esc cancela.
   const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
@@ -418,7 +419,7 @@ function TabItem({
       const d = dragStartRef.current;
       if (!d) return;
       const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
-      // Só começa o ghost depois de 4px pra não piscar em clicks.
+      // Only start the ghost after 4px to avoid flickering on clicks.
       if (moved > 4) setGhost({ x: e.clientX, y: e.clientY });
     };
     const onUp = (e: MouseEvent) => {
@@ -427,12 +428,12 @@ function TabItem({
       setGhost(null);
       dragStartRef.current = null;
       if (!d || !detachable) return;
-      // Não dispara se o user mal mexeu o mouse (foi clique).
+      // Don't fire if the user barely moved the mouse (was a click).
       const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
       if (moved < 6) return;
       // Dentro do tab-bar = cancela (futuramente: reorder).
       if (e.clientY <= TAB_BAR_HEIGHT_PX + TEAR_OFF_MARGIN_PX) return;
-      // Fora: tear-off na posição de tela do cursor.
+      // Outside: tear-off at the cursor's screen position.
       detachTabAt(tab, e.screenX, e.screenY);
       onClose();
     };
@@ -574,7 +575,7 @@ function TabItem({
 
 /** Tear-off: serializa o payload da aba no localStorage (compartilhado
  *  entre janelas Tauri na mesma origem) + abre WebviewWindow nova apontando
- *  pro mesmo index.html. A janela destacada lê o próprio label e carrega
+ *  to the same index.html. The detached window reads its own label and loads
  *  o payload. Depois, fecha a aba local. */
 function detachTab(tab: Tab, onAfter: () => void) {
   detachTabAt(tab, undefined, undefined);
@@ -587,7 +588,7 @@ function detachTabAt(tab: Tab, screenX?: number, screenY?: number) {
   const payload = buildDetachPayload(tab, label);
   if (!payload) return;
   // Transfere state persistido pro key do detached window (o tabId
-  // que o detached vai usar é o label). Remove da origem pra não
+  // that the detached window will use is the label). Remove from the source so we don't
   // poluir se a aba for reaberta no main com novo id.
   useTabState.getState().move(tab.id, label, true);
   try {
@@ -596,8 +597,8 @@ function detachTabAt(tab: Tab, screenX?: number, screenY?: number) {
     console.error("detachTab: localStorage falhou", e);
     return;
   }
-  // Desloca levemente pra cima-à-esquerda do cursor pra a janela nascer
-  // sob a mão do usuário, não cortada pela borda do monitor.
+  // Shift slightly above-left of the cursor so the window spawns
+  // under the user's hand, not clipped by the monitor's edge.
   const offsetX = 20;
   const offsetY = 20;
   const wx = screenX != null ? Math.max(0, screenX - offsetX) : undefined;
@@ -612,7 +613,7 @@ function detachTabAt(tab: Tab, screenX?: number, screenY?: number) {
     });
 }
 
-/** Constrói o payload específico do kind da aba, puxando estado live do
+/** Builds the kind-specific payload for the tab, pulling live state from the
  *  editor quando for query (active-info). */
 function buildDetachPayload(tab: Tab, label: string) {
   if (tab.kind.kind === "table") {

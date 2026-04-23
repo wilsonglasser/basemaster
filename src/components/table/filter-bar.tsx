@@ -27,7 +27,7 @@ interface Props {
 type ValueKind = "none" | "single" | "double" | "csv" | "custom";
 
 
-/** Kinds por op — label vem do i18n. Lista estável pra dropdown. */
+/** Kinds per op — label comes from i18n. Stable list for the dropdown. */
 const OPS: Array<{ value: FilterOp; kind: ValueKind }> = [
   { value: "eq", kind: "single" },
   { value: "not_eq", kind: "single" },
@@ -108,7 +108,7 @@ function valueAsText(v: Filter["value"]): string {
   }
 }
 
-/** Quantos filtros (leaves) existem na árvore — usado pra badge. */
+/** How many filters (leaves) exist in the tree — used for the badge. */
 export function countLeaves(n: FilterNode | null | undefined): number {
   if (!n) return 0;
   if (n.kind === "leaf") return 1;
@@ -161,7 +161,7 @@ function GroupEditor({
 }) {
   const t = useT();
   if (node.kind !== "group") {
-    // Não deveria acontecer (GroupEditor chamado com leaf)
+    // Shouldn't happen (GroupEditor called with leaf)
     return null;
   }
   const { op, children } = node;

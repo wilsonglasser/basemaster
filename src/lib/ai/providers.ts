@@ -6,7 +6,7 @@ import type { LanguageModel } from "ai";
 
 import { providerMeta, type ProviderId } from "./catalog";
 
-/** Retorna um LanguageModel configurado pro pair (provider, modelId). */
+/** Returns a LanguageModel configured for the (provider, modelId) pair. */
 export function getLanguageModel(
   provider: ProviderId,
   modelId: string,
@@ -15,7 +15,7 @@ export function getLanguageModel(
   const meta = providerMeta(provider);
 
   if (meta.kind === "openai-compat") {
-    // Usa o factory do @ai-sdk/openai apontando pro baseURL do provider.
+    // Use the @ai-sdk/openai factory pointing at the provider's baseURL.
     const client = createOpenAI({
       apiKey,
       baseURL: meta.baseUrl,

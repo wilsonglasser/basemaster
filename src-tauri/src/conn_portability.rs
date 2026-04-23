@@ -1,10 +1,10 @@
-//! Export / import de conexões.
+//! Connection export / import.
 //!
-//! Formato nativo: `.bmconn` (JSON). Formato importado: `.ncx` do Navicat
-//! (XML com Blowfish-ECB nas senhas). A decriptação é best-effort —
-//! funciona em exports do Navicat 11/12 com a chave pública; versões
-//! novas podem usar chave derivada e falhar (senha vem vazia; usuário
-//! re-digita).
+//! Native format: `.bmconn` (JSON). Imported format: Navicat `.ncx`
+//! (XML with Blowfish-ECB on passwords). Decryption is best-effort —
+//! works on Navicat 11/12 exports with the public key; newer versions
+//! may use a derived key and fail (password comes empty; user
+//! re-types it).
 
 use basemaster_core::{SshTunnelConfig, TlsMode};
 use basemaster_store::secrets;
@@ -31,7 +31,7 @@ pub struct ExportedConnection {
     pub default_database: Option<String>,
     #[serde(default)]
     pub tls: TlsMode,
-    /// Senha em plaintext (só incluída se usuário optou por exportar com senhas).
+    /// Plaintext password (only included if the user chose to export with passwords).
     #[serde(default)]
     pub password: Option<String>,
     #[serde(default)]
@@ -40,7 +40,7 @@ pub struct ExportedConnection {
     pub ssh_password: Option<String>,
     #[serde(default)]
     pub ssh_key_passphrase: Option<String>,
-    /// Nome da pasta (não ID — pra permitir importar em outro app).
+    /// Folder name (not ID — so it's possible to import into another app).
     #[serde(default)]
     pub folder_name: Option<String>,
 }
@@ -54,13 +54,13 @@ pub struct ExportPayload {
 
 // ---------- Navicat .ncx parsing ----------
 
-/// Chave Blowfish-ECB do Navicat (11 e muitos 12.x). Compat com exports
-/// comuns. Nav 12.1+ pode derivar chave do user; nesses casos decripta
-/// em garbage e a senha vem vazia.
+/// Navicat's Blowfish-ECB key (11 and many 12.x). Compatible with common
+/// exports. Nav 12.1+ may derive the key from the user; in those cases
+/// decryption returns garbage and the password ends up empty.
 const NAVICAT_KEY: &[u8] = b"3DC5CA39";
 
-/// Decripta senha Navicat: input é HEX; bytes são Blowfish-ECB com
-/// a chave acima; padding por null-byte. Retorna None em qualquer falha.
+/// Decrypts a Navicat password: input is HEX; bytes are Blowfish-ECB with
+/// the key above; null-byte padding. Returns None on any failure.
 pub fn decrypt_navicat_password(hex_str: &str) -> Option<String> {
     let cipher_bytes = hex::decode(hex_str.trim()).ok()?;
     if cipher_bytes.is_empty() || cipher_bytes.len() % 8 != 0 {
@@ -90,8 +90,8 @@ pub fn decrypt_navicat_password(hex_str: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// Mapeia Navicat ConnType ao nosso driver id. Só suporta mysql/postgres
-/// por enquanto (os outros são ignorados).
+/// Maps Navicat ConnType to our driver id. Only supports mysql/postgres
+/// for now (others are ignored).
 fn navicat_driver(conn_type: &str) -> Option<&'static str> {
     match conn_type.to_uppercase().as_str() {
         "MYSQL" | "MARIADB" => Some("mysql"),
@@ -100,7 +100,7 @@ fn navicat_driver(conn_type: &str) -> Option<&'static str> {
     }
 }
 
-/// Parse do XML do Navicat. Cada <Connection> vira uma ExportedConnection.
+/// Parses Navicat's XML. Each <Connection> becomes an ExportedConnection.
 pub fn parse_navicat_ncx(xml: &str) -> Result<ExportPayload, String> {
     use quick_xml::events::Event;
     use quick_xml::Reader;
@@ -188,12 +188,12 @@ pub fn parse_navicat_ncx(xml: &str) -> Result<ExportPayload, String> {
     })
 }
 
-// ---------- Parse genérico (detect format) ----------
+// ---------- Generic parse (detect format) ----------
 
 pub fn parse_file_content(content: &str, filename: &str) -> Result<ExportPayload, String> {
     let name_lower = filename.to_lowercase();
     let trimmed = content.trim_start();
-    // Heurística: XML starts com `<?xml` ou `<`. NCX é XML.
+    // Heuristic: XML starts with `<?xml` or `<`. NCX is XML.
     let is_xml = trimmed.starts_with("<?xml")
         || trimmed.starts_with('<')
         || name_lower.ends_with(".ncx");
@@ -228,13 +228,13 @@ mod tests {
     use super::*;
     use cipher::BlockEncryptMut;
 
-    /// Cifra um plaintext com Blowfish-ECB e a chave do Navicat, retornando
-    /// hex ASCII (formato esperado pelo parser). Usado só pra gerar
-    /// fixtures — o produto decripta, nunca cifra.
+    /// Encrypts a plaintext with Blowfish-ECB and the Navicat key, returning
+    /// ASCII hex (format expected by the parser). Used only to generate
+    /// fixtures — the product decrypts, never encrypts.
     fn encrypt_with_navicat_key(plain: &str) -> String {
         type BfEnc = ecb::Encryptor<blowfish::Blowfish>;
         let mut cipher = BfEnc::new_from_slice(NAVICAT_KEY).unwrap();
-        // Null-pad pro múltiplo de 8 bytes.
+        // Null-pad to a multiple of 8 bytes.
         let mut bytes = plain.as_bytes().to_vec();
         while !bytes.len().is_multiple_of(8) {
             bytes.push(0);
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn decrypt_rejects_wrong_block_size() {
-        // 7 bytes hex = 14 chars, mas Blowfish precisa múltiplo de 8 bytes.
+        // 7 hex bytes = 14 chars, but Blowfish needs a multiple of 8 bytes.
         let hex = "AABBCCDDEEFF11"; // 7 bytes
         assert!(decrypt_navicat_password(hex).is_none());
     }
@@ -275,8 +275,8 @@ mod tests {
 
     #[test]
     fn decrypt_roundtrip_empty_string() {
-        // Plaintext vazio não passa pelo caminho real (password_hex.is_empty()
-        // antes de chamar), mas garante que cipher vazio retorna None.
+        // Empty plaintext doesn't go through the real path (password_hex.is_empty()
+        // before the call), but make sure an empty cipher returns None.
         assert!(decrypt_navicat_password("").is_none());
     }
 

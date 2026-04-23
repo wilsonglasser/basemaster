@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { MODEL_CATALOG, parseModelKey, providerMeta, PROVIDERS, type ProviderId } from "@/lib/ai/catalog";
 import { ShortcutsPanel } from "@/components/shortcuts-panel";
 import { useAiAgent } from "@/state/ai-agent";
+import { appConfirm } from "@/state/app-dialog";
 import { useI18n, useT, type Lang, type TKey } from "@/state/i18n";
 import { DARK_PRESETS, LIGHT_PRESETS, useTheme } from "@/state/theme";
 import { ipc } from "@/lib/ipc";
@@ -251,9 +252,9 @@ function PresetCard({
   } | null;
   customHex?: string;
 }) {
-  // Swatch com amostras dos 4 tokens principais. Pra custom-*, usa o hex
-  // pro bg e gera um acento derivado (não puxa o preset completo aqui
-  // pra evitar cálculo pesado na render de cada card).
+  // Swatch with samples of the 4 main tokens. For custom-*, uses the
+  // hex for bg and derives an accent (doesn't pull the full preset here
+  // to avoid heavy computation on every card render).
   const bg = tokens?.background ?? customHex ?? "#888";
   const fg = tokens?.foreground ?? (customHex && isDark(customHex) ? "#eee" : "#222");
   const accent = tokens?.connAccent ?? "oklch(0.6 0.15 250)";
@@ -315,7 +316,7 @@ function isDark(hex: string): boolean {
   const r = parseInt(full.slice(0, 2), 16);
   const g = parseInt(full.slice(2, 4), 16);
   const b = parseInt(full.slice(4, 6), 16);
-  // Luma aproximada (Rec. 709) — só pra decidir se contraste vai com fg claro ou escuro.
+  // Approximate luma (Rec. 709) — only to decide if contrast needs light or dark fg.
   return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
 }
 
@@ -327,7 +328,7 @@ function AiAgentPanel() {
   const modelSel = useAiAgent((s) => s.modelKey);
   const setModelKey = useAiAgent((s) => s.setModelKey);
 
-  // Qual provider tá em edição — default: o do modelo atual.
+  // Which provider is being edited — default: the one of the current model.
   const currentParsed = parseModelKey(modelSel);
   const [activeProvider, setActiveProvider] = useState<ProviderId>(
     currentParsed?.provider ?? "anthropic",
@@ -827,7 +828,7 @@ function ConnectionsPortabilityPanel() {
       const folders = payload.folders.length
         ? t("settings.portability.foldersSuffix", { n: payload.folders.length })
         : "";
-      const ok = window.confirm(
+      const ok = await appConfirm(
         t("settings.portability.confirmImport", { count, folders }),
       );
       if (!ok) return;
@@ -864,8 +865,8 @@ function ConnectionsPortabilityPanel() {
         </button>
         <button
           type="button"
-          onClick={() => {
-            const ok = window.confirm(t("settings.portability.confirmPasswords"));
+          onClick={async () => {
+            const ok = await appConfirm(t("settings.portability.confirmPasswords"));
             if (ok) void exportAll(true);
           }}
           disabled={exporting}

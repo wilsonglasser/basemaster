@@ -22,9 +22,9 @@ interface SearchResult {
   connColor?: string | null;
   schema: string;
   label: string;
-  /** Para saved queries: SQL truncado pra tooltip / hint. */
+  /** For saved queries: SQL truncated for tooltip/hint. */
   hint?: string;
-  /** Para saved queries. */
+  /** For saved queries. */
   savedQueryId?: string;
   savedQuerySql?: string;
 }
@@ -34,10 +34,10 @@ function includesCI(needle: string, hay: string): boolean {
 }
 
 /**
- * Vasculha o que tá cacheado pra cada conexão ativa (schemas + tables +
- * saved queries). Search global é best-effort — sem chamar o banco. Se
- * o usuário não visitou um schema ainda, o conteúdo dele não aparece.
- * Hint no header do resultado deixa isso claro.
+ * Searches whatever is cached for each active connection (schemas + tables +
+ * saved queries). Global search is best-effort — no DB calls. If the user
+ * hasn't visited a schema yet, its contents don't show up. A hint in the
+ * results header makes that clear.
  */
 export function SidebarSearchResults({ query, onResultClicked }: Props) {
   const connections = useConnections((s) => s.connections);
@@ -72,7 +72,7 @@ export function SidebarSearchResults({ query, onResultClicked }: Props) {
         }
       }
 
-      // Tables / Views — só pra schemas já carregados no cache.
+      // Tables / Views — only for schemas already loaded in cache.
       const tablesBySchema = cache?.tables ?? {};
       for (const [schema, tables] of Object.entries(tablesBySchema)) {
         for (const t of tables) {
@@ -92,7 +92,7 @@ export function SidebarSearchResults({ query, onResultClicked }: Props) {
         }
       }
 
-      // Saved queries (por conexão, pode cair em qualquer schema).
+      // Saved queries (per connection, can belong to any schema).
       const sq = savedQueriesCache[conn.id] ?? [];
       for (const q2 of sq) {
         if (
@@ -114,7 +114,7 @@ export function SidebarSearchResults({ query, onResultClicked }: Props) {
         }
       }
     }
-    // Ordena: schema > table > view > saved_query; depois alfabético.
+    // Sort: schema > table > view > saved_query; then alphabetic.
     const orderKey: Record<ResultKind, number> = {
       schema: 0,
       table: 1,

@@ -13,6 +13,7 @@ import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { Uuid, Value } from "@/lib/types";
 import { useApproval } from "@/state/ai-approval";
+import { appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 
@@ -159,7 +160,7 @@ export function UsersView({ connectionId }: Props) {
 
   const changePassword = async (u: UserRow) => {
     if (!conn) return;
-    const pw = window.prompt(t("users.newPasswordPrompt", { name: u.name }));
+    const pw = await appPrompt(t("users.newPasswordPrompt", { name: u.name }));
     if (!pw) return;
     const isPg = conn.driver === "postgres";
     const sql = isPg

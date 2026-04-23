@@ -5,7 +5,7 @@ import type { Column, SchemaInfo, TableInfo, Uuid } from "@/lib/types";
 
 interface ConnectionCache {
   schemas: SchemaInfo[] | null;
-  /** schema → tables (null = ainda não carregado) */
+  /** schema → tables (null = not loaded yet) */
   tables: Record<string, TableInfo[]>;
   /** schema → table → cols */
   columns: Record<string, Record<string, Column[]>>;
@@ -13,13 +13,19 @@ interface ConnectionCache {
 
 interface SchemaCacheState {
   caches: Record<Uuid, ConnectionCache>;
+  /** Increments whenever a connection's schema list changes externally
+   *  (CREATE/DROP/RENAME SCHEMA). Components holding a local copy of the
+   *  list observe this and refetch. */
+  schemaListTick: Record<Uuid, number>;
   ensureSchemas: (id: Uuid) => Promise<SchemaInfo[]>;
   ensureTables: (id: Uuid, schema: string) => Promise<TableInfo[]>;
   ensureColumns: (id: Uuid, schema: string, table: string) => Promise<Column[]>;
-  /** Carrega tabelas + todas as colunas do schema em uma única chamada. */
+  /** Loads tables + all columns of the schema in a single call. */
   ensureSnapshot: (id: Uuid, schema: string) => Promise<TableInfo[]>;
   invalidate: (id: Uuid) => void;
   invalidateSchema: (id: Uuid, schema: string) => void;
+  /** Marks that the LIST of schemas changed. */
+  bumpSchemaList: (id: Uuid) => void;
 }
 
 const emptyCache = (): ConnectionCache => ({
@@ -30,6 +36,7 @@ const emptyCache = (): ConnectionCache => ({
 
 export const useSchemaCache = create<SchemaCacheState>((set, get) => ({
   caches: {},
+  schemaListTick: {},
 
   async ensureSchemas(id) {
     const c = get().caches[id] ?? emptyCache();
@@ -128,5 +135,14 @@ export const useSchemaCache = create<SchemaCacheState>((set, get) => ({
         caches: { ...s.caches, [id]: { ...cur, tables, columns } },
       };
     });
+  },
+
+  bumpSchemaList(id) {
+    set((s) => ({
+      schemaListTick: {
+        ...s.schemaListTick,
+        [id]: (s.schemaListTick[id] ?? 0) + 1,
+      },
+    }));
   },
 }));

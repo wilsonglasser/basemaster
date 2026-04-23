@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -19,8 +21,8 @@ pub struct QueryResult {
     pub truncated: bool,
 }
 
-/// Identifica que o resultado provem de um único SELECT sobre uma tabela
-/// conhecida — habilita edição in-grid com UPDATE/DELETE seguros.
+/// Marks a result as coming from a single SELECT over a known table —
+/// enables in-grid editing with safe UPDATE/DELETE.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SourceTable {
     pub schema: String,
@@ -35,12 +37,12 @@ pub struct ExecuteResult {
     pub elapsed_ms: u64,
 }
 
-/// Snapshot completo de um schema — tabelas + colunas de cada uma —
-/// usado para alimentar autocomplete sem N round-trips.
+/// Full snapshot of a schema — tables + columns of each — used to feed
+/// autocomplete without N round-trips.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SchemaSnapshot {
     pub tables: Vec<TableInfo>,
-    /// `table_name -> columns` (ordem original de declaração).
+    /// `table_name -> columns` (original declaration order).
     pub columns: HashMap<String, Vec<Column>>,
 }
 
@@ -57,8 +59,8 @@ pub struct OrderBy {
     pub direction: SortDir,
 }
 
-/// Operadores suportados nos filtros de `select_table_page`.
-/// Parametrizados via sqlx — cada backend binda o `Value` com segurança.
+/// Operators supported in `select_table_page` filters.
+/// Parametrized via sqlx — each backend binds the `Value` safely.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterOp {
@@ -83,14 +85,14 @@ pub enum FilterOp {
     IsEmpty,
     /// `col <> ''`
     IsNotEmpty,
-    /// `col BETWEEN ? AND ?` — usa value + value2
+    /// `col BETWEEN ? AND ?` — uses value + value2
     Between,
     NotBetween,
-    /// `col IN (?, ?, ?)` — value é CSV
+    /// `col IN (?, ?, ?)` — value is CSV
     In,
     NotIn,
-    /// Fragmento raw após o ident da coluna, ex: `> 10 AND < 20`.
-    /// NÃO é parametrizado — destinado a escape hatch avançado.
+    /// Raw fragment after the column ident, e.g., `> 10 AND < 20`.
+    /// NOT parametrized — intended as an advanced escape hatch.
     Custom,
 }
 
@@ -98,16 +100,16 @@ pub enum FilterOp {
 pub struct Filter {
     pub column: String,
     pub op: FilterOp,
-    /// Valor principal. Ignorado em IsNull/IsNotNull/IsEmpty/IsNotEmpty.
-    /// Para Custom: string com o fragmento SQL a concatenar após a coluna.
+    /// Main value. Ignored for IsNull/IsNotNull/IsEmpty/IsNotEmpty.
+    /// For Custom: string with the SQL fragment to concatenate after the column.
     #[serde(default)]
     pub value: Option<Value>,
-    /// Segundo valor (usado só em Between/NotBetween).
+    /// Second value (used only in Between/NotBetween).
     #[serde(default)]
     pub value2: Option<Value>,
 }
 
-/// Operador de combinação em grupos de filtros.
+/// Combining operator for filter groups.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GroupOp {
@@ -115,8 +117,8 @@ pub enum GroupOp {
     Or,
 }
 
-/// Árvore de filtros — folhas são `Filter`, grupos combinam filhos via
-/// AND/OR. Grupos podem aninhar indefinidamente.
+/// Filter tree — leaves are `Filter`, groups combine children via
+/// AND/OR. Groups can nest indefinitely.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FilterNode {
@@ -124,14 +126,14 @@ pub enum FilterNode {
     Group { op: GroupOp, children: Vec<FilterNode> },
 }
 
-/// Opções de paginação + ordenação + filtros para `select_table_page`.
+/// Pagination + ordering + filter options for `select_table_page`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PageOptions {
     pub limit: u64,
     pub offset: u64,
     #[serde(default)]
     pub order_by: Option<OrderBy>,
-    /// Árvore de filtros (grupos AND/OR aninhados). None = sem WHERE.
+    /// Filter tree (nested AND/OR groups). None = no WHERE.
     #[serde(default)]
     pub filter_tree: Option<FilterNode>,
 }
@@ -147,11 +149,11 @@ impl Default for PageOptions {
     }
 }
 
-/// Contrato que cada SGBD implementa. Toda operação de banco
-/// do BaseMaster passa por esta trait.
+/// Contract each DBMS implements. Every database operation in
+/// BaseMaster goes through this trait.
 #[async_trait]
 pub trait Driver: Send + Sync {
-    /// Identificador do dialeto ("mysql", "postgres", "sqlite").
+    /// Dialect identifier ("mysql", "postgres", "sqlite").
     fn dialect(&self) -> &'static str;
 
     async fn connect(&self, config: &ConnectionConfig) -> Result<()>;
@@ -163,8 +165,8 @@ pub trait Driver: Send + Sync {
     async fn describe_table(&self, schema: &str, table: &str) -> Result<Vec<Column>>;
     async fn list_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>>;
 
-    /// Lista chaves estrangeiras da tabela. Default: vazio (SGBDs que
-    /// não suportam podem apenas não sobrescrever).
+    /// Lists foreign keys of the table. Default: empty (DBMSs that
+    /// don't support it can simply not override).
     async fn list_foreign_keys(
         &self,
         _schema: &str,
@@ -173,8 +175,8 @@ pub trait Driver: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Opções "storage-level" da tabela (engine, charset, AUTO_INCREMENT…).
-    /// Default: tudo None.
+    /// Storage-level options of the table (engine, charset, AUTO_INCREMENT…).
+    /// Default: everything None.
     async fn table_options(&self, _schema: &str, _table: &str) -> Result<TableOptions> {
         Ok(TableOptions::default())
     }
@@ -182,9 +184,9 @@ pub trait Driver: Send + Sync {
     async fn query(&self, schema: Option<&str>, sql: &str) -> Result<QueryResult>;
     async fn execute(&self, schema: Option<&str>, sql: &str) -> Result<ExecuteResult>;
 
-    /// Prefetch otimizado: tabelas + colunas de todas elas. Default
-    /// implementation faz N+1 (list_tables + describe N), cada driver
-    /// pode sobrescrever com uma única query bulk.
+    /// Optimized prefetch: tables + columns for all of them. Default
+    /// implementation is N+1 (list_tables + describe N); each driver
+    /// can override with a single bulk query.
     async fn snapshot_schema(&self, schema: &str) -> Result<SchemaSnapshot> {
         let tables = self.list_tables(schema).await?;
         let mut columns = HashMap::new();
@@ -194,22 +196,59 @@ pub trait Driver: Send + Sync {
         Ok(SchemaSnapshot { tables, columns })
     }
 
-    /// Quoting de identificador para o dialeto do driver.
-    /// MySQL = backticks, PostgreSQL = aspas duplas, etc.
+    /// Identifier quoting for the driver's dialect.
+    /// MySQL = backticks, PostgreSQL = double quotes, etc.
     fn quote_ident(&self, ident: &str) -> String;
 
-    /// Gera o DDL `CREATE TABLE` pra essa tabela. Cada SGBD decide como:
-    ///  - MySQL: `SHOW CREATE TABLE schema.table`, usa o output direto.
-    ///  - Postgres: reconstrói do `describe_table` + `list_indexes` +
-    ///    `list_foreign_keys` (PG não tem equivalente direto).
-    /// Default implementation vazia — driver que suporta override.
+    /// Generates the `CREATE TABLE` DDL for this table. Each DBMS decides how:
+    ///  - MySQL: `SHOW CREATE TABLE schema.table`, uses the output directly.
+    ///  - Postgres: rebuilds from `describe_table` + `list_indexes` +
+    ///    `list_foreign_keys` (PG has no direct equivalent).
+    /// Default implementation empty — driver with support overrides.
     async fn get_table_ddl(&self, _schema: &str, _table: &str) -> Result<String> {
         Err(crate::Error::Unsupported(
             "get_table_ddl não implementado pelo driver".into(),
         ))
     }
 
-    /// COUNT(*) total de linhas da tabela. Default usa `query()`.
+    /// GENERATED columns (STORED/VIRTUAL) of the table. Data-transfer needs
+    /// to exclude them from INSERT (MySQL rejects with "The value specified for
+    /// generated column is not allowed"). Default: empty list — driver
+    /// overrides if the dialect supports generated columns.
+    async fn list_generated_columns(
+        &self,
+        _schema: &str,
+        _table: &str,
+    ) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    /// Opens a transaction pinned to a single connection from the pool. Every
+    /// operation done via the returned `Txn` uses the SAME conn — resolves the
+    /// bug where `execute()` via pool would pick different connections between
+    /// START/INSERT/COMMIT, leaving orphan txs. Caller is responsible for
+    /// calling `commit()` or `rollback()` — both consume the handle. If the
+    /// handle is dropped without finishing, the connection returns to the pool
+    /// with the tx pending (use with care — prefer explicit `rollback()` on
+    /// the error path).
+    ///
+    /// Default: `Error::Unsupported` — drivers that support tx override.
+    /// Caller should have a fallback to autocommit mode.
+    ///
+    /// Note: this method does NOT use `async_trait` — see comment in `Txn`
+    /// trait about the HRTB bounds sqlx requires.
+    fn begin_txn<'a>(
+        &'a self,
+        _schema: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Txn>>> + Send + 'a>> {
+        Box::pin(async {
+            Err(crate::Error::Unsupported(
+                "begin_txn não implementado pelo driver".into(),
+            ))
+        })
+    }
+
+    /// Total COUNT(*) of table rows. Default uses `query()`.
     async fn count_table_rows(&self, schema: &str, table: &str) -> Result<u64> {
         let sql = format!("SELECT COUNT(*) FROM {}", self.quote_ident(table));
         let q = self.query(Some(schema), &sql).await?;
@@ -227,10 +266,10 @@ pub trait Driver: Send + Sync {
         Ok(total)
     }
 
-    /// Atualiza UMA célula via parameterized query.
-    /// `where_cols` é a lista (column, original_value) que identifica a linha
-    /// — costuma ser a PK, mas para tabelas sem PK pode ser todas as colunas
-    /// originais (delegado ao caller).
+    /// Updates ONE cell via parameterized query.
+    /// `where_cols` is the (column, original_value) list identifying the row
+    /// — usually the PK, but for tables without PK it can be all original
+    /// columns (delegated to the caller).
     async fn update_cell(
         &self,
         schema: &str,
@@ -240,7 +279,7 @@ pub trait Driver: Send + Sync {
         where_cols: &[(String, Value)],
     ) -> Result<u64>;
 
-    /// Deleta UMA linha identificada por `where_cols` (PK ou todas as colunas).
+    /// Deletes ONE row identified by `where_cols` (PK or all columns).
     async fn delete_row(
         &self,
         schema: &str,
@@ -248,8 +287,8 @@ pub trait Driver: Send + Sync {
         where_cols: &[(String, Value)],
     ) -> Result<u64>;
 
-    /// Insere UMA linha com apenas as colunas dadas (o resto usa default do schema).
-    /// Retorna o last_insert_id (0 se a tabela não tem AUTO_INCREMENT).
+    /// Inserts ONE row with only the given columns (the rest use schema defaults).
+    /// Returns last_insert_id (0 if the table has no AUTO_INCREMENT).
     async fn insert_row(
         &self,
         schema: &str,
@@ -258,9 +297,9 @@ pub trait Driver: Send + Sync {
     ) -> Result<u64>;
 
     /// SELECT * FROM table [ORDER BY col DIR] [LIMIT N OFFSET M].
-    /// `limit = 0` significa "sem LIMIT" (traz tudo).
-    /// Se a tabela tiver 0 linhas, faz fallback para `describe_table` pra
-    /// popular `columns` — senão o front não sabe os cabeçalhos.
+    /// `limit = 0` means "no LIMIT" (fetches everything).
+    /// If the table has 0 rows, falls back to `describe_table` to
+    /// populate `columns` — otherwise the front doesn't know the headers.
     async fn select_table_page(
         &self,
         schema: &str,
@@ -289,4 +328,41 @@ pub trait Driver: Send + Sync {
         }
         Ok(q)
     }
+}
+
+/// Transaction handle pinned to a single connection. `execute`/`query` run
+/// in the tx context (SAME conn). `commit`/`rollback` finalize.
+///
+/// Thread-safety: `Send` only — atomic use per worker. Don't share
+/// between tasks; if concurrency is needed, each worker opens its own.
+///
+/// Note: this trait does NOT use `async_trait` due to a technical detail — the
+/// `async_trait` macro boxes the returned future and the conversion loses the
+/// HRTB bounds (`for<'a>`) that sqlx::Executor requires on
+/// `&'a mut Connection`. The compiler fails with "Executor is not general
+/// enough". Defining the methods as `fn(...) -> Pin<Box<dyn Future>>` manually,
+/// the lifetime becomes explicit and sqlx resolves it. See:
+/// <https://github.com/launchbadge/sqlx/issues/1170>
+pub trait Txn: Send {
+    /// Executes SQL on the pinned connection. Results reflect the tx in progress.
+    fn execute<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<ExecuteResult>> + Send + 'a>>;
+
+    /// Queries SQL on the pinned connection.
+    fn query<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<QueryResult>> + Send + 'a>>;
+
+    /// Commits the transaction and releases the connection.
+    fn commit(
+        self: Box<Self>,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+    /// Rollback + releases the connection. Use on the error path.
+    fn rollback(
+        self: Box<Self>,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 }

@@ -168,7 +168,7 @@ export function NewTableView({ tabId, connectionId, schema }: Props) {
       await ipc.db.runQuery(connectionId, sql, schema);
       invalidate(connectionId, schema);
       ensureSnapshot(connectionId, schema).catch(() => {});
-      // Fecha a aba de criação e abre a tabela recém-criada em Estrutura.
+      // Close the creation tab and open the just-created table in Structure.
       closeTab(tabId);
       openTab({
         label: name.trim(),

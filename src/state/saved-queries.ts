@@ -4,20 +4,20 @@ import { ipc } from "@/lib/ipc";
 import type { SavedQuery, SavedQueryDraft, Uuid } from "@/lib/types";
 
 /**
- * Cache de queries salvas por conexão. A tree pede por (conn, schema)
- * mas aqui armazenamos tudo por conexão — a filtragem por schema é
- * feita via seletor. Isso simplifica invalidação depois de CRUD.
+ * Saved-queries cache per connection. The tree asks by (conn, schema)
+ * but we store everything per connection — schema filtering is done
+ * via a selector. This simplifies invalidation after CRUD.
  */
 interface SavedQueriesState {
-  /** connection_id -> lista completa daquela conexão */
+  /** connection_id -> full list for that connection */
   cache: Record<Uuid, SavedQuery[]>;
   loading: Record<Uuid, boolean>;
 
-  /** Busca (ou devolve cache) das queries daquela conexão. */
+  /** Fetch (or return cache) of queries for that connection. */
   ensure: (connectionId: Uuid) => Promise<SavedQuery[]>;
-  /** Força reload do backend. */
+  /** Force reload from the backend. */
   refresh: (connectionId: Uuid) => Promise<SavedQuery[]>;
-  /** Limpa o cache de uma conexão (ex: desconectou). */
+  /** Clear the cache for a connection (e.g. disconnected). */
   invalidate: (connectionId: Uuid) => void;
 
   create: (
@@ -36,7 +36,7 @@ export const useSavedQueries = create<SavedQueriesState>((set, get) => ({
     const cached = get().cache[connectionId];
     if (cached) return cached;
     if (get().loading[connectionId]) {
-      // Aguarda o in-flight existente (polling simples — raro).
+      // Await the existing in-flight (simple polling — rare).
       await new Promise<void>((resolve) => {
         const id = setInterval(() => {
           if (!get().loading[connectionId]) {
@@ -109,8 +109,8 @@ export const useSavedQueries = create<SavedQueriesState>((set, get) => ({
   },
 }));
 
-/** Seletor: queries desta conexão que pertencem ao schema informado
- *  OU são "globais" (schema null). A tree usa isso. */
+/** Selector: queries for this connection that belong to the given schema
+ *  OR are "global" (schema null). The tree uses this. */
 export function filterBySchema(
   all: SavedQuery[],
   schema: string,

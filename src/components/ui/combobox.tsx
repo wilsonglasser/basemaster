@@ -10,13 +10,13 @@ interface ComboboxProps {
   placeholder?: string;
   className?: string;
   mono?: boolean;
-  /** Altura do dropdown em px. Default 240. */
+  /** Dropdown height in px. Default 240. */
   maxHeight?: number;
 }
 
-/** Input livre com autocomplete: usuário pode digitar qualquer valor, e
- *  um dropdown sugere opções filtradas por substring. Portalizado pra
- *  escapar overflow:hidden de containers. */
+/** Free-form input with autocomplete: user can type any value, and a
+ *  dropdown suggests options filtered by substring. Portaled to escape
+ *  overflow:hidden containers. */
 export function Combobox({
   value,
   options,

@@ -13,6 +13,7 @@ import {
 import { ipc } from "@/lib/ipc";
 import type { QueryHistoryEntry, Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
@@ -83,9 +84,8 @@ export function QueryHistoryView({ connectionId }: Props) {
   };
 
   const clearAll = async () => {
-    if (!window.confirm(t("queryHistory.clearConfirm"))) {
-      return;
-    }
+    const ok = await appConfirm(t("queryHistory.clearConfirm"));
+    if (!ok) return;
     await ipc.queryHistory.clear(connectionId);
     await load();
   };

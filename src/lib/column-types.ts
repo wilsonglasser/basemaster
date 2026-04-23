@@ -1,5 +1,5 @@
-/** Sugestões de tipos por driver. Input livre: usuário pode digitar
- *  qualquer outra coisa (inclusive versões parametrizadas). */
+/** Type suggestions per driver. Free input: user can type anything
+ *  else (including parameterized variants). */
 const MYSQL_TYPES = [
   "TINYINT",
   "SMALLINT",

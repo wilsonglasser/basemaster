@@ -1,5 +1,5 @@
-/** Sinônimos curados bidirecionais — pares que devem casar no auto-map.
- *  Canonicalizamos via `normalize` antes de comparar. */
+/** Curated bidirectional synonyms — pairs that should match in auto-map.
+ *  We canonicalize via `normalize` before comparing. */
 const SYNONYM_GROUPS: string[][] = [
   ["id", "uuid", "pk"],
   ["email", "mail", "e-mail", "emailaddress"],
@@ -28,18 +28,18 @@ const SYNONYM_MAP = (() => {
   return map;
 })();
 
-/** Normaliza um identificador pra comparação:
- *  - remove acentos (NFD + strip marks)
+/** Normalize an identifier for comparison:
+ *  - strip accents (NFD + strip marks)
  *  - lowercase
- *  - strip separadores (_ - . espaço)
- *  - remove prefixo "fk_"/"idx_"/"ix_" quando óbvio (ruído de naming) */
+ *  - strip separators (_ - . space)
+ *  - drop "fk_"/"idx_"/"ix_" prefix when obvious (naming noise) */
 export function normalize(s: string): string {
   let x = s
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
-  // Só strip prefixo quando sobra algo relevante.
+  // Only strip prefix when something relevant remains.
   if (/^(fk|idx|ix|pk)[a-z0-9]/.test(x)) {
     const stripped = x.replace(/^(fk|idx|ix|pk)/, "");
     if (stripped.length >= 3) x = stripped;
@@ -47,7 +47,7 @@ export function normalize(s: string): string {
   return x;
 }
 
-/** Levenshtein distance — DP standard, O(n*m). Bom suficiente pra N<100. */
+/** Levenshtein distance — standard DP, O(n*m). Good enough for N<100. */
 function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (a.length === 0) return b.length;
@@ -66,14 +66,14 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 
-/** Score 0..1 entre dois identificadores já normalizados. 1 = igual. */
+/** Score 0..1 between two already-normalized identifiers. 1 = equal. */
 function similarity(a: string, b: string): number {
   if (!a || !b) return 0;
   if (a === b) return 1;
-  // Sinônimos: 0.95 (mais forte que quase-letra-diferente).
+  // Synonyms: 0.95 (stronger than near-letter-diff).
   const groupA = SYNONYM_MAP.get(a);
   if (groupA && groupA.has(b)) return 0.95;
-  // Substring: 0.8 se um contém o outro (user vs user_id → "user" vs "userid").
+  // Substring: 0.8 if one contains the other (user vs user_id → "user" vs "userid").
   if (a.includes(b) || b.includes(a)) {
     const ratio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
     return 0.7 + 0.2 * ratio; // 0.7..0.9
@@ -84,31 +84,31 @@ function similarity(a: string, b: string): number {
 }
 
 export interface AutoMapResult {
-  /** targetCol → sourceCol (já resolvido). */
+  /** targetCol → sourceCol (already resolved). */
   mapping: Record<string, string>;
-  /** Source cols que não ficaram em nenhum target. */
+  /** Source cols not assigned to any target. */
   unmappedSources: string[];
-  /** Target cols que ficaram sem source. */
+  /** Target cols without a source. */
   unmappedTargets: string[];
-  /** Mappings pelo fuzzy (score < 0.9) — para sugerir em cinza na UI. */
+  /** Fuzzy mappings (score < 0.9) — for grey suggestions in the UI. */
   fuzzySuggestions: Record<string, { source: string; score: number }>;
 }
 
 export interface AutoMapOptions {
-  /** Mappings já definidos manualmente — não sobrescrever. */
+  /** Mappings already set manually — do not overwrite. */
   preserve?: Record<string, string>;
-  /** Score mínimo pra aceitar match automático. Default 0.9 (muito estrito). */
+  /** Minimum score to accept auto match. Default 0.9 (very strict). */
   minAutoScore?: number;
-  /** Score mínimo pra listar como sugestão fuzzy (UI cinza). Default 0.7. */
+  /** Minimum score to list as a fuzzy suggestion (grey UI). Default 0.7. */
   minSuggestionScore?: number;
 }
 
-/** Algoritmo greedy:
- *  1. Score cada par (target, source) com similarity().
- *  2. Ordena pares por score desc.
- *  3. Atribui greedy: primeiro match forte pra cada target/source (um-pra-um).
- *  4. Target/source já usados (pelo preserve) saem da competição.
- *  5. Mappings com score < minAutoScore viram sugestão fuzzy (não aplicados). */
+/** Greedy algorithm:
+ *  1. Score each pair (target, source) with similarity().
+ *  2. Sort pairs by score desc.
+ *  3. Greedy-assign: first strong match per target/source (one-to-one).
+ *  4. Already-used target/source (from preserve) drop out of contention.
+ *  5. Mappings with score < minAutoScore become fuzzy suggestions (not applied). */
 export function autoMapColumns(
   targets: string[],
   sources: string[],
@@ -122,7 +122,7 @@ export function autoMapColumns(
   const usedSources = new Set<string>();
   const usedTargets = new Set<string>();
 
-  // Aplica preserve primeiro.
+  // Apply preserve first.
   for (const [t, s] of Object.entries(preserve)) {
     if (s && sources.includes(s) && targets.includes(t)) {
       mapping[t] = s;

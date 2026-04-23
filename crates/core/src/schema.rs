@@ -66,7 +66,7 @@ pub enum ColumnType {
     Timestamp,
     Enum { values: Vec<String> },
     Set { values: Vec<String> },
-    /// Catch-all para tipos específicos do SGBD ainda não mapeados.
+    /// Catch-all for DBMS-specific types not yet mapped.
     Other { raw: String },
 }
 
@@ -81,8 +81,8 @@ pub struct IndexInfo {
     pub index_type: Option<String>,
 }
 
-/// Chave estrangeira. `ref_schema` é None quando a FK referencia
-/// outra tabela do MESMO schema (o que é o caso comum).
+/// Foreign key. `ref_schema` is None when the FK references
+/// another table in the SAME schema (the common case).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ForeignKeyInfo {
     pub name: String,
@@ -97,8 +97,8 @@ pub struct ForeignKeyInfo {
     pub on_delete: Option<String>,
 }
 
-/// Opções "da tabela" (storage-level): engine, charset, collation, etc.
-/// Todos opcionais pra permitir SGBDs que não têm determinados campos.
+/// "Table-level" (storage-level) options: engine, charset, collation, etc.
+/// All optional to accommodate DBMSes that don't have certain fields.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TableOptions {
     #[serde(default)]

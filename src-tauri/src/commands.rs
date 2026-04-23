@@ -1,8 +1,8 @@
-//! Tauri commands — interface IPC do front com o backend.
+//! Tauri commands — IPC interface between the frontend and the backend.
 //!
-//! Erros são serializados como `String` para simplificar o consumo
-//! no front. Estrutura mais rica pode ser introduzida depois sem
-//! mudar a assinatura dos commands.
+//! Errors are serialized as `String` to simplify consumption on the
+//! frontend. A richer structure can be introduced later without
+//! changing the commands' signatures.
 
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ pub fn ping() -> &'static str {
     "pong"
 }
 
-// ---------------------------------------------------------------- conexões
+// ---------------------------------------------------------------- connections
 
 #[tauri::command]
 pub async fn connection_list(state: State<'_, AppState>) -> R<Vec<ConnectionProfile>> {
@@ -88,7 +88,7 @@ pub async fn connection_update(
         .update(id, draft)
         .await
         .map_err(err)?;
-    // Convenção: Some("") limpa, None mantém como está, Some(valor) sobrescreve.
+    // Convention: Some("") clears, None keeps as-is, Some(value) overwrites.
     if let Some(p) = password {
         if p.is_empty() {
             secrets::delete_password(id).map_err(err)?;
@@ -138,8 +138,8 @@ pub async fn connection_test(
     let driver = make_driver(&draft.driver)
         .ok_or_else(|| format!("driver desconhecido: {}", draft.driver))?;
 
-    // Constrói um ConnectionConfig efêmero — id nil, sem persistência.
-    // Secrets SSH entram direto aqui (não vêm do keyring no teste).
+    // Build an ephemeral ConnectionConfig — nil id, no persistence.
+    // SSH secrets come in directly here (not fetched from keyring during test).
     let mut ssh = draft.ssh_tunnel;
     if let Some(t) = ssh.as_mut() {
         if t.password.is_none() {
@@ -162,7 +162,7 @@ pub async fn connection_test(
         ssh_tunnel: ssh,
     };
 
-    // Se tem túnel SSH, abre antes de conectar o driver; fecha no fim.
+    // If there's an SSH tunnel, open it before connecting the driver; close at the end.
     let tunnel = if let Some(ssh) = &cfg.ssh_tunnel {
         Some(
             crate::ssh_tunnel::SshTunnel::open(ssh, &cfg.host, cfg.port)
@@ -188,8 +188,8 @@ pub async fn connection_test(
     ping.map_err(err)
 }
 
-/// Injeta as senhas SSH (vindas do keyring) no config do túnel, sem
-/// sobrescrever valores que já vieram preenchidos.
+/// Injects the SSH passwords (from the keyring) into the tunnel config,
+/// without overwriting values that already came populated.
 fn inject_ssh_secrets(
     cfg: &mut basemaster_core::ConnectionConfig,
     ssh_password: Option<String>,
@@ -205,7 +205,7 @@ fn inject_ssh_secrets(
     }
 }
 
-/// Ajusta host/port do cfg pro local forward se há túnel ativo.
+/// Adjusts the cfg's host/port to the local forward if a tunnel is active.
 fn effective_config(
     mut cfg: basemaster_core::ConnectionConfig,
     tunnel: Option<&crate::ssh_tunnel::SshTunnel>,
@@ -229,7 +229,7 @@ pub async fn connection_open(state: State<'_, AppState>, id: Uuid) -> R<()> {
     let mut cfg = profile.clone().into_config(password);
     inject_ssh_secrets(&mut cfg, ssh_pwd, ssh_key_pass);
 
-    // Abre túnel SSH antes (se configurado) e redireciona o host/port.
+    // Open SSH tunnel first (if configured) and redirect host/port.
     let tunnel = if let Some(ssh) = &cfg.ssh_tunnel {
         Some(
             crate::ssh_tunnel::SshTunnel::open(ssh, &cfg.host, cfg.port)
@@ -242,7 +242,7 @@ pub async fn connection_open(state: State<'_, AppState>, id: Uuid) -> R<()> {
     let effective = effective_config(cfg, tunnel.as_ref());
 
     if let Err(e) = driver.connect(&effective).await {
-        // Se falha pós-tunnel, fecha o túnel pra não vazar.
+        // If it fails after the tunnel is up, close the tunnel so it doesn't leak.
         if let Some(t) = tunnel {
             t.close().await;
         }
@@ -273,7 +273,7 @@ pub async fn connection_active(state: State<'_, AppState>) -> R<Vec<Uuid>> {
     Ok(state.active.read().await.keys().copied().collect())
 }
 
-// ---------------------------------------------------------------- introspecção
+// ---------------------------------------------------------------- introspection
 
 async fn driver_for(state: &AppState, id: Uuid) -> R<Arc<dyn Driver>> {
     state
@@ -369,10 +369,10 @@ pub async fn table_count(
     d.count_table_rows(&schema, &table).await.map_err(err)
 }
 
-/// Duplica uma tabela: CREATE TABLE new LIKE old + INSERT SELECT.
-/// Copia estrutura (colunas, indexes, PK) + dados. FKs e triggers NÃO
-/// são copiados pelo LIKE — V2 pode expandir via SHOW CREATE.
-/// Se `copy_data` for false, só cria a estrutura.
+/// Duplicates a table: CREATE TABLE new LIKE old + INSERT SELECT.
+/// Copies structure (columns, indexes, PK) + data. FKs and triggers are
+/// NOT copied by LIKE — V2 could expand this via SHOW CREATE.
+/// If `copy_data` is false, only the structure is created.
 #[tauri::command]
 pub async fn duplicate_table(
     state: State<'_, AppState>,
@@ -394,7 +394,7 @@ pub async fn duplicate_table(
     Ok(())
 }
 
-/// Renomeia uma tabela dentro do mesmo schema.
+/// Renames a table within the same schema.
 #[tauri::command]
 pub async fn rename_table(
     state: State<'_, AppState>,
@@ -415,22 +415,22 @@ pub async fn rename_table(
     Ok(())
 }
 
-/// Resultado por tabela em operações em lote (drop/truncate/empty).
-/// Sucessos vêm sem `error`; falhas vêm com a mensagem do driver.
+/// Per-table result for batch operations (drop/truncate/empty).
+/// Successes come without `error`; failures come with the driver's message.
 #[derive(serde::Serialize)]
 pub struct TableOpResult {
     pub table: String,
     pub error: Option<String>,
 }
 
-/// Driver string da conexão (sem precisar do trait — vem do profile).
+/// Driver string for the connection (no trait needed — comes from the profile).
 async fn driver_kind(state: &AppState, id: Uuid) -> R<String> {
     let p = state.store.connections().get(id).await.map_err(err)?;
     Ok(p.driver)
 }
 
-/// DROP TABLE em lote. Continua nas próximas se uma falhar — devolve
-/// um vetor com sucesso/erro por tabela.
+/// Batch DROP TABLE. Continues to the next if one fails — returns
+/// a vector with success/error per table.
 #[tauri::command]
 pub async fn drop_tables(
     state: State<'_, AppState>,
@@ -451,9 +451,9 @@ pub async fn drop_tables(
     Ok(out)
 }
 
-/// TRUNCATE TABLE em lote. SQLite não suporta TRUNCATE — usa
-/// `DELETE FROM` + reset do `sqlite_sequence`. Postgres adiciona
-/// `RESTART IDENTITY CASCADE` pra resetar sequences e propagar FKs.
+/// Batch TRUNCATE TABLE. SQLite doesn't support TRUNCATE — uses
+/// `DELETE FROM` + reset of `sqlite_sequence`. Postgres adds
+/// `RESTART IDENTITY CASCADE` to reset sequences and propagate FKs.
 #[tauri::command]
 pub async fn truncate_tables(
     state: State<'_, AppState>,
@@ -468,16 +468,16 @@ pub async fn truncate_tables(
         let qi = d.quote_ident(&t);
         let res = match kind.as_str() {
             "sqlite" => {
-                // SQLite: DELETE + reset do contador de AUTOINCREMENT.
-                // sqlite_sequence só existe se a tabela usa AUTOINCREMENT;
-                // o segundo statement é silencioso quando ela não existe.
+                // SQLite: DELETE + reset of the AUTOINCREMENT counter.
+                // sqlite_sequence only exists if the table uses AUTOINCREMENT;
+                // the second statement is silent when it doesn't exist.
                 let r1 = d
                     .execute(Some(&schema), &format!("DELETE FROM {}", qi))
                     .await;
                 if let Err(e) = r1 {
                     Err(e)
                 } else {
-                    // Tenta resetar o contador; ignora erro (tabela sem rowid/AI).
+                    // Try resetting the counter; ignore error (table without rowid/AI).
                     let _ = d
                         .execute(
                             Some(&schema),
@@ -511,8 +511,8 @@ pub async fn truncate_tables(
     Ok(out)
 }
 
-/// `DELETE FROM` em lote — apaga todas as linhas mas dispara triggers
-/// e não reseta auto-increment. Funciona em todos os dialetos.
+/// Batch `DELETE FROM` — wipes all rows but fires triggers and doesn't
+/// reset auto-increment. Works on all dialects.
 #[tauri::command]
 pub async fn empty_tables(
     state: State<'_, AppState>,
@@ -533,9 +533,9 @@ pub async fn empty_tables(
     Ok(out)
 }
 
-/// Renomeia um schema inteiro: MySQL não tem `RENAME DATABASE`, então
-/// simula via CREATE novo → RENAME TABLE de cada objeto → DROP antigo.
-/// Emite `schema_rename:progress` + `:done` pra UI mostrar o andamento.
+/// Renames an entire schema: MySQL has no `RENAME DATABASE`, so we
+/// simulate via CREATE new → RENAME TABLE of each object → DROP old.
+/// Emits `schema_rename:progress` + `:done` for the UI to show progress.
 #[tauri::command]
 pub async fn rename_schema(
     app: AppHandle,
@@ -555,7 +555,7 @@ pub async fn rename_schema(
     d.execute(None, &format!("CREATE DATABASE {}", d.quote_ident(&to)))
         .await
         .map_err(err)?;
-    // 2. Lista tabelas do schema antigo.
+    // 2. List tables from the old schema.
     let tables = d.list_tables(&from).await.map_err(err)?;
     let total = tables.len() as u32;
     for (idx, t) in tables.iter().enumerate() {
@@ -584,8 +584,8 @@ pub async fn rename_schema(
     Ok(())
 }
 
-/// Gera um nome disponível pra duplicata: base_copy, base_copy_1, _copy_2…
-/// Testa contra list_tables do schema.
+/// Generates an available name for a duplicate: base_copy, base_copy_1, _copy_2…
+/// Tested against list_tables on the schema.
 #[tauri::command]
 pub async fn find_available_table_name(
     state: State<'_, AppState>,
@@ -637,12 +637,12 @@ pub struct PkEntry {
 
 #[derive(serde::Deserialize)]
 pub struct CellEdit {
-    /// Identifica a linha — geralmente PK; pra tabelas sem PK pode ser
-    /// todas as colunas originais (responsabilidade do caller).
+    /// Identifies the row — usually PK; for tables without PK it can be
+    /// all original columns (caller's responsibility).
     pub row_pk: Vec<PkEntry>,
-    /// Coluna sendo alterada.
+    /// Column being changed.
     pub column: String,
-    /// Novo valor.
+    /// New value.
     pub new_value: Value,
 }
 
@@ -737,10 +737,10 @@ pub async fn insert_table_rows(
 
 // ---------------------------------------------------------------- query
 
-/// Resultado de UM statement dentro do batch.
+/// Result of ONE statement inside the batch.
 ///
-/// `Error` é uma variante normal (não interrompe o batch) — o front mostra
-/// no Resumo / aba específica e segue exibindo os outros resultados.
+/// `Error` is a normal variant (doesn't interrupt the batch) — the frontend
+/// shows it in the Summary / dedicated tab and keeps displaying the other results.
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum QueryRunResult {
@@ -766,10 +766,10 @@ pub enum QueryRunResult {
 #[derive(Serialize)]
 pub struct QueryRunBatch {
     pub results: Vec<QueryRunResult>,
-    /// Unix epoch ms da chamada (no servidor).
+    /// Unix epoch ms of the call (on the server).
     pub started_at_ms: i64,
     pub finished_at_ms: i64,
-    /// Tempo total medido com Instant (mais preciso que finished-started).
+    /// Total time measured with Instant (more precise than finished-started).
     pub total_ms: u64,
 }
 
@@ -785,9 +785,9 @@ fn looks_like_select(sql: &str) -> bool {
     )
 }
 
-/// Quebra um buffer SQL em statements individuais respeitando strings,
-/// identificadores `quoted` e comentários. Não cobre 100% dos casos
-/// (DELIMITER de stored proc, por ex.) — é o "bom o bastante" para o MVP.
+/// Splits an SQL buffer into individual statements respecting strings,
+/// `quoted` identifiers and comments. Doesn't cover 100% of cases
+/// (stored-proc DELIMITER, for example) — it's the "good enough" for the MVP.
 fn split_statements(sql: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -956,11 +956,11 @@ pub async fn query_run(
     })
 }
 
-/// Abre uma aba em janela Tauri separada. `url_fragment` é anexado ao
-/// index.html (ex: "?detached=table&conn=abc&schema=public&table=users").
-/// Se uma janela com o mesmo label já existe, ela é focada em vez de criada.
-/// `x` e `y` são coordenadas de TELA (logical pixels) pra posicionar a
-/// nova janela — usado no drag-out pra abrir onde o cursor está.
+/// Opens a tab in a separate Tauri window. `url_fragment` is appended to
+/// index.html (e.g., "?detached=table&conn=abc&schema=public&table=users").
+/// If a window with the same label already exists, it's focused instead of created.
+/// `x` and `y` are SCREEN coordinates (logical pixels) to position the
+/// new window — used on drag-out to open where the cursor is.
 #[tauri::command]
 pub async fn open_detached_window(
     app: AppHandle,
@@ -985,8 +985,8 @@ pub async fn open_detached_window(
     Ok(())
 }
 
-/// Fecha uma WebviewWindow pelo label. Usado no reattach — evita lidar
-/// com permissions JS-side pra `WebviewWindow.close()`.
+/// Closes a WebviewWindow by label. Used on reattach — avoids dealing
+/// with JS-side permissions for `WebviewWindow.close()`.
 #[tauri::command]
 pub async fn close_window(app: AppHandle, label: String) -> R<()> {
     if let Some(w) = app.get_webview_window(&label) {
@@ -995,9 +995,9 @@ pub async fn close_window(app: AppHandle, label: String) -> R<()> {
     Ok(())
 }
 
-/// Checa se o servidor tem binlog habilitado. Usado pra decidir o
-/// default de `disable_binlog`: se log_bin=OFF, SET SQL_LOG_BIN=0 não
-/// tem efeito prático e é seguro ligar. Se ON, provavelmente replicação.
+/// Checks whether the server has binlog enabled. Used to decide the
+/// default for `disable_binlog`: if log_bin=OFF, SET SQL_LOG_BIN=0 has
+/// no practical effect and is safe to turn on. If ON, probably replication.
 #[tauri::command]
 pub async fn check_binlog_enabled(
     state: State<'_, AppState>,
@@ -1008,7 +1008,7 @@ pub async fn check_binlog_enabled(
         .query(None, "SHOW VARIABLES LIKE 'log_bin'")
         .await
         .map_err(err)?;
-    // Row: [Variable_name, Value]. Value = "ON" ou "OFF".
+    // Row: [Variable_name, Value]. Value = "ON" or "OFF".
     let on = q
         .rows
         .first()
@@ -1021,8 +1021,8 @@ pub async fn check_binlog_enabled(
     Ok(on)
 }
 
-/// Dispara uma transferência de dados. As duas conexões (source/target)
-/// precisam estar abertas (em `AppState::active`). Emite eventos
+/// Kicks off a data transfer. Both connections (source/target) need
+/// to be open (in `AppState::active`). Emits events
 /// `transfer:progress`, `transfer:table_done`, `transfer:done`.
 #[tauri::command]
 pub async fn data_transfer_start(
@@ -1065,10 +1065,10 @@ pub async fn data_transfer_stop(state: State<'_, AppState>) -> R<()> {
     Ok(())
 }
 
-/// Grava bytes num arquivo arbitrário escolhido pelo usuário (dialog
-/// `save()`). Usado pelo export. Quando `append=true`, abre o arquivo
-/// em append mode — permite export chunked (fronted envia por partes).
-/// Dispara um SQL import (arquivo .sql ou .zip). Reusa `TransferControl`.
+/// Writes bytes to an arbitrary file chosen by the user (save dialog).
+/// Used by export. When `append=true`, opens the file in append mode —
+/// allows chunked export (frontend sends in parts).
+/// Kicks off an SQL import (.sql or .zip file). Reuses `TransferControl`.
 #[tauri::command]
 pub async fn sql_import_start(
     app: AppHandle,
@@ -1087,9 +1087,9 @@ pub async fn sql_import_start(
     crate::sql_import::run_import(app, opts, target, control).await
 }
 
-/// Dispara um SQL dump. Reusa o mesmo `TransferControl` — pause/stop
-/// do data_transfer valem pro dump também (estado global é 1 operação
-/// por vez). Eventos: `sql_dump:progress`, `sql_dump:table_done`,
+/// Kicks off an SQL dump. Reuses the same `TransferControl` — pause/stop
+/// from data_transfer apply to dump too (global state is 1 operation
+/// at a time). Events: `sql_dump:progress`, `sql_dump:table_done`,
 /// `sql_dump:done`.
 #[tauri::command]
 pub async fn sql_dump_start(
@@ -1104,7 +1104,7 @@ pub async fn sql_dump_start(
             .cloned()
             .ok_or_else(|| "conexão de origem não está aberta".to_string())?
     };
-    // Rótulo "user@host:port" pro header do dump.
+    // Label "user@host:port" for the dump header.
     let profile = state
         .store
         .connections()
@@ -1257,14 +1257,14 @@ pub async fn connections_import_apply(
 ) -> R<usize> {
     use basemaster_store::{secrets, ConnectionDraft, ConnectionFolderDraft};
 
-    // Índice de pastas existentes por nome (case-sensitive — igual ao Navicat/UX).
+    // Index of existing folders by name (case-sensitive — matches Navicat/UX).
     let existing_folders = state.store.connection_folders().list().await.map_err(err)?;
     let mut folder_by_name: std::collections::HashMap<String, Uuid> = existing_folders
         .into_iter()
         .map(|f| (f.name, f.id))
         .collect();
 
-    // Cria pastas do payload que ainda não existem.
+    // Create payload folders that don't yet exist.
     for f in &payload.folders {
         if !folder_by_name.contains_key(&f.name) {
             let created = state
@@ -1280,7 +1280,7 @@ pub async fn connections_import_apply(
         }
     }
 
-    // Cria conexões.
+    // Create connections.
     let mut count = 0;
     for c in &payload.connections {
         let draft = ConnectionDraft {
@@ -1528,14 +1528,14 @@ pub async fn saved_queries_delete(
     state.store.saved_queries().delete(id).await.map_err(err)
 }
 
-/// Controla a barra de progresso do ícone da taskbar (Windows) ou dock
-/// (macOS). `progress` em 0..=100. `status`:
-///   "none" — some a barra
-///   "normal" — azul/verde progredindo
-///   "indeterminate" — animação de carregamento (ignora progress)
-///   "paused" — amarelo
-///   "error" — vermelho
-/// Janela alvo: a que chamou (ou "main" se não passada).
+/// Controls the progress bar on the taskbar icon (Windows) or dock
+/// (macOS). `progress` in 0..=100. `status`:
+///   "none" — hides the bar
+///   "normal" — blue/green progressing
+///   "indeterminate" — loading animation (ignores progress)
+///   "paused" — yellow
+///   "error" — red
+/// Target window: the caller's (or "main" if not passed).
 #[tauri::command]
 pub async fn set_taskbar_progress(
     app: AppHandle,

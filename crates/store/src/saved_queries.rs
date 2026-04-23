@@ -5,9 +5,9 @@ use uuid::Uuid;
 
 use crate::{StoreError, StoreResult};
 
-/// Query salva por uma conexão. `schema` opcional: `None` significa
-/// que não há schema específico (ex: queries server-level como
-/// `SHOW STATUS`). O comum é ter schema preenchido.
+/// Query saved for a connection. `schema` optional: `None` means
+/// there's no specific schema (e.g., server-level queries like
+/// `SHOW STATUS`). The common case is having schema filled in.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SavedQuery {
     pub id: Uuid,
@@ -19,8 +19,8 @@ pub struct SavedQuery {
     pub updated_at: i64,
 }
 
-/// Payload pra criar/atualizar. `name` e `sql` são obrigatórios;
-/// `schema` vem do contexto em que o usuário salvou.
+/// Payload to create/update. `name` and `sql` are required;
+/// `schema` comes from the context where the user saved it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SavedQueryDraft {
     pub name: String,
@@ -38,7 +38,7 @@ impl<'a> SavedQueryRepo<'a> {
         Self { pool }
     }
 
-    /// Lista todas as queries de uma conexão — inclui todos os schemas.
+    /// Lists all queries of a connection — includes all schemas.
     pub async fn list_by_connection(
         &self,
         connection_id: Uuid,
@@ -55,9 +55,9 @@ impl<'a> SavedQueryRepo<'a> {
         rows.into_iter().map(SavedQuery::try_from).collect()
     }
 
-    /// Lista queries pertencentes a `(connection_id, schema)`. Inclui também
-    /// as de `schema IS NULL` (queries "globais" daquela conexão) pra elas
-    /// aparecerem em qualquer schema.
+    /// Lists queries belonging to `(connection_id, schema)`. Also includes
+    /// those with `schema IS NULL` ("global" queries of that connection) so
+    /// they show up in any schema.
     pub async fn list_by_schema(
         &self,
         connection_id: Uuid,

@@ -20,7 +20,7 @@ export function ShortcutsCheatsheet() {
 
 function Modal({ onClose }: { onClose: () => void }) {
   const resolve = useShortcuts((s) => s.resolve);
-  useShortcuts((s) => s.overrides); // força re-render em mudanças
+  useShortcuts((s) => s.overrides); // force re-render on changes
 
   const grouped = useMemo(() => {
     const out: Record<

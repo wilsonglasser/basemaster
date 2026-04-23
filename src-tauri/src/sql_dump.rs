@@ -1,10 +1,10 @@
-//! SQL Dump V1 — exporta schema(s) ou tabela única pra `.sql` ou `.zip`.
+//! SQL Dump V1 — exports schema(s) or a single table to `.sql` or `.zip`.
 //!
-//! Reaproveita as funções de formatação de INSERT do `data_transfer`
-//! (`sql_literal_opts`, extended inserts). Escreve direto no arquivo
-//! (ou entry ZIP) em chunks — memória bounded.
+//! Reuses `data_transfer`'s INSERT-formatting functions
+//! (`sql_literal_opts`, extended inserts). Writes directly to the file
+//! (or ZIP entry) in chunks — bounded memory.
 //!
-//! Eventos:
+//! Events:
 //!   `sql_dump:progress` — { schema, table, done, total, elapsed_ms }
 //!   `sql_dump:table_done` — { schema, table, rows, elapsed_ms, error }
 //!   `sql_dump:done` — { total_rows, elapsed_ms, tables_done, failed }
@@ -22,9 +22,9 @@ use zip::CompressionMethod;
 
 use crate::data_transfer::TransferControl;
 
-/// Formata `Value` como literal SQL. `pg_mode` emite BLOB como
-/// `'\xAABB'::bytea` (sintaxe hex escape do PG) em vez de `0xAABB`
-/// (MySQL). `bool` em PG vira `TRUE/FALSE` literal.
+/// Formats `Value` as an SQL literal. `pg_mode` emits BLOB as
+/// `'\xAABB'::bytea` (PG hex-escape syntax) instead of `0xAABB`
+/// (MySQL). `bool` on PG becomes `TRUE/FALSE` literal.
 fn sql_literal_opts_dialect(
     v: &basemaster_core::Value,
     hex_blob: bool,
@@ -43,11 +43,11 @@ fn sql_literal_opts_dialect(
     sql_literal_opts(v, hex_blob)
 }
 
-/// Versão MySQL-flavored — preservada pra compat e reuso em data_transfer.
+/// MySQL-flavored version — kept for compat and reuse in data_transfer.
 fn sql_literal_opts(v: &basemaster_core::Value, hex_blob: bool) -> String {
     use basemaster_core::Value;
     fn quote(s: &str) -> String {
-        // Escape ANSI SQL: '→'', \→\\, \n→\n (literal), \r→\r, \0→\0.
+        // ANSI SQL escape: '→'', \→\\, \n→\n (literal), \r→\r, \0→\0.
         let mut out = String::with_capacity(s.len() + 2);
         out.push('\'');
         for c in s.chars() {
@@ -100,11 +100,11 @@ fn sql_literal_opts(v: &basemaster_core::Value, hex_blob: bool) -> String {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DumpContent {
-    /// Só CREATE TABLE/VIEW — sem INSERTs.
+    /// Only CREATE TABLE/VIEW — no INSERTs.
     Structure,
-    /// Só INSERTs — assume que a estrutura já existe no destino.
+    /// Only INSERTs — assumes the structure already exists on the target.
     Data,
-    /// Estrutura + dados.
+    /// Structure + data.
     #[default]
     Both,
 }
@@ -112,26 +112,26 @@ pub enum DumpContent {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DumpFormat {
-    /// Um único arquivo `.sql` com tudo concatenado.
+    /// A single `.sql` file with everything concatenated.
     Sql,
-    /// Um `.zip` com um `.sql` por tabela (+ um `schema.sql` com DDL inicial).
+    /// A `.zip` with one `.sql` per table (+ a `schema.sql` with initial DDL).
     Zip,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DumpCompression {
-    /// Sem compressão — só empacota. Mais rápido.
+    /// No compression — just packages. Faster.
     #[default]
     Stored,
-    /// Deflate padrão (zlib).
+    /// Standard deflate (zlib).
     Deflate,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DumpScope {
     pub schema: String,
-    /// Se vazio, dumpa TODAS as tabelas/views do schema.
+    /// If empty, dumps ALL tables/views of the schema.
     #[serde(default)]
     pub tables: Vec<String>,
 }
@@ -146,25 +146,25 @@ pub struct DumpOptions {
     pub compression: DumpCompression,
     #[serde(default)]
     pub content: DumpContent,
-    /// DROP TABLE IF EXISTS antes do CREATE (se content inclui structure).
+    /// DROP TABLE IF EXISTS before CREATE (if content includes structure).
     #[serde(default = "default_true")]
     pub drop_before_create: bool,
-    /// Multi-row INSERT extended.
+    /// Multi-row extended INSERT.
     #[serde(default = "default_true")]
     pub extended_inserts: bool,
-    /// Lista de colunas no INSERT (recomendado).
+    /// List of columns in the INSERT (recommended).
     #[serde(default = "default_true")]
     pub complete_inserts: bool,
-    /// BLOB como 0xABCD — recomendado.
+    /// BLOB as 0xABCD — recommended.
     #[serde(default = "default_true")]
     pub hex_blob: bool,
-    /// Inclui `CREATE DATABASE IF NOT EXISTS schema` no header.
+    /// Include `CREATE DATABASE IF NOT EXISTS schema` in the header.
     #[serde(default)]
     pub create_schema: bool,
-    /// Chunk pra paginar SELECT na origem.
+    /// Chunk used to paginate SELECT on the source.
     #[serde(default = "default_chunk")]
     pub chunk_size: u64,
-    /// Max bytes por INSERT antes de quebrar em outro statement.
+    /// Max bytes per INSERT before breaking into another statement.
     #[serde(default = "default_max_stmt_kb")]
     pub max_statement_size_kb: u64,
 }
@@ -201,19 +201,19 @@ pub struct DumpDone {
 
 // ---------------------------------------------------------------- writer
 
-/// Abstração de escrita — esconde se é SQL único ou ZIP. O caller
-/// chama `begin_file`/`write`/`end_file` e o writer roteia pro destino.
-// Uma única instância por dump; não vai pra Vec nem hot loop — o
-// overhead de 377 bytes não justifica Box (clippy::large_enum_variant).
+/// Write abstraction — hides whether it's a single SQL or a ZIP. The caller
+/// invokes `begin_file`/`write`/`end_file` and the writer routes to the target.
+// A single instance per dump; doesn't go into a Vec or hot loop — the
+// 377-byte overhead doesn't justify Box (clippy::large_enum_variant).
 #[allow(clippy::large_enum_variant)]
 enum DumpSink {
-    /// Tudo num único arquivo.
+    /// Everything in a single file.
     Sql(std::fs::File),
-    /// ZIP com múltiplas entries.
+    /// ZIP with multiple entries.
     Zip {
         zip: zip::ZipWriter<std::fs::File>,
         options: SimpleFileOptions,
-        /// True quando uma entry tá aberta — evita corromper o archive.
+        /// True when an entry is open — prevents corrupting the archive.
         entry_open: bool,
     },
 }
@@ -239,8 +239,8 @@ impl DumpSink {
         }
     }
 
-    /// Começa um novo "arquivo lógico" (entry no ZIP, ou só um separador
-    /// em SQL). Nome de entry só é usado no ZIP.
+    /// Starts a new "logical file" (entry in the ZIP, or just a separator
+    /// in SQL). The entry name is only used in the ZIP.
     fn begin_file(&mut self, entry_name: &str) -> Result<(), String> {
         match self {
             DumpSink::Sql(_) => Ok(()),
@@ -301,13 +301,13 @@ pub async fn run_dump(
 
     let mut sink = DumpSink::open(&opts)?;
 
-    // Header geral (SQL único) — disclaimer + flags de sessão pro import.
+    // Overall header (single SQL) — disclaimer + session flags for the import.
     let preamble = build_preamble(&opts, &conn_label, source_is_pg);
     if matches!(opts.format, DumpFormat::Sql) {
         sink.begin_file("dump.sql")?;
         sink.write(preamble.as_bytes())?;
     } else {
-        // Um arquivo `00_header.sql` no ZIP com o preamble.
+        // A `00_header.sql` file in the ZIP with the preamble.
         sink.begin_file("00_header.sql")?;
         sink.write(preamble.as_bytes())?;
         sink.end_file()?;
@@ -322,7 +322,7 @@ pub async fn run_dump(
             break;
         }
 
-        // Resolve lista efetiva de tabelas.
+        // Resolve the effective list of tables.
         let tables_all = source
             .list_tables(&scope.schema)
             .await
@@ -333,8 +333,8 @@ pub async fn run_dump(
             scope.tables.clone()
         };
 
-        // CREATE DATABASE/SCHEMA (opcional). MySQL usa DATABASE + USE,
-        // PG usa SCHEMA + search_path.
+        // CREATE DATABASE/SCHEMA (optional). MySQL uses DATABASE + USE,
+        // PG uses SCHEMA + search_path.
         if opts.create_schema {
             let sql = if source_is_pg {
                 format!(
@@ -403,7 +403,7 @@ pub async fn run_dump(
         }
     }
 
-    // Footer — restaura checks no import.
+    // Footer — restores checks on import.
     let footer: &[u8] = if source_is_pg {
         b"\n"
     } else {
@@ -417,7 +417,7 @@ pub async fn run_dump(
         sink.end_file()?;
     }
 
-    // Finaliza o arquivo — ZIP fecha o diretório central, SQL só flush.
+    // Finalize the file — ZIP closes the central directory, SQL just flushes.
     sink.finish()?;
 
     let done = DumpDone {
@@ -448,7 +448,7 @@ fn build_preamble(
         .collect::<Vec<_>>()
         .join(", ");
     let server_type = if source_is_pg { "PostgreSQL" } else { "MySQL" };
-    // Session flags só fazem sentido em MySQL.
+    // Session flags only make sense on MySQL.
     let session_flags = if source_is_pg {
         ""
     } else {
@@ -493,10 +493,10 @@ async fn dump_one_table(
     let qi = |s: &str| source.quote_ident(s);
     let pg_mode = source.dialect() == "postgres";
 
-    // 1. Estrutura (DDL) — se conteúdo pede.
+    // 1. Structure (DDL) — if content requests it.
     if matches!(opts.content, DumpContent::Structure | DumpContent::Both) {
-        // `get_table_ddl` delega pro driver — MySQL usa SHOW CREATE,
-        // PG reconstrói via introspection.
+        // `get_table_ddl` delegates to the driver — MySQL uses SHOW CREATE,
+        // PG reconstructs via introspection.
         let ddl = source
             .get_table_ddl(schema, table)
             .await
@@ -504,8 +504,8 @@ async fn dump_one_table(
 
         sink.write(section_header("Table structure for", table).as_bytes())?;
         if opts.drop_before_create {
-            // PG: CASCADE remove FKs que bloqueariam o DROP. MySQL não
-            // aceita CASCADE e usa FOREIGN_KEY_CHECKS=0 do preamble.
+            // PG: CASCADE removes FKs that would block the DROP. MySQL doesn't
+            // accept CASCADE and uses FOREIGN_KEY_CHECKS=0 from the preamble.
             let cascade = if pg_mode { " CASCADE" } else { "" };
             sink.write(
                 format!(
@@ -516,18 +516,18 @@ async fn dump_one_table(
                 .as_bytes(),
             )?;
         }
-        // Normaliza: driver pode ou não incluir `;` no fim. Trim + append.
+        // Normalize: the driver may or may not include `;` at the end. Trim + append.
         let trimmed = ddl.trim().trim_end_matches(';');
         sink.write(trimmed.as_bytes())?;
         sink.write(b";\n\n")?;
     }
 
-    // 2. Dados — se conteúdo pede.
+    // 2. Data — if content requests it.
     if !matches!(opts.content, DumpContent::Data | DumpContent::Both) {
         return Ok(0);
     }
 
-    // Conta total pra progresso.
+    // Count total for progress.
     let total = source
         .count_table_rows(schema, table)
         .await

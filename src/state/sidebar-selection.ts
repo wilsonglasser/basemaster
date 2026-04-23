@@ -3,9 +3,9 @@ import { create } from "zustand";
 import type { Uuid } from "@/lib/types";
 
 /**
- * Seleção atual na sidebar (arvore de conexões). Só um nó por vez.
- * Usado por atalhos globais (Ctrl+C copia a tabela, Ctrl+V cola em
- * connection/schema selecionados) e por estilo de "selected".
+ * Current selection in the sidebar (connection tree). Only one node at a time.
+ * Used by global shortcuts (Ctrl+C copies the table, Ctrl+V pastes into
+ * the selected connection/schema) and by "selected" styling.
  */
 export type SidebarSelection =
   | {
@@ -36,7 +36,7 @@ export type SidebarSelection =
       kind: "category";
       connectionId: Uuid;
       schema: string;
-      /** Identifica qual categoria no schema foi selecionada. */
+      /** Identifies which category within the schema was selected. */
       category: "tables" | "views" | "queries";
       color?: string | null;
     };

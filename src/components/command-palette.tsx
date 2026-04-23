@@ -29,7 +29,7 @@ interface CommandItem {
   kbd?: string | null;
   icon: React.ReactNode;
   run: () => void;
-  /** Score de relevância ao ordenar — maior vem primeiro. */
+  /** Relevance score used when sorting — higher comes first. */
   weight?: number;
 }
 
@@ -66,7 +66,7 @@ function Palette({ onClose }: { onClose: () => void }) {
     const it = filtered[idx];
     if (!it) return;
     onClose();
-    // Dar um tick pro modal fechar antes da ação (evita foco retornar errado).
+    // Give a tick for the modal to close before the action (avoids focus returning wrong).
     setTimeout(() => it.run(), 0);
   };
 
@@ -159,7 +159,7 @@ function useCommands(): CommandItem[] {
   return useMemo(() => {
     const out: CommandItem[] = [];
 
-    // Atalhos / ações globais — com label e binding como hint.
+    // Global shortcuts/actions — with label and binding as hint.
     for (const a of SHORTCUTS) {
       if (a.scope !== "global") continue;
       const kbd = resolve(a.id);
@@ -174,7 +174,7 @@ function useCommands(): CommandItem[] {
       });
     }
 
-    // Conexões — abrir/focar
+    // Connections — open/focus
     for (const c of connections) {
       out.push({
         id: `conn:${c.id}`,
@@ -207,7 +207,7 @@ function useCommands(): CommandItem[] {
       });
     }
 
-    // Schemas + tabelas cacheados
+    // Cached schemas + tables
     for (const c of connections) {
       const cache = caches[c.id];
       if (!cache) continue;
@@ -244,7 +244,7 @@ function useCommands(): CommandItem[] {
       }
     }
 
-    // Tabs abertas
+    // Open tabs
     for (const tab of tabs) {
       out.push({
         id: `tab:${tab.id}`,
@@ -256,7 +256,7 @@ function useCommands(): CommandItem[] {
       });
     }
 
-    // Atalhos úteis
+    // Useful shortcuts
     out.push({
       id: "aux:settings",
       label: t("commandPalette.openSettings"),
@@ -315,16 +315,16 @@ function useCommands(): CommandItem[] {
 }
 
 function dispatchShortcutAction(_id: string) {
-  // Para actions de keyboard scope="global", o handler tá montado via
-  // useShortcut e responde a uma sintetização de KeyboardEvent. Como
-  // temos o actionId direto, o jeito mais simples é achar o handler
-  // via binding atual e disparar um KeyboardEvent.
+  // For keyboard actions with scope="global", the handler is wired via
+  // useShortcut and responds to a synthetic KeyboardEvent. Since we have
+  // the actionId directly, the simplest path is to resolve the current
+  // binding and dispatch a KeyboardEvent.
   //
-  // Alternativa futura: fazer `useShortcut` também exportar um
-  // dispatch(actionId) direto. Pra agora, fallback pro binding.
+  // Future alternative: have `useShortcut` also export a direct
+  // dispatch(actionId). For now, fall back to the binding.
   const binding = useShortcuts.getState().resolve(_id);
   if (!binding) return;
-  // Constrói um KeyboardEvent coerente.
+  // Build a coherent KeyboardEvent.
   const parts = binding.split("+");
   const key = parts[parts.length - 1];
   const mods = new Set(parts.slice(0, -1).map((m) => m.toLowerCase()));
@@ -339,7 +339,7 @@ function dispatchShortcutAction(_id: string) {
   document.dispatchEvent(ev);
 }
 
-/** Fuzzy-ish: score soma hits de palavras + prefixo + weight. */
+/** Fuzzy-ish: score sums word hits + prefix + weight. */
 function useFilter(items: CommandItem[], q: string): CommandItem[] {
   return useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -358,7 +358,7 @@ function useFilter(items: CommandItem[], q: string): CommandItem[] {
           matchedAll = false;
           break;
         }
-        score += 10 - Math.min(9, idx); // bônus por posição
+        score += 10 - Math.min(9, idx); // position bonus
         if (hay.startsWith(t)) score += 5;
       }
       if (!matchedAll) continue;

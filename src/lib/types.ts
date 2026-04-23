@@ -1,5 +1,5 @@
-// Espelha os tipos serializados pelo backend Rust (serde).
-// Manter em sincronia com:
+// Mirrors types serialized by the Rust backend (serde).
+// Keep in sync with:
 //   crates/core/src/{connection,schema,value}.rs
 //   crates/store/src/connections.rs
 
@@ -252,7 +252,7 @@ export interface ExecuteResult {
 
 export interface SchemaSnapshot {
   tables: TableInfo[];
-  /** table name → columns (na ordem de declaração) */
+  /** table name → columns (in declaration order) */
   columns: Record<string, Column[]>;
 }
 
@@ -401,7 +401,7 @@ export interface ImportDone {
 export interface TableWorkerProgress {
   table: string;
   worker_id: number;
-  /** Bounds de PK (inclusivo, exclusivo). String pra suportar i128. */
+  /** PK bounds (inclusive, exclusive). String to support i128. */
   low_pk: string;
   high_pk: string;
   done: number;
@@ -442,10 +442,10 @@ export type FilterOp =
 export interface Filter {
   column: string;
   op: FilterOp;
-  /** Ignorado pra is_null/is_not_null/is_empty/is_not_empty.
-   *  Pra in/not_in: string CSV. Pra custom: fragmento SQL raw. */
+  /** Ignored for is_null/is_not_null/is_empty/is_not_empty.
+   *  For in/not_in: CSV string. For custom: raw SQL fragment. */
   value?: Value | null;
-  /** Segundo valor, só em between/not_between. */
+  /** Second value, only for between/not_between. */
   value2?: Value | null;
 }
 

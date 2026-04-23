@@ -6,9 +6,9 @@ import { useShortcuts } from "@/state/shortcuts";
 
 type Handler = (e: KeyboardEvent) => void;
 
-/** Registry em memória de handlers por actionId. Handlers recentes têm
- *  prioridade (stack LIFO) — permite que componentes mais específicos
- *  sobrescrevam comportamento global quando montados. */
+/** In-memory registry of handlers per actionId. Recent handlers have
+ *  priority (LIFO stack) — lets more specific components override
+ *  global behavior when mounted. */
 const handlers: Record<string, Handler[]> = {};
 
 function push(actionId: string, h: Handler) {
@@ -21,7 +21,7 @@ function remove(actionId: string, h: Handler) {
   if (i >= 0) arr.splice(i, 1);
 }
 
-/** Registra handler pra um action enquanto o componente tá montado. */
+/** Register a handler for an action while the component is mounted. */
 export function useShortcut(actionId: string, handler: Handler) {
   useEffect(() => {
     const h: Handler = (e) => handler(e);
@@ -35,14 +35,14 @@ function targetIsEditable(target: EventTarget | null): boolean {
   const tag = target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") return true;
   if (target.isContentEditable) return true;
-  // CodeMirror monta divs contentEditable; checamos ancestrais também.
+  // CodeMirror mounts contentEditable divs; check ancestors too.
   if (target.closest(".cm-editor")) return true;
   return false;
 }
 
-/** Retorna bindings alternativos pro mesmo evento — ex: `Mod+Shift++`
- *  também casa com `Mod+=` pra zoom-in (+ vem de Shift+= na maioria dos
- *  teclados). */
+/** Return alternate bindings for the same event — e.g. `Mod+Shift++`
+ *  also matches `Mod+=` for zoom-in (+ comes from Shift+= on most
+ *  keyboards). */
 function alternativeBindings(primary: string): string[] {
   const alts: string[] = [];
   // Zoom in: Mod+= / Mod++ / Mod+Shift+= / Mod+Shift++
@@ -55,7 +55,7 @@ function alternativeBindings(primary: string): string[] {
   return alts;
 }
 
-/** Instala o listener global. Chamar uma vez no App root. */
+/** Install the global listener. Call once in the App root. */
 export function installGlobalShortcuts() {
   const onKey = (e: KeyboardEvent) => {
     const binding = eventToBinding(e);
@@ -63,7 +63,7 @@ export function installGlobalShortcuts() {
 
     const index = useShortcuts.getState().indexByBinding();
     let ids = index.get(binding);
-    // Fallback pra variantes com Shift (teclados que exigem Shift pra =).
+    // Fallback for Shift variants (keyboards that require Shift for =).
     if (!ids || ids.length === 0) {
       for (const alt of alternativeBindings(binding)) {
         const found = index.get(alt);
@@ -80,8 +80,8 @@ export function installGlobalShortcuts() {
     for (const id of ids) {
       const action = actionById(id);
       if (!action) continue;
-      // Editor/Grid-scoped actions não disparam via listener global —
-      // cada editor tem seu próprio keymap.
+      // Editor/Grid-scoped actions don't fire through the global listener —
+      // each editor has its own keymap.
       if (action.scope !== "global") continue;
       if (editable && !action.allowInInputs) continue;
 
@@ -89,7 +89,7 @@ export function installGlobalShortcuts() {
       if (!arr || arr.length === 0) continue;
       e.preventDefault();
       e.stopPropagation();
-      // LIFO: mais recente leva.
+      // LIFO: most recent wins.
       arr[arr.length - 1](e);
       return;
     }

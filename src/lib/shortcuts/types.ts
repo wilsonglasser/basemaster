@@ -1,7 +1,7 @@
-/** Scope controla onde o atalho dispara:
- *  - "global": em qualquer lugar (exceto inputs, a não ser que haja Mod)
- *  - "editor": somente dentro do CodeMirror (wire via keymap local)
- *  - "grid": somente dentro da grid (foco no canvas da grid) */
+/** Scope controls where the shortcut fires:
+ *  - "global": anywhere (except inputs, unless Mod is present)
+ *  - "editor": only inside CodeMirror (wired via local keymap)
+ *  - "grid": only inside the grid (focus on grid canvas) */
 export type ShortcutScope = "global" | "editor" | "grid";
 
 export interface ShortcutAction {
@@ -9,9 +9,9 @@ export interface ShortcutAction {
   category: string;
   label: string;
   description?: string;
-  /** Binding canônico default ("Mod+Shift+F", "F5", etc.). null = sem default. */
+  /** Canonical default binding ("Mod+Shift+F", "F5", etc.). null = no default. */
   defaultBinding: string | null;
   scope: ShortcutScope;
-  /** Se true, dispara mesmo quando foco em input/textarea (útil p/ Ctrl+K). */
+  /** If true, fires even when focus is in input/textarea (useful for Ctrl+K). */
   allowInInputs?: boolean;
 }

@@ -7,9 +7,9 @@ export interface PendingApproval {
   kind: ApprovalKind;
   title: string;
   description: string;
-  /** SQL a mostrar em bloco de código (kind = "sql"). */
+  /** SQL to show in a code block (kind = "sql"). */
   sql?: string;
-  /** Metadata pra UI (ex: quantas linhas, qual tabela). */
+  /** Metadata for UI (e.g. how many rows, which table). */
   meta?: Record<string, string | number | null | undefined>;
   resolve: (approved: boolean) => void;
 }
@@ -27,7 +27,7 @@ export const useApproval = create<ApprovalState>((set, get) => ({
   requestApproval(req) {
     return new Promise<boolean>((resolve) => {
       const prev = get().pending;
-      // Só um em voo por vez — se chegar outro, nega o anterior.
+      // Only one in flight at a time — if another arrives, deny the previous.
       if (prev) prev.resolve(false);
       set({
         pending: {

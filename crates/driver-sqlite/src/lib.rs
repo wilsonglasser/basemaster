@@ -1,8 +1,8 @@
 //! basemaster-driver-sqlite
 //!
-//! Implementação SQLite da trait [`basemaster_core::Driver`].
-//! SQLite tem UMA database por conexão — tratamos como schema "main".
-//! `ConnectionConfig.host` é usado como file path (user/port ignorados).
+//! SQLite implementation of the [`basemaster_core::Driver`] trait.
+//! SQLite has ONE database per connection — we treat it as schema "main".
+//! `ConnectionConfig.host` is used as the file path (user/port ignored).
 
 use std::time::Instant;
 
@@ -58,7 +58,7 @@ impl Driver for SqliteDriver {
     }
 
     async fn connect(&self, config: &ConnectionConfig) -> Result<()> {
-        // host carrega o file path.
+        // host carries the file path.
         let path = config.host.trim();
         if path.is_empty() {
             return Err(Error::Connection("SQLite: file path vazio".into()));
@@ -69,9 +69,9 @@ impl Driver for SqliteDriver {
             .foreign_keys(true)
             .disable_statement_logging();
 
-        // SQLCipher: PRAGMA key tem que ser o PRIMEIRO comando na conexão.
-        // Com sqlx vanilla (sem feature sqlcipher), PRAGMA key é no-op e
-        // o DB criptografado não abrirá. Futuro: enable `bundled-sqlcipher`.
+        // SQLCipher: PRAGMA key must be the FIRST command on the connection.
+        // With vanilla sqlx (without the sqlcipher feature), PRAGMA key is a
+        // no-op and the encrypted DB won't open. Future: enable `bundled-sqlcipher`.
         if let Some(pw) = config.password.as_ref().filter(|s| !s.is_empty()) {
             let escaped = pw.replace('\'', "''");
             opts = opts.pragma("key", format!("'{escaped}'"));
@@ -132,7 +132,7 @@ impl Driver for SqliteDriver {
                 "view" => TableKind::View,
                 _ => TableKind::Table,
             };
-            // row_estimate via COUNT(*) é caro — deixa None; UI pede sob demanda.
+            // row_estimate via COUNT(*) is expensive — leave None; UI asks on demand.
             out.push(TableInfo {
                 schema: "main".to_string(),
                 name,
@@ -167,7 +167,7 @@ impl Driver for SqliteDriver {
                 nullable: notnull == 0,
                 default: dflt,
                 is_primary_key: pk > 0,
-                is_auto_increment: false, // SQLite: INTEGER PRIMARY KEY é implícito
+                is_auto_increment: false, // SQLite: INTEGER PRIMARY KEY is implicit
                 comment: None,
             });
         }
@@ -222,7 +222,7 @@ impl Driver for SqliteDriver {
             .await
             .map_err(|e| Error::Sql(e.to_string()))?;
 
-        // Agrupa por `id` (cada FK pode ter múltiplas colunas).
+        // Group by `id` (each FK may have multiple columns).
         use std::collections::BTreeMap;
         let mut by_id: BTreeMap<i64, ForeignKeyInfo> = BTreeMap::new();
         for row in rows {
@@ -445,8 +445,8 @@ fn bind_value<'q>(
     }
 }
 
-/// Classifica o declared type do SQLite em `ColumnType`. SQLite usa
-/// "type affinity" — o tipo declarado é só uma dica.
+/// Classifies SQLite's declared type into `ColumnType`. SQLite uses
+/// "type affinity" — the declared type is just a hint.
 fn parse_column_type(raw: &str) -> ColumnType {
     let lower = raw.trim().to_lowercase();
     if lower.is_empty() {
@@ -502,7 +502,7 @@ fn decode_row(row: &SqliteRow) -> Vec<Value> {
 }
 
 fn decode_one(row: &SqliteRow, i: usize, type_name: &str) -> Value {
-    // Null check primeiro.
+    // Null check first.
     if let Ok(raw) = row.try_get_raw(i) {
         if raw.is_null() {
             return Value::Null;
@@ -510,7 +510,7 @@ fn decode_one(row: &SqliteRow, i: usize, type_name: &str) -> Value {
     }
 
     let lower = type_name.to_lowercase();
-    // Tipos SQLite: "INTEGER", "TEXT", "REAL", "BLOB", "NULL" ou o declared type.
+    // SQLite types: "INTEGER", "TEXT", "REAL", "BLOB", "NULL" or the declared type.
     if lower.contains("int") {
         if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(i) {
             return Value::Int(v);
@@ -531,7 +531,7 @@ fn decode_one(row: &SqliteRow, i: usize, type_name: &str) -> Value {
             return Value::Bool(v);
         }
     }
-    // Date/Time: sqlite armazena como TEXT. Tenta parse; senão, string.
+    // Date/Time: sqlite stores as TEXT. Try to parse; otherwise, string.
     if lower.contains("datetime") || lower.contains("timestamp") {
         if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
             if let Ok(dt) = s.parse::<DateTime<Utc>>() {
@@ -563,7 +563,7 @@ fn decode_one(row: &SqliteRow, i: usize, type_name: &str) -> Value {
         }
     }
 
-    // Fallback geral: tenta String → Int → Float → Bytes → Null.
+    // Generic fallback: try String → Int → Float → Bytes → Null.
     if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
         return Value::String(s);
     }

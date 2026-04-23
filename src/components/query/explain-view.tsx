@@ -50,7 +50,7 @@ interface ExplainViewProps {
   driver: "mysql" | "postgres" | string;
   raw: unknown;
   rawText?: string;
-  /** Colunas + rows do EXPLAIN clássico (MySQL) — formato Grid do Navicat. */
+  /** Columns + rows of classic EXPLAIN (MySQL) — Navicat-style Grid format. */
   classicColumns?: string[];
   classicRows?: Value[][];
   sql: string;
@@ -264,7 +264,7 @@ function ParseFailedMsg() {
   );
 }
 
-// ---------- Grid (EXPLAIN clássico) ----------
+// ---------- Grid (classic EXPLAIN) ----------
 
 function GridMode({ columns, rows }: { columns: string[]; rows: Value[][] }) {
   return (
@@ -325,8 +325,8 @@ function FlameMode({ rows }: { rows: FlatRow[] }) {
   const maxDepth = Math.max(0, ...rows.map((r) => r.depth));
   const [hovered, setHovered] = useState<ExplainNode | null>(null);
 
-  // Calcula faixa por depth: largura proporcional ao custo do nó relativo
-  // ao pai (ou ao total). Cada depth é uma linha horizontal.
+  // Compute range per depth: width proportional to the node's cost
+  // relative to the parent (or total). Each depth is a horizontal row.
   const layout = useMemo(() => buildFlame(rows), [rows]);
 
   return (

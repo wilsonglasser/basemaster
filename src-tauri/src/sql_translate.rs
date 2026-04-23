@@ -1,15 +1,15 @@
-//! Normalizador de SQL entre dialetos. Pipeline do import:
-//!   `detect_dialect(sql)` → descobre origem pelo conteúdo
-//!   `normalize_for(sql, target)` → traduz se source != target
+//! SQL normalizer between dialects. Import pipeline:
+//!   `detect_dialect(sql)` → figures out the source from the content
+//!   `normalize_for(sql, target)` → translates if source != target
 //!
-//! Escopo: cobrir o que `mysqldump`/`pg_dump` geram pra casos comuns.
-//! Não é um parser completo — regex + scanner string-aware.
+//! Scope: cover what `mysqldump`/`pg_dump` produce for common cases.
+//! Not a full parser — regex + string-aware scanner.
 //!
-//! Direções:
-//!   MySQL → PostgreSQL : robusto (cobre maioria dos dumps)
-//!   PostgreSQL → MySQL : básico (tipos principais + identifier quoting)
+//! Directions:
+//!   MySQL → PostgreSQL : robust (covers most dumps)
+//!   PostgreSQL → MySQL : basic (main types + identifier quoting)
 //!   MySQL → MySQL / PG → PG : pass-through
-//!   Unknown → X : pass-through (risco do usuário)
+//!   Unknown → X : pass-through (user's risk)
 
 use std::sync::OnceLock;
 
@@ -32,12 +32,12 @@ impl Dialect {
     }
 }
 
-/// Scaneia até 16KB do início do SQL procurando tokens que denunciam
-/// o dialeto. Heurística pragmática — dumps reais dão "fingerprint"
-/// claro logo no header.
+/// Scans up to 16KB from the start of the SQL looking for tokens that
+/// reveal the dialect. Pragmatic heuristic — real dumps give a clear
+/// "fingerprint" right in the header.
 pub fn detect_dialect(sql: &str) -> Dialect {
     let sample = &sql[..sql.len().min(16 * 1024)];
-    // Backtick quoting é muito específico do MySQL.
+    // Backtick quoting is very MySQL-specific.
     if sample.contains('`') {
         return Dialect::Mysql;
     }
@@ -88,9 +88,9 @@ pub fn detect_dialect(sql: &str) -> Dialect {
     Dialect::Unknown
 }
 
-/// Normaliza o SQL pra rodar no target. Se source == target (ou
-/// indetectável), retorna sem mexer. O import chama isso antes de
-/// cada execute quando acha que precisa.
+/// Normalizes the SQL to run on the target. If source == target (or
+/// undetectable), returns it untouched. The import calls this before
+/// each execute when it thinks it needs to.
 pub fn normalize_for(sql: &str, source: Dialect, target: Dialect) -> String {
     match (source, target) {
         (Dialect::Mysql, Dialect::Postgres) => mysql_to_postgres(sql),
@@ -112,7 +112,7 @@ fn mysql_to_postgres(sql: &str) -> String {
     out
 }
 
-/// `` `foo` `` → `"foo"` respeitando strings aspeadas.
+/// `` `foo` `` → `"foo"` respecting quoted strings.
 fn rewrite_backticks_to_double_quotes(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let bytes = sql.as_bytes();
@@ -193,7 +193,7 @@ fn mysql_to_pg_transforms() -> &'static [(Regex, &'static str)] {
             (Regex::new(r"(?i)\s*ROW_FORMAT\s*=\s*\w+").unwrap(), ""),
             (Regex::new(r"(?i)\s*AUTO_INCREMENT\s*=\s*\d+").unwrap(), ""),
             (Regex::new(r"(?i)\s*COMMENT\s*=\s*'(?:[^']|'')*'").unwrap(), ""),
-            // MySQL conditional comments: `/*!40000 ... */` — mantém o conteúdo.
+            // MySQL conditional comments: `/*!40000 ... */` — keep the content.
             (Regex::new(r"/\*!\d*\s*").unwrap(), ""),
             (Regex::new(r"\*/").unwrap(), ""),
             // Types.
@@ -213,10 +213,10 @@ fn mysql_to_pg_transforms() -> &'static [(Regex, &'static str)] {
             (Regex::new(r"(?i)\bblob\b").unwrap(), "BYTEA"),
             // ENUM('a','b') / SET('a','b') → TEXT.
             (Regex::new(r"(?is)\b(?:ENUM|SET)\s*\([^)]*\)").unwrap(), "TEXT"),
-            // Limpa UNSIGNED / ZEROFILL.
+            // Strip UNSIGNED / ZEROFILL.
             (Regex::new(r"(?i)\s+UNSIGNED\b").unwrap(), ""),
             (Regex::new(r"(?i)\s+ZEROFILL\b").unwrap(), ""),
-            // ON UPDATE CURRENT_TIMESTAMP — PG precisaria de trigger.
+            // ON UPDATE CURRENT_TIMESTAMP — PG would need a trigger.
             (
                 Regex::new(
                     r"(?i)\s+ON\s+UPDATE\s+CURRENT_TIMESTAMP(?:\(\s*\d*\s*\))?",
@@ -224,9 +224,9 @@ fn mysql_to_pg_transforms() -> &'static [(Regex, &'static str)] {
                 .unwrap(),
                 "",
             ),
-            // USING BTREE/HASH — PG infere.
+            // USING BTREE/HASH — PG infers it.
             (Regex::new(r"(?i)\s+USING\s+(BTREE|HASH)\b").unwrap(), ""),
-            // KEY/INDEX/FULLTEXT dentro de CREATE TABLE — linha inteira fora.
+            // KEY/INDEX/FULLTEXT inside CREATE TABLE — drop the whole line.
             (
                 Regex::new(
                     r#"(?im)^\s*(?:KEY|INDEX|FULLTEXT\s+KEY|FULLTEXT\s+INDEX|SPATIAL\s+KEY|SPATIAL\s+INDEX)\s+"?\w+"?\s*\([^)]*\),?\s*$"#,
@@ -240,7 +240,7 @@ fn mysql_to_pg_transforms() -> &'static [(Regex, &'static str)] {
             (Regex::new(r"(?i)\bSET\s+NAMES\s+\w+\s*;").unwrap(), ""),
             // MySQL string escape \' → ANSI ''.
             (Regex::new(r"\\'").unwrap(), "''"),
-            // Trailing comma antes de `)` — sobra de KEY removido.
+            // Trailing comma before `)` — leftover from a removed KEY.
             (Regex::new(r",\s*\)").unwrap(), "\n)"),
         ]
     })
@@ -272,7 +272,7 @@ fn auto_increment_to_identity(sql: &str) -> String {
 // ---------------------------------------------------------------- PG→MySQL
 
 fn postgres_to_mysql(sql: &str) -> String {
-    // 1. `"foo"` → `` `foo` `` (mas respeita strings).
+    // 1. `"foo"` → `` `foo` `` (but respects strings).
     let step1 = rewrite_double_quotes_to_backticks(sql);
     let mut out = step1;
     for (re, rep) in pg_to_mysql_transforms() {
@@ -282,9 +282,9 @@ fn postgres_to_mysql(sql: &str) -> String {
 }
 
 fn rewrite_double_quotes_to_backticks(sql: &str) -> String {
-    // PG usa "..." pra identificadores E também pra strings em alguns
-    // contextos (quando ANSI_QUOTES). Aqui assumimos o padrão de dump:
-    // strings em '...', identificadores em "...". Transform 1-pra-1.
+    // PG uses "..." for identifiers AND also for strings in some
+    // contexts (when ANSI_QUOTES). Here we assume the dump default:
+    // strings in '...', identifiers in "...". 1-to-1 transform.
     let mut out = String::with_capacity(sql.len());
     let bytes = sql.as_bytes();
     let mut i = 0;
@@ -292,7 +292,7 @@ fn rewrite_double_quotes_to_backticks(sql: &str) -> String {
     while i < len {
         let b = bytes[i];
         if b == b'\'' {
-            // String — copia até fechar.
+            // String — copy until it closes.
             out.push('\'');
             i += 1;
             while i < len {
@@ -320,7 +320,7 @@ fn rewrite_double_quotes_to_backticks(sql: &str) -> String {
             continue;
         }
         if b == b'"' {
-            // Identificador → backtick.
+            // Identifier → backtick.
             i += 1;
             let mut ident = String::new();
             while i < len {
@@ -381,13 +381,13 @@ fn pg_to_mysql_transforms() -> &'static [(Regex, &'static str)] {
                 Regex::new(r"(?i)\s+GENERATED\s+(BY\s+DEFAULT|ALWAYS)\s+AS\s+IDENTITY(?:\s*\([^)]*\))?").unwrap(),
                 " AUTO_INCREMENT",
             ),
-            // `::type` cast — remove (MySQL usa CAST() ou conversão implícita).
+            // `::type` cast — remove (MySQL uses CAST() or implicit conversion).
             (Regex::new(r"::\s*\w+(?:\s*\(\s*\d+\s*(?:,\s*\d+)?\s*\))?").unwrap(), ""),
             // `CREATE SCHEMA` → `CREATE DATABASE`.
             (Regex::new(r"(?i)\bCREATE\s+SCHEMA\b").unwrap(), "CREATE DATABASE"),
-            // `SET search_path TO ...;` → ignora.
+            // `SET search_path TO ...;` → ignore.
             (Regex::new(r"(?i)\bSET\s+search_path\s+TO[^;]*;").unwrap(), ""),
-            // `OWNER TO ...` — sem análogo simples; strip.
+            // `OWNER TO ...` — no simple analog; strip.
             (Regex::new(r"(?i)\s+OWNER\s+TO\s+\w+").unwrap(), ""),
         ]
     })
@@ -468,8 +468,8 @@ mod tests {
 
     #[test]
     fn mysql_to_pg_preserves_backticks_inside_strings() {
-        // Dentro de 'string literal' os backticks não são identificadores
-        // e precisam ficar intocados.
+        // Inside 'string literal' the backticks aren't identifiers
+        // and need to stay untouched.
         let sql = "SELECT 'a `backtick` inside' FROM t;";
         let out = normalize_for(sql, Dialect::Mysql, Dialect::Postgres);
         assert!(

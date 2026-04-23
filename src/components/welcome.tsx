@@ -4,6 +4,7 @@ import { Container, Plug, Upload } from "lucide-react";
 
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
+import { appAlert, appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useDockerDiscover } from "@/state/docker-discover";
 import { useT } from "@/state/i18n";
@@ -41,21 +42,21 @@ export function Welcome() {
       const payload = await ipc.portability.importParse(path);
       const count = payload.connections.length;
       if (count === 0) {
-        alert(t("welcome.fileHasNoConnections"));
+        void appAlert(t("welcome.fileHasNoConnections"));
         return;
       }
       const folders = payload.folders.length
         ? t("welcome.foldersSuffix", { n: payload.folders.length })
         : "";
-      const ok = window.confirm(
+      const ok = await appConfirm(
         t("welcome.confirmImport", { count, folders }),
       );
       if (!ok) return;
       const applied = await ipc.portability.importApply(payload);
-      alert(t("welcome.imported", { count: applied }));
+      void appAlert(t("welcome.imported", { count: applied }));
       await refreshConnections();
     } catch (e) {
-      alert(t("welcome.importFailed", { error: String(e) }));
+      void appAlert(t("welcome.importFailed", { error: String(e) }));
     }
   };
 

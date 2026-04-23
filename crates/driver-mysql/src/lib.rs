@@ -1,7 +1,7 @@
 //! basemaster-driver-mysql
 //!
-//! Implementação MySQL/MariaDB da trait [`basemaster_core::Driver`].
-//! Cada [`MysqlDriver`] encapsula UMA conexão lógica (pool sqlx::MySql).
+//! MySQL/MariaDB implementation of the [`basemaster_core::Driver`] trait.
+//! Each [`MysqlDriver`] encapsulates ONE logical connection (sqlx::MySql pool).
 
 use std::time::Instant;
 
@@ -14,10 +14,9 @@ use sqlx::query::Query;
 use sqlx::{Column, ConnectOptions, Row};
 use tokio::sync::RwLock;
 
-/// Lê uma coluna como `String`, com fallback para `Vec<u8>` decodificado
-/// como UTF-8. Necessário porque o MySQL às vezes retorna colunas do
-/// `information_schema` como `VARBINARY` (depende de charset/collation
-/// da sessão vs. do schema).
+/// Reads a column as `String`, with fallback to `Vec<u8>` decoded as UTF-8.
+/// Needed because MySQL sometimes returns `information_schema` columns as
+/// `VARBINARY` (depends on session vs. schema charset/collation).
 fn get_str(row: &MySqlRow, idx: usize) -> Option<String> {
     if let Ok(opt) = row.try_get::<Option<String>, _>(idx) {
         return opt;
@@ -99,22 +98,22 @@ impl Driver for MysqlDriver {
             }
         }
 
-        // Silencia o log "slow statement" do sqlx. Em transferência de
-        // dados com BLOBs/embeddings, SELECTs de 1-3s são normais — o
-        // warning só polui e consome CPU formatando a mensagem.
+        // Silence sqlx's "slow statement" log. In data transfers with
+        // BLOBs/embeddings, SELECTs taking 1-3s are normal — the warning
+        // only clutters and consumes CPU formatting the message.
         opts = opts.log_slow_statements(tracing::log::LevelFilter::Off, std::time::Duration::ZERO);
 
         // Timeouts + keepalive:
-        //  - acquire_timeout: quanto esperar por uma conexão livre do pool
-        //  - idle_timeout: conexões ociosas mais velhas são descartadas
-        //    (evita segurar uma conn que o server já matou por wait_timeout)
-        //  - max_lifetime: reciclagem periódica pra pegar DNS novo, etc.
-        //  - test_before_acquire: PING rápido antes de entregar uma conn
-        //    usada — se o server cortou, reabre transparente
+        //  - acquire_timeout: how long to wait for a free connection from the pool
+        //  - idle_timeout: idle connections older than this are discarded
+        //    (avoids holding a conn the server already killed via wait_timeout)
+        //  - max_lifetime: periodic recycling to pick up fresh DNS, etc.
+        //  - test_before_acquire: quick PING before handing out a used conn —
+        //    if the server dropped it, reopens transparently.
         //
-        // O `connect_with` tenta estabelecer a primeira conexão. Em redes
-        // lentas / hosts bloqueados o TCP connect pode travar por MUITO
-        // tempo — envolvemos em timeout explícito pra nunca pendurar a UI.
+        // `connect_with` tries to establish the first connection. On slow
+        // networks / blocked hosts, the TCP connect may hang for a LONG time
+        // — we wrap it in an explicit timeout so we never hang the UI.
         let connect_fut = MySqlPoolOptions::new()
             .max_connections(8)
             .acquire_timeout(std::time::Duration::from_secs(15))
@@ -136,8 +135,8 @@ impl Driver for MysqlDriver {
         *self.pool.write().await = Some(pool.clone());
         *self.default_database.write().await = config.default_database.clone();
 
-        // Keepalive: PING a cada 30s em todas as conns ociosas. Sem isso,
-        // servidores com wait_timeout baixo derrubam conns inativas.
+        // Keepalive: PING every 30s on all idle conns. Without this,
+        // servers with low wait_timeout drop inactive conns.
         tokio::spawn(keepalive_loop(pool));
         Ok(())
     }
@@ -200,12 +199,15 @@ impl Driver for MysqlDriver {
                     Some("VIEW") => TableKind::View,
                     _ => TableKind::Table,
                 };
-                let data: Option<i64> = r.try_get(4).ok().flatten();
-                let index: Option<i64> = r.try_get(5).ok().flatten();
+                // information_schema.TABLES.{DATA,INDEX}_LENGTH and TABLE_ROWS
+                // are BIGINT UNSIGNED — sqlx-mysql requires u64; decoding as
+                // i64 fails silently and returns None (empty Rows/Size).
+                let data: Option<u64> = r.try_get(4).ok().flatten();
+                let index: Option<u64> = r.try_get(5).ok().flatten();
                 let size_bytes = match (data, index) {
-                    (Some(d), Some(i)) => Some((d + i).max(0) as u64),
-                    (Some(d), None) => Some(d.max(0) as u64),
-                    (None, Some(i)) => Some(i.max(0) as u64),
+                    (Some(d), Some(i)) => Some(d.saturating_add(i)),
+                    (Some(d), None) => Some(d),
+                    (None, Some(i)) => Some(i),
                     _ => None,
                 };
                 TableInfo {
@@ -214,10 +216,9 @@ impl Driver for MysqlDriver {
                     kind,
                     engine: get_str(&r, 2),
                     row_estimate: r
-                        .try_get::<Option<i64>, _>(3)
+                        .try_get::<Option<u64>, _>(3)
                         .ok()
-                        .flatten()
-                        .map(|v| v.max(0) as u64),
+                        .flatten(),
                     size_bytes,
                     comment: get_str(&r, 6),
                 }
@@ -302,7 +303,7 @@ impl Driver for MysqlDriver {
         table: &str,
     ) -> Result<Vec<ForeignKeyInfo>> {
         let pool = self.pool().await?;
-        // Junta KEY_COLUMN_USAGE (cols) + REFERENTIAL_CONSTRAINTS (ON DELETE/UPDATE).
+        // Joins KEY_COLUMN_USAGE (cols) + REFERENTIAL_CONSTRAINTS (ON DELETE/UPDATE).
         let rows = sqlx::query(
             "SELECT k.CONSTRAINT_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_SCHEMA,
                     k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME,
@@ -363,7 +364,7 @@ impl Driver for MysqlDriver {
             return Ok(TableOptions::default());
         };
         let collation = get_str(&r, 1);
-        // Deriva charset do prefixo do collation ("utf8mb4_unicode_ci" → "utf8mb4").
+        // Derives charset from the collation prefix ("utf8mb4_unicode_ci" → "utf8mb4").
         let charset = collation
             .as_ref()
             .and_then(|c| c.split_once('_').map(|(head, _)| head.to_string()));
@@ -383,10 +384,10 @@ impl Driver for MysqlDriver {
     async fn query(&self, schema: Option<&str>, sql: &str) -> Result<QueryResult> {
         let pool = self.pool().await?;
 
-        // raw_sql usa o text protocol — evita o ER_UNSUPPORTED_PS (1295)
-        // que aparece em comandos não suportados pelo prepared statement
-        // protocol. Multi-statement (USE; SELECT) roda na mesma conexão
-        // que o pool aloca para a chamada.
+        // raw_sql uses the text protocol — avoids ER_UNSUPPORTED_PS (1295)
+        // that shows up on commands not supported by the prepared statement
+        // protocol. Multi-statement (USE; SELECT) runs on the same connection
+        // the pool allocates for the call.
         let combined = match schema {
             Some(s) => format!("USE `{}`; {}", escape_ident(s), sql),
             None => sql.to_string(),
@@ -415,9 +416,9 @@ impl Driver for MysqlDriver {
         })
     }
 
-    /// Override com filtros + params bindados. O default da trait usaria
-    /// `self.query()` (raw SQL) — aqui usamos `sqlx::query` parametrizado
-    /// pra colar valores do usuário com segurança.
+    /// Override with filters + bound params. The trait default would use
+    /// `self.query()` (raw SQL) — here we use parametrized `sqlx::query`
+    /// to safely splice user values.
     async fn select_table_page(
         &self,
         schema: &str,
@@ -579,8 +580,8 @@ impl Driver for MysqlDriver {
         values: &[(String, Value)],
     ) -> Result<u64> {
         if values.is_empty() {
-            // Linha totalmente vazia — usa `INSERT INTO x () VALUES ()` que
-            // o MySQL aceita e preenche com defaults/AUTO_INCREMENT.
+            // Fully empty row — uses `INSERT INTO x () VALUES ()` which
+            // MySQL accepts, filling with defaults/AUTO_INCREMENT.
             let pool = self.pool().await?;
             let sql = format!(
                 "INSERT INTO {}.{} () VALUES ()",
@@ -620,6 +621,44 @@ impl Driver for MysqlDriver {
         Ok(res.last_insert_id())
     }
 
+    async fn list_generated_columns(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<String>> {
+        let pool = self.pool().await?;
+        // Portable detection between MySQL and MariaDB:
+        //  - MySQL 5.7+/8: EXTRA = "VIRTUAL GENERATED" or "STORED GENERATED"
+        //  - MariaDB 10.2+: EXTRA = "VIRTUAL" or "PERSISTENT" (without the
+        //    word "GENERATED"), but GENERATION_EXPRESSION is populated.
+        //  - Some older MariaDB: no GENERATION_EXPRESSION but with
+        //    EXTRA "VIRTUAL"/"PERSISTENT".
+        // OR of all signals covers the three cases without false positives
+        // (EXTRA=VIRTUAL/PERSISTENT/STORED only appears on generated cols).
+        let rows = sqlx::query(
+            "SELECT COLUMN_NAME
+               FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                AND (
+                      EXTRA LIKE '%GENERATED%'
+                   OR EXTRA = 'VIRTUAL'
+                   OR EXTRA = 'PERSISTENT'
+                   OR EXTRA = 'STORED'
+                   OR (GENERATION_EXPRESSION IS NOT NULL
+                       AND GENERATION_EXPRESSION <> '')
+                )",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| Error::Sql(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| get_str(&r, 0))
+            .collect())
+    }
+
     async fn get_table_ddl(&self, schema: &str, table: &str) -> Result<String> {
         let qi = |s: &str| format!("`{}`", s.replace('`', "``"));
         let sql = format!("SHOW CREATE TABLE {}.{}", qi(schema), qi(table));
@@ -637,10 +676,10 @@ impl Driver for MysqlDriver {
     async fn snapshot_schema(&self, schema: &str) -> Result<SchemaSnapshot> {
         let pool = self.pool().await?;
 
-        // Tabelas — query existente, mas inline pra rodar em paralelo com colunas.
+        // Tables — existing query, but inline to run in parallel with columns.
         let tables_fut = self.list_tables(schema);
 
-        // Bulk: TODAS as colunas de TODAS as tabelas do schema em UMA query.
+        // Bulk: ALL columns of ALL tables in the schema in ONE query.
         let cols_fut = sqlx::query(
             "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
                     COLUMN_KEY, EXTRA, COLUMN_COMMENT
@@ -656,7 +695,7 @@ impl Driver for MysqlDriver {
             async { cols_fut.await.map_err(|e| Error::Sql(e.to_string())) }
         )?;
 
-        // Índices do SELECT acima:
+        // Indices of the SELECT above:
         //   0 TABLE_NAME · 1 COLUMN_NAME · 2 COLUMN_TYPE · 3 IS_NULLABLE
         //   4 COLUMN_DEFAULT · 5 COLUMN_KEY · 6 EXTRA · 7 COLUMN_COMMENT
         let mut columns: std::collections::HashMap<String, Vec<BmColumn>> =
@@ -683,28 +722,41 @@ impl Driver for MysqlDriver {
 
         Ok(SchemaSnapshot { tables, columns })
     }
+
+    // TODO: implement `begin_txn` for MySQL. Tried several combinations of
+    // manual `Pin<Box<Future>>` + impl Future + pointers through
+    // PoolConnection/MySqlConnection — all hit
+    // "implementation of Executor is not general enough". sqlx impl's
+    // Executor<'c> for &'c mut MySqlConnection, but the compiler
+    // generalizes over HRTB inside `async move { ... }` when the future is
+    // boxed, and unification fails. Practical future solution: use the
+    // `sqlx::Transaction<'static, MySql>` type itself via `Pool::begin()`
+    // after cloning the Pool and storing both in a self-referential struct
+    // (ouroboros or similar). For now, `begin_txn` uses the trait default
+    // (Unsupported) and `data_transfer::eff_use_tx` remains `false` —
+    // tx leakage in the pool is mitigated by the disable.
 }
 
 fn escape_ident(s: &str) -> String {
     s.replace('`', "``")
 }
 
-/// Loop de keepalive: a cada 30s manda SELECT 1 numa conexão do pool.
-/// Para quando o pool é fechado (disconnect) — SELECT retorna erro e a gente sai.
+/// Keepalive loop: every 30s sends SELECT 1 on a pool connection.
+/// Stops when the pool is closed (disconnect) — SELECT returns an error and we exit.
 async fn keepalive_loop(pool: MySqlPool) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         if pool.is_closed() {
             break;
         }
-        // Ignora erros — test_before_acquire + idle_timeout cuidam da saúde
-        // das conexões. Aqui é só pra evitar wait_timeout em servidores estritos.
+        // Ignore errors — test_before_acquire + idle_timeout take care of
+        // connection health. This is just to avoid wait_timeout on strict servers.
         let _ = sqlx::query("SELECT 1").execute(&pool).await;
     }
 }
 
-/// Renderiza a árvore de filtros. Grupos com 1 filho não emitem parens
-/// (evita `((col = ?))`). Grupos vazios retornam None (caller suprime o WHERE).
+/// Renders the filter tree. Groups with 1 child emit no parens
+/// (avoids `((col = ?))`). Empty groups return None (caller suppresses WHERE).
 fn render_node(driver: &MysqlDriver, node: &FilterNode) -> Option<String> {
     match node {
         FilterNode::Leaf { filter } => Some(render_filter_clause(driver, filter)),
@@ -726,9 +778,9 @@ fn render_node(driver: &MysqlDriver, node: &FilterNode) -> Option<String> {
     }
 }
 
-/// Binda valores na ordem que `render_node` emitiu os placeholders.
-/// Grupos com filhos vazios devem ser pulados pra ordem bater (o filter
-/// com 0 bindings em `render_node` retornou None e foi ignorado).
+/// Binds values in the order `render_node` emitted placeholders.
+/// Groups with empty children must be skipped so order lines up (the filter
+/// with 0 bindings in `render_node` returned None and was ignored).
 fn bind_node<'q>(
     mut q: Query<'q, MySql, MySqlArguments>,
     node: &'q FilterNode,
@@ -736,7 +788,7 @@ fn bind_node<'q>(
     match node {
         FilterNode::Leaf { filter } => bind_filter(q, filter),
         FilterNode::Group { children, .. } => {
-            // Filtra os que produziriam clause vazia — mesma lógica do render.
+            // Filter those producing empty clause — same logic as render.
             for c in children {
                 if produces_clause(c) {
                     q = bind_node(q, c);
@@ -747,7 +799,7 @@ fn bind_node<'q>(
     }
 }
 
-/// Verifica se um node emite alguma clause (não é grupo vazio).
+/// Checks whether a node emits any clause (not an empty group).
 fn produces_clause(node: &FilterNode) -> bool {
     match node {
         FilterNode::Leaf { .. } => true,
@@ -755,8 +807,8 @@ fn produces_clause(node: &FilterNode) -> bool {
     }
 }
 
-/// Renderiza UMA expressão de filtro (coluna + op + placeholders `?`).
-/// O caller é responsável por bindar os valores via `bind_filter`.
+/// Renders ONE filter expression (column + op + `?` placeholders).
+/// Caller is responsible for binding values via `bind_filter`.
 fn render_filter_clause(driver: &MysqlDriver, f: &Filter) -> String {
     let col = driver.quote_ident(&f.column);
     match f.op {
@@ -781,7 +833,7 @@ fn render_filter_clause(driver: &MysqlDriver, f: &Filter) -> String {
         FilterOp::In => in_list_clause(&col, f, false),
         FilterOp::NotIn => in_list_clause(&col, f, true),
         FilterOp::Custom => {
-            // `value` carrega o fragmento raw. Sem binding.
+            // `value` carries the raw fragment. No binding.
             let frag = match &f.value {
                 Some(Value::String(s)) => s.as_str(),
                 _ => "",
@@ -791,16 +843,16 @@ fn render_filter_clause(driver: &MysqlDriver, f: &Filter) -> String {
     }
 }
 
-/// Gera o padrão LIKE a partir do value bruto, aplicando os wildcards
-/// conforme o operador (contains, begins_with, ends_with).
+/// Generates the LIKE pattern from the raw value, applying wildcards
+/// per operator (contains, begins_with, ends_with).
 fn like_pattern(v: &Value, op: FilterOp) -> String {
     let raw = match v {
         Value::String(s) => s.clone(),
         _ => format!("{:?}", v),
     };
-    // Escape de _ e % no user input pra não virarem wildcards
-    // acidentais. O valor bindado vira um parâmetro LIKE — o '\' escapa
-    // os wildcards default no MySQL.
+    // Escape _ and % in user input so they don't become accidental wildcards.
+    // The bound value becomes a LIKE parameter — '\' escapes the default
+    // wildcards in MySQL.
     let escaped = raw.replace('\\', "\\\\").replace('_', "\\_").replace('%', "\\%");
     match op {
         FilterOp::Contains | FilterOp::NotContains => format!("%{}%", escaped),
@@ -810,8 +862,8 @@ fn like_pattern(v: &Value, op: FilterOp) -> String {
     }
 }
 
-/// Para IN/NOT IN: gera `col IN (?, ?, ?)` com N placeholders. N =
-/// quantidade de items no value (CSV). Zero itens vira `1=0` (NOT IN → 1=1).
+/// For IN/NOT IN: generates `col IN (?, ?, ?)` with N placeholders. N =
+/// number of items in the value (CSV). Zero items becomes `1=0` (NOT IN → 1=1).
 fn in_list_clause(col: &str, f: &Filter, not: bool) -> String {
     let items = split_in_csv(f.value.as_ref());
     let n = items.len();
@@ -823,7 +875,7 @@ fn in_list_clause(col: &str, f: &Filter, not: bool) -> String {
     format!("{} {} ({})", col, kw, placeholders)
 }
 
-/// Quebra CSV do IN em items crus (sem quotes extras).
+/// Splits the IN CSV into raw items (no extra quotes).
 fn split_in_csv(v: Option<&Value>) -> Vec<String> {
     let Some(Value::String(s)) = v else {
         return Vec::new();
@@ -887,8 +939,8 @@ fn bind_filter<'q>(
     }
 }
 
-/// Monta a WHERE clause, usando `IS NULL` para valores NULL (que não fecham
-/// com `col = ?` — comparação com NULL sempre dá UNKNOWN no MySQL).
+/// Builds the WHERE clause, using `IS NULL` for NULL values (which don't
+/// match with `col = ?` — comparison with NULL always yields UNKNOWN in MySQL).
 fn build_where_clause(driver: &MysqlDriver, where_cols: &[(String, Value)]) -> String {
     where_cols
         .iter()
@@ -903,9 +955,9 @@ fn build_where_clause(driver: &MysqlDriver, where_cols: &[(String, Value)]) -> S
         .join(" AND ")
 }
 
-/// Bind de um `Value` em uma query sqlx parametrizada do MySQL.
-/// Cobre todos os variants. NULL é bindado com `Option::<String>::None`
-/// (sqlx infere o tipo).
+/// Binds a `Value` onto a parametrized MySQL sqlx query.
+/// Covers all variants. NULL is bound with `Option::<String>::None`
+/// (sqlx infers the type).
 fn bind_value<'q>(
     q: Query<'q, MySql, MySqlArguments>,
     v: &'q Value,
@@ -927,18 +979,18 @@ fn bind_value<'q>(
     }
 }
 
-/// Parser leve do `COLUMN_TYPE` do MySQL — só extrai o suficiente para
-/// renderizar/categorizar. Tipos exóticos caem em `Other { raw }`.
+/// Lightweight parser for MySQL's `COLUMN_TYPE` — only extracts enough to
+/// render/categorize. Exotic types fall into `Other { raw }`.
 fn parse_column_type(raw: &str) -> ColumnType {
     let lower = raw.to_lowercase();
     let unsigned = lower.contains("unsigned");
 
-    // `raw` pode ser:
+    // `raw` can be:
     //   "int(11) unsigned"   → MySQL 5.x
-    //   "int unsigned"       → MySQL 8.x (sem display width)
+    //   "int unsigned"       → MySQL 8.x (no display width)
     //   "int"
     //   "decimal(10,2)"
-    // Extraímos a primeira palavra, antes de `(` ou espaço.
+    // We extract the first word, before `(` or space.
     let before_paren = lower
         .split_once('(')
         .map(|(h, _)| h)

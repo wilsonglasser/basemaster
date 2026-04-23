@@ -1,7 +1,7 @@
-//! Conversão de linha sqlx::MySql → Vec<basemaster_core::Value>.
+//! Conversion of sqlx::MySql row → Vec<basemaster_core::Value>.
 //!
-//! Estratégia: usar `Column::type_info().name()` e tentar o decode tipado
-//! correto. Tipos não cobertos caem em fallback `String → Bytes → Null`.
+//! Strategy: use `Column::type_info().name()` and try the right typed
+//! decode. Uncovered types fall back to `String → Bytes → Null`.
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use rust_decimal::Decimal;
@@ -120,8 +120,8 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
     }
 }
 
-/// Quando o tipo é desconhecido ou o decode tipado falha, tenta String,
-/// depois bytes brutos, e por fim devolve Null.
+/// When the type is unknown or the typed decode fails, try String,
+/// then raw bytes, and finally return Null.
 fn decode_fallback(row: &MySqlRow, i: usize) -> Value {
     if let Ok(opt) = row.try_get::<Option<String>, _>(i) {
         return opt.map(Value::String).unwrap_or(Value::Null);

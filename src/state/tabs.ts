@@ -11,11 +11,11 @@ export type TabKind =
       kind: "query";
       connectionId: Uuid;
       schema?: string;
-      /** SQL pré-preenchido (atalhos como "SELECT * FROM tbl"). */
+      /** Pre-filled SQL (shortcuts like "SELECT * FROM tbl"). */
       initialSql?: string;
-      /** Executa o initialSql automaticamente ao montar a aba. */
+      /** Runs initialSql automatically when the tab mounts. */
       autoRun?: boolean;
-      /** Se a aba tá "linkada" a uma query salva, Ctrl+S atualiza ela. */
+      /** If the tab is "linked" to a saved query, Ctrl+S updates it. */
       savedQueryId?: Uuid;
       savedQueryName?: string;
     }
@@ -24,23 +24,23 @@ export type TabKind =
       connectionId: Uuid;
       schema: string;
       table: string;
-      /** View inicial da aba (só aplicada no primeiro mount). */
+      /** Initial view of the tab (applied only on first mount). */
       initialView?: "data" | "structure";
-      /** Se true + initialView=structure → já entra em modo edição. */
+      /** If true + initialView=structure → enters edit mode right away. */
       initialEdit?: boolean;
     }
   | {
       kind: "tables-list";
       connectionId: Uuid;
       schema: string;
-      /** Filtrar por categoria. "all" mostra tudo com coluna Tipo;
-       *  "tables"/"views" esconde a coluna Tipo. */
+      /** Filter by category. "all" shows everything with a Type column;
+       *  "tables"/"views" hides the Type column. */
       category?: "all" | "tables" | "views";
     }
   | {
       kind: "saved-queries-list";
       connectionId: Uuid;
-      /** Opcional: filtra por schema. null = mostra todas da conexão. */
+      /** Optional: filter by schema. null = show all of the connection. */
       schema?: string;
     }
   | { kind: "query-history"; connectionId: Uuid }
@@ -57,26 +57,26 @@ export type TabKind =
   | {
       kind: "sql-dump";
       sourceConnectionId: Uuid;
-      /** Lista de schemas com tabelas (vazio = todas). */
+      /** List of schemas with tables (empty = all). */
       scopes: Array<{ schema: string; tables?: string[] }>;
     }
   | {
       kind: "sql-import";
       targetConnectionId: Uuid;
-      /** Schema default (aplicado via USE antes do import). */
+      /** Default schema (applied via USE before the import). */
       schema?: string;
     }
   | {
       kind: "data-transfer";
-      /** Preseta source pré-selecionada (opcional — vem do context da sidebar). */
+      /** Pre-selected source (optional — comes from the sidebar context). */
       sourceConnectionId?: Uuid;
       sourceSchema?: string;
-      /** Preseta target (quando vem de um paste). */
+      /** Pre-selected target (when coming from a paste). */
       targetConnectionId?: Uuid;
       targetSchema?: string;
-      /** Tabelas já selecionadas (do clipboard ou contexto). */
+      /** Tables already selected (from clipboard or context). */
       tables?: string[];
-      /** Pula direto pro step de opções/execução. */
+      /** Jump straight to the options/execution step. */
       autoAdvance?: boolean;
     };
 
@@ -85,7 +85,7 @@ export interface Tab {
   label: string;
   kind: TabKind;
   dirty?: boolean;
-  /** Hex que pinta o accent da aba (vem da conexão ativa). */
+  /** Hex that paints the tab's accent (comes from the active connection). */
   accentColor?: string | null;
 }
 
@@ -94,18 +94,18 @@ interface TabsState {
   activeId: string | null;
 
   open: (tab: Omit<Tab, "id">, explicitId?: string) => string;
-  /** Abre nova aba se nenhuma satisfaz o predicado; senão foca a existente. */
+  /** Opens a new tab if none satisfies the predicate; otherwise focuses the existing one. */
   openOrFocus: (
     matches: (t: Tab) => boolean,
     factory: () => Omit<Tab, "id">,
   ) => string;
   close: (id: string) => void;
-  /** Fecha múltiplas abas por predicado. Retorna quantas foram fechadas. */
+  /** Closes multiple tabs by predicate. Returns how many were closed. */
   closeMany: (predicate: (t: Tab) => boolean) => number;
   setActive: (id: string) => void;
   patch: (id: string, patch: Partial<Omit<Tab, "id">>) => void;
-  /** Reserva um id sem criar aba ainda — útil pra pré-seedar estruturas
-   *  externas (tab-state) antes de chamar `open` com esse id. */
+  /** Reserves an id without creating a tab yet — useful to pre-seed external
+   *  structures (tab-state) before calling `open` with that id. */
   reserveId: () => string;
 }
 
@@ -118,26 +118,26 @@ const initialTab: Tab = {
   kind: { kind: "welcome" },
 };
 
-/** Kinds que NÃO sobrevivem a restart — formulários em progresso e
- *  views com estado ephemeral podem gerar confusão se restaurados. */
+/** Kinds that do NOT survive restart — in-progress forms and views
+ *  with ephemeral state can cause confusion if restored. */
 const EPHEMERAL_KINDS: TabKind["kind"][] = [
   "new-connection",
   "edit-connection",
 ];
 
-/** Filtra tabs inválidas após rehidratação e recalcula counter. */
+/** Filter invalid tabs after rehydrate and recalculate counter. */
 function sanitizeRestored(tabs: Tab[], activeId: string | null) {
   const valid = tabs.filter(
     (t) => !EPHEMERAL_KINDS.includes(t.kind.kind as TabKind["kind"]),
   );
-  // Bumpa counter pro máximo visto pra evitar colisão com ids novos.
+  // Bump counter to the max seen to avoid collisions with new ids.
   let maxN = 0;
   for (const t of valid) {
     const m = /^tab-(\d+)$/.exec(t.id);
     if (m) maxN = Math.max(maxN, Number(m[1]));
   }
   counter = maxN;
-  // Se restaurou tudo vazio, coloca o welcome de volta.
+  // If everything restored empty, put welcome back.
   if (valid.length === 0) {
     const wid = nextId();
     return {
@@ -145,7 +145,7 @@ function sanitizeRestored(tabs: Tab[], activeId: string | null) {
       activeId: wid,
     };
   }
-  // Se o activeId foi removido, seleciona o primeiro.
+  // If activeId was removed, select the first.
   const activeStillThere = valid.some((t) => t.id === activeId);
   return {
     tabs: valid,
@@ -223,7 +223,7 @@ export const useTabs = create<TabsState>()(
     }),
     {
       name: "basemaster.tabs",
-      // Não persiste funções — só o state primitivo.
+      // Don't persist functions — only primitive state.
       partialize: (s) => ({ tabs: s.tabs, activeId: s.activeId }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;

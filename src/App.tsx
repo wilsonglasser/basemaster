@@ -4,6 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ArrowLeftToLine } from "lucide-react";
 
 import { AiApprovalDialog } from "@/components/ai-approval-dialog";
+import { AppDialog } from "@/components/app-dialog";
 import { DestructiveConfirmDialog } from "@/components/destructive-confirm-dialog";
 import { UpdateDialog } from "@/components/update-dialog";
 import { AiSidebar } from "@/components/layout/ai-sidebar";
@@ -52,7 +53,7 @@ export type DetachedPayload =
       table: string;
       accentColor: string | null;
       label: string;
-      /** Nome legível pra aba quando devolvida (p.ex. "users"). */
+      /** Readable tab name when returned (e.g. "users"). */
       displayLabel: string;
     }
   | {
@@ -100,10 +101,10 @@ function MainApp() {
     };
   }, []);
 
-  // Update check no boot: silent=true respeita versões na lista de
-  // "ignorar esta versão". Delay curto pra não brigar com o paint inicial.
-  // Em dev o endpoint não está disponível e o check sempre falha, então
-  // gate por DEV pra não poluir logs/UI.
+  // Update check on boot: silent=true respects versions in the
+  // "ignore this version" list. Short delay to avoid fighting the initial paint.
+  // In dev the endpoint isn't available and the check always fails, so
+  // gate by DEV to avoid polluting logs/UI.
   useEffect(() => {
     if (import.meta.env.DEV) return;
     const t = setTimeout(() => {
@@ -115,9 +116,9 @@ function MainApp() {
   useEffect(() => {
     void (async () => {
       await refresh();
-      // Auto-reabre conexões referenciadas por abas restauradas.
-      // Fire-and-forget em paralelo — cada TableView/QueryTab tem seu
-      // próprio loading/retry quando a conexão ficar active.
+      // Auto-reopen connections referenced by restored tabs.
+      // Fire-and-forget in parallel — each TableView/QueryTab has its
+      // own loading/retry once the connection becomes active.
       const { connections, active, open } = useConnections.getState();
       const existingIds = new Set(connections.map((c) => c.id));
       const needed = new Set<string>();
@@ -133,16 +134,16 @@ function MainApp() {
         }
       }
       for (const id of needed) {
-        open(id).catch((e) => console.warn("auto-open conn falhou:", id, e));
+        open(id).catch((e) => console.warn("auto-open conn failed:", id, e));
       }
     })();
   }, [refresh]);
 
-  // Escuta pedido de reattach vindo de uma janela destacada: rehydrata
-  // o tab-state (pra ver as escritas da destacada no localStorage),
-  // reserva um id novo, transfere state label → novo id (ANTES do
-  // render), e só então cria a aba. Assim QueryTab/TableView já leem
-  // state correto no initial useState.
+  // Listens for reattach request from a detached window: rehydrates
+  // the tab-state (to see the detached window's writes in localStorage),
+  // reserves a new id, transfers state label → new id (BEFORE
+  // render), and only then creates the tab. That way QueryTab/TableView
+  // already read correct state on the initial useState.
   const reserveId = useTabs((s) => s.reserveId);
   useEffect(() => {
     const unlistenPromise = listen<DetachedPayload>(REATTACH_EVENT, async (e) => {
@@ -221,6 +222,7 @@ function MainApp() {
       <CreateTableDialog />
       <DockerDiscoverDialog />
       <AiApprovalDialog />
+      <AppDialog />
       <DestructiveConfirmDialog />
       <ShortcutBindings />
       <ShortcutsCheatsheet />
@@ -230,9 +232,9 @@ function MainApp() {
   );
 }
 
-/** Versão sem sidebar / sem tab bar — usada nas janelas destacadas.
- *  Header fino com "Devolver" que emite o payload de volta pra principal
- *  e fecha via command Rust (evita permissions JS-side). */
+/** Version without sidebar / tab bar — used in detached windows.
+ *  Thin header with "Return" that emits the payload back to the main
+ *  window and closes via Rust command (avoids JS-side permissions). */
 function DetachedApp({ payload }: { payload: DetachedPayload }) {
   const refresh = useConnections((s) => s.refresh);
   const t = useT();
@@ -242,10 +244,10 @@ function DetachedApp({ payload }: { payload: DetachedPayload }) {
 
   const reattach = async () => {
     try {
-      // Rebuild do payload com o state atual — se for query, usa o
-      // SQL e schema mais recentes do editor (tab-state). Também
-      // garante que o tab-state foi flushed pro localStorage antes
-      // do main rehidratar.
+      // Rebuild the payload with current state — for query, use the
+      // latest SQL and schema from the editor (tab-state). Also
+      // ensures the tab-state was flushed to localStorage before
+      // the main window rehydrates.
       const live = useTabState.getState().queryOf(payload.label);
       const fresh: DetachedPayload =
         payload.kind === "query"
@@ -256,7 +258,7 @@ function DetachedApp({ payload }: { payload: DetachedPayload }) {
             }
           : payload;
       await emit(REATTACH_EVENT, fresh);
-      // Pequena folga pra main processar o event antes de fechar.
+      // Small delay for main to process the event before closing.
       window.setTimeout(() => {
         void ipc.window.close(payload.label).catch(console.error);
       }, 80);

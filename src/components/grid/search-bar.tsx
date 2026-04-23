@@ -24,11 +24,11 @@ export interface SearchState {
 interface SearchBarProps {
   open: boolean;
   onClose: () => void;
-  /** Disparado a cada mudança de texto/modo. */
+  /** Fired on every text/mode change. */
   onChange: (state: SearchState) => void;
-  /** Total de matches calculado pelo parent (colunas em Campo, células em Dado). */
+  /** Total matches computed by the parent (columns in Field, cells in Data). */
   matchCount?: number;
-  /** Match focado atualmente (0-based). */
+  /** Currently focused match (0-based). */
   matchIndex?: number;
   onPrev?: () => void;
   onNext?: () => void;
@@ -57,7 +57,7 @@ export function SearchBar({
     }
   }, [open]);
 
-  // Propaga estado pra cima.
+  // Propagate state upwards.
   useEffect(() => {
     if (!open) {
       onChange({ value: "", mode, caseSensitive, regex });
@@ -66,7 +66,7 @@ export function SearchBar({
     onChange({ value, mode, caseSensitive, regex });
   }, [open, value, mode, caseSensitive, regex, onChange]);
 
-  // Limpa quando fecha.
+  // Clear on close.
   useEffect(() => {
     if (!open) setValue("");
   }, [open]);

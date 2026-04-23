@@ -31,6 +31,7 @@ import {
 } from "@/lib/table-clipboard";
 import type { Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { appAlert, appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { confirmDestructive } from "@/state/destructive-confirm";
 import { useT } from "@/state/i18n";
@@ -108,8 +109,8 @@ export function TablesListView({
 
   const sortedRef = useRef<string[] | null>(null);
   const [loading, setLoading] = useState(false);
-  // Modo de visualização persistido — "list" = tabela com colunas,
-  // "grid" = cards só com nome (estilo file explorer icons view).
+  // Persisted view mode — "list" = table with columns,
+  // "grid" = cards with name only (file explorer icons view style).
   const [viewMode, setViewMode] = useState<"list" | "grid">(() => {
     if (typeof window === "undefined") return "list";
     return window.localStorage.getItem("basemaster.tablesListViewMode") ===
@@ -186,7 +187,7 @@ export function TablesListView({
         return copy;
       });
     } catch (e) {
-      alert(t("tablesList.renameFailed", { error: String(e) }));
+      void appAlert(t("tablesList.renameFailed", { error: String(e) }));
     }
   };
   const cancelRename = () => {
@@ -195,7 +196,7 @@ export function TablesListView({
   };
   useEffect(() => () => clearRenameTimer(), []);
 
-  // Garante conexão aberta + snapshot carregado.
+  // Ensure the connection is open + snapshot is loaded.
   useEffect(() => {
     (async () => {
       if (!connActive && conn) {
@@ -256,7 +257,7 @@ export function TablesListView({
     return filtered;
   }, [tables, filter, sortKey, sortDir, category]);
 
-  // Mantém a ref pra handleRowSelect calcular range shift-click.
+  // Keep the ref so handleRowSelect can compute the shift-click range.
   useEffect(() => {
     sortedRef.current = sorted.map((t) => t.name);
   }, [sorted]);
@@ -284,9 +285,9 @@ export function TablesListView({
         schema,
         name,
       );
-      const newName = window.prompt(
+      const newName = await appPrompt(
         t("tree.duplicatePrompt", { source: name }),
-        suggested,
+        { defaultValue: suggested },
       );
       if (!newName || newName.trim() === "") return;
       await ipc.db.duplicateTable(
@@ -299,12 +300,12 @@ export function TablesListView({
       invalidateSchema(connectionId, schema);
       await ensureSnapshot(connectionId, schema);
     } catch (e) {
-      alert(t("tablesList.duplicateFailed", { error: String(e) }));
+      void appAlert(t("tablesList.duplicateFailed", { error: String(e) }));
     }
   };
 
-  /** Targets de bulk: se a tabela passada está na seleção, opera em
-   *  todas selecionadas; senão só nela. Right-click respeita o set. */
+  /** Bulk targets: if the given table is in the selection, operates on
+   *  all selected; otherwise only on it. Right-click respects the set. */
   const bulkTargets = (name: string): string[] => {
     if (selected.has(name) && selected.size > 1) return Array.from(selected);
     return [name];
@@ -315,7 +316,7 @@ export function TablesListView({
   ) => {
     const failed = results.filter((r) => r.error);
     if (failed.length === 0) return;
-    alert(
+    void appAlert(
       t("tablesList.pasteFailures", {
         list: failed.map((r) => `${r.table}: ${r.error}`).join("\n"),
       }),
@@ -341,7 +342,7 @@ export function TablesListView({
       const results = await ipc.db.dropTables(connectionId, schema, targets);
       invalidateSchema(connectionId, schema);
       await ensureSnapshot(connectionId, schema);
-      // Limpa seleção das que de fato sumiram.
+      // Clear selection for those that actually went away.
       const dropped = new Set(results.filter((r) => !r.error).map((r) => r.table));
       setSelected((prev) => {
         const next = new Set(prev);
@@ -350,7 +351,7 @@ export function TablesListView({
       });
       reportFailures(results);
     } catch (e) {
-      alert(t("tablesList.deleteFailed", { error: String(e) }));
+      void appAlert(t("tablesList.deleteFailed", { error: String(e) }));
     }
   };
 
@@ -375,7 +376,7 @@ export function TablesListView({
       await ensureSnapshot(connectionId, schema);
       reportFailures(results);
     } catch (e) {
-      alert(t("tablesList.deleteFailed", { error: String(e) }));
+      void appAlert(t("tablesList.deleteFailed", { error: String(e) }));
     }
   };
 
@@ -400,7 +401,7 @@ export function TablesListView({
       await ensureSnapshot(connectionId, schema);
       reportFailures(results);
     } catch (e) {
-      alert(t("tablesList.deleteFailed", { error: String(e) }));
+      void appAlert(t("tablesList.deleteFailed", { error: String(e) }));
     }
   };
 
@@ -425,7 +426,7 @@ export function TablesListView({
   const handlePaste = async () => {
     const payload = await readTableClipboard();
     if (!payload) {
-      alert(t("tablesList.pasteInvalid"));
+      void appAlert(t("tablesList.pasteInvalid"));
       return;
     }
     const sameConn = payload.connectionId === connectionId;
@@ -437,7 +438,7 @@ export function TablesListView({
       return;
     }
 
-    // Origem diferente: abre wizard pré-configurado.
+    // Different source: open the pre-configured wizard.
     newTab({
       label: t("tree.dataTransfer"),
       kind: {
@@ -469,14 +470,14 @@ export function TablesListView({
     invalidateSchema(connectionId, schema);
     await ensureSnapshot(connectionId, schema);
     if (failed.length > 0) {
-      alert(t("tablesList.pasteFailures", { list: failed.join("\n") }));
+      void appAlert(t("tablesList.pasteFailures", { list: failed.join("\n") }));
     }
   };
 
-  // Ctrl+C / Ctrl+V a nível da view.
+  // Ctrl+C / Ctrl+V / Ctrl+A at the view level.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Ignora se foco tá num input/textarea.
+      // Ignore if focus is in an input/textarea.
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
@@ -485,6 +486,13 @@ export function TablesListView({
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
         e.preventDefault();
         void handlePaste();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        const all = sortedRef.current;
+        if (all && all.length > 0) {
+          setSelected(new Set(all));
+          setLastSelected(all[all.length - 1]);
+        }
       }
     };
     document.addEventListener("keydown", onKey);
@@ -502,7 +510,7 @@ export function TablesListView({
     }
   };
 
-  // Context menu único, reutilizado pra qualquer linha.
+  // Single context menu, reused for any row.
   const [ctxItems, setCtxItems] = useState<ContextEntry[]>([]);
   const ctxMenu = useContextMenu(ctxItems);
 
@@ -510,8 +518,8 @@ export function TablesListView({
     action: MaintenanceAction,
     singleName?: string,
   ) => {
-    // Usa a seleção múltipla se tiver algo marcado — senão só a linha
-    // do context menu.
+    // Use the multi-selection if anything is checked — otherwise just
+    // the context-menu row.
     const names =
       selected.size > 0 ? Array.from(selected) : singleName ? [singleName] : [];
     if (names.length === 0) return;
@@ -536,16 +544,30 @@ export function TablesListView({
   };
 
   const handleRowContextMenu = (name: string, e: React.MouseEvent) => {
-    // Mantém seleção se já tá selecionado (pra bulk ops); senão substitui.
+    // Keep selection if already selected (for bulk ops); otherwise replace it.
     if (!selected.has(name)) {
       setSelected(new Set([name]));
       setLastSelected(name);
     }
+    const copyCount = bulkTargets(name).length;
     setCtxItems([
       {
         icon: <TableIcon className="h-3.5 w-3.5" />,
         label: t("tree.openTable"),
         onClick: () => openTable(name),
+      },
+      {
+        icon: <Copy className="h-3.5 w-3.5" />,
+        label:
+          copyCount > 1
+            ? `${t("tablesList.copy")} (${copyCount})`
+            : t("tablesList.copy"),
+        onClick: () => void handleCopy(),
+      },
+      {
+        icon: <ClipboardPaste className="h-3.5 w-3.5" />,
+        label: t("tablesList.paste"),
+        onClick: () => void handlePaste(),
       },
       {
         icon: <Copy className="h-3.5 w-3.5" />,
@@ -1056,8 +1078,8 @@ function Td({
   );
 }
 
-/** Input inline usado na rename via slow double-click. Auto-seleciona
- *  tudo ao montar. Enter confirma, ESC cancela, blur confirma também. */
+/** Inline input used for rename via slow double-click. Auto-selects
+ *  everything on mount. Enter confirms, ESC cancels, blur also confirms. */
 function RenameInput({
   draft,
   onDraft,

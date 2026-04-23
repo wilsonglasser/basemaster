@@ -37,10 +37,10 @@ import type {
 } from "./types";
 
 /**
- * Cliente tipado dos commands Tauri. Toda chamada IPC do front passa por aqui.
+ * Typed client for Tauri commands. All front-end IPC calls go through here.
  *
- * Convenção: argumentos de comandos Rust em snake_case viram camelCase no JS
- * (Tauri faz a conversão automática). Erros chegam como `string`.
+ * Convention: Rust command arguments in snake_case become camelCase in JS
+ * (Tauri auto-converts). Errors arrive as `string`.
  */
 export const ipc = {
   ping: () => invoke<string>("ping"),
@@ -172,11 +172,11 @@ export const ipc = {
     renameSchema: (connectionId: Uuid, from: string, to: string) =>
       invoke<void>("rename_schema", { connectionId, from, to }),
 
-    /** Tabelas + todas as colunas em uma única chamada — para autocomplete. */
+    /** Tables + all columns in a single call — for autocomplete. */
     prefetchSchema: (connectionId: Uuid, schema: string) =>
       invoke<SchemaSnapshot>("schema_prefetch", { connectionId, schema }),
 
-    /** Modo Navicat — TableView. */
+    /** Navicat mode — TableView. */
     tableCount: (connectionId: Uuid, schema: string, table: string) =>
       invoke<number>("table_count", { connectionId, schema, table }),
 
@@ -323,9 +323,9 @@ export const ipc = {
   },
 
   taskbar: {
-    /** Controla a barra do ícone na taskbar (Windows) / dock (macOS).
+    /** Controls the icon progress bar in the taskbar (Windows) / dock (macOS).
      *  status: "none" | "normal" | "indeterminate" | "paused" | "error".
-     *  progress: 0..=100 (ignorado em indeterminate/none). */
+     *  progress: 0..=100 (ignored for indeterminate/none). */
     setProgress: (
       status: "none" | "normal" | "indeterminate" | "paused" | "error",
       progress?: number,

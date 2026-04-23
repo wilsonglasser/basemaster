@@ -361,8 +361,8 @@ export const TOOLS = {
       if (!fn) {
         throw new Error("query tab not mounted");
       }
-      // Precisa do sql atual pra append/prepend. A bridge só expõe setter,
-      // então leio do tab-state persistido.
+      // Needs current sql for append/prepend. The bridge only exposes a setter,
+      // so we read from the persisted tab-state.
       const { useTabState } = await import("@/state/tab-state");
       const current =
         useTabState.getState().queryOf(tabId)?.sql ?? "";
@@ -468,8 +468,8 @@ export const TOOLS = {
           tabData = {
             kind: "query",
             connection_id: k.connectionId,
-            // Schema e SQL refletem o editor AGORA (user pode ter mexido
-            // depois da aba ser aberta).
+            // Schema and SQL reflect the editor NOW (user may have edited
+            // after the tab was opened).
             schema: live?.schema ?? k.schema ?? null,
             sql: live?.sql ?? k.initialSql ?? "",
           };
@@ -668,7 +668,7 @@ export const TOOLS = {
         meta: { tabela: `${schema}.${table}`, linhas: rows.length },
       });
       await ensureOpen(connection_id);
-      // Tipo esperado pelo IPC: PkEntry[][] — normalizamos `value` raw.
+      // IPC-expected type: PkEntry[][] — we normalize raw `value`.
       const normalized = rows.map((r) =>
         r.map((e) => ({
           column: e.column,

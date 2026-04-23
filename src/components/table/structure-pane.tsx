@@ -22,6 +22,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { Combobox } from "@/components/ui/combobox";
 import { columnTypeOptions } from "@/lib/column-types";
+import { appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
@@ -31,7 +32,7 @@ interface StructurePaneProps {
   connectionId: Uuid;
   schema: string;
   table: string;
-  /** Se true, entra em modo edit já no mount. */
+  /** If true, enters edit mode on mount. */
   initialEdit?: boolean;
   /** tabId do TableView pai — registra bridge pra edit remoto (Ctrl+D). */
   tabId?: string;
@@ -125,7 +126,7 @@ export function StructurePane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialEdit, cols, indexes, fks, options]);
 
-  // Registra startEdit pra Ctrl+D invocar mesmo quando a aba já tá aberta.
+  // Register startEdit so Ctrl+D works even when the tab is already open.
   useEffect(() => {
     if (!tabId) return;
     useTableViewBridge.getState().registerEdit(tabId, startEdit);
@@ -171,7 +172,8 @@ export function StructurePane({
 
   const handleApply = async () => {
     if (!ddl) return;
-    if (!window.confirm(t("structure.applyAlter", { ddl }))) return;
+    const ok = await appConfirm(t("structure.applyAlter", { ddl }));
+    if (!ok) return;
     setApplying(true);
     setApplyError(null);
     try {
@@ -181,10 +183,10 @@ export function StructurePane({
         setApplyError(err.message);
         return;
       }
-      // Invalida cache do schema (força re-descrever colunas).
+      // Invalidate the schema cache (forces columns to be re-described).
       invalidate(connectionId, schema);
       ensureColumns(connectionId, schema, table).catch(() => {});
-      // Recarrega índices/fks/opts — agora podem ter mudado.
+      // Reload indexes/fks/opts — they may have changed now.
       const [idx, fk, opts] = await Promise.all([
         ipc.db.listIndexes(connectionId, schema, table),
         ipc.db.listForeignKeys(connectionId, schema, table),
@@ -592,8 +594,8 @@ function Spinner({ label }: { label?: string }) {
   );
 }
 
-/** Representação editável de uma coluna. `originalName === null` indica
- *  coluna nova (não existia na tabela ainda). */
+/** Editable representation of a column. `originalName === null` means
+ *  a new column (didn't exist in the table yet). */
 interface DraftColumn {
   uid: string;
   originalName: string | null;
@@ -840,7 +842,7 @@ function generateAlterDdl(
     if (!kept) {
       actions.push(`  DROP FOREIGN KEY \`${fk.name}\``);
     } else if (fkChanged(fk, kept)) {
-      // alteração → drop + re-add depois
+      // change → drop + re-add afterwards
       actions.push(`  DROP FOREIGN KEY \`${fk.name}\``);
     }
   }
@@ -890,7 +892,7 @@ function generateAlterDdl(
     }
   }
 
-  // --- Índices (exclui PK, que é tratada acima)
+  // --- Indexes (excludes PK, which is handled above)
   const origIdxByName = new Map(
     b.origIdx.filter((i) => !i.is_primary).map((i) => [i.name, i]),
   );
@@ -911,7 +913,7 @@ function generateAlterDdl(
       const orig = origIdxByName.get(d.originalName);
       if (!orig) continue;
       if (!indexChanged(orig, d)) continue;
-      // MySQL não tem ALTER INDEX — drop + add.
+      // MySQL has no ALTER INDEX — drop + add.
       actions.push(`  DROP INDEX \`${d.originalName}\``);
       actions.push(renderIndexAdd(d));
     }
@@ -930,7 +932,7 @@ function generateAlterDdl(
     }
   }
 
-  // --- Opções da tabela (tudo junto no fim)
+  // --- Table options (all together at the end)
   const optActions = diffTableOptions(b.origOpts, b.draftOpts);
   actions.push(...optActions);
 
@@ -1027,7 +1029,7 @@ function renderColumnDef(d: DraftColumn): string {
   const parts: string[] = [`\`${d.name}\``, d.rawType.trim()];
   parts.push(d.nullable ? "NULL" : "NOT NULL");
   if (d.default !== null) {
-    // Mantém user-typed — se for CURRENT_TIMESTAMP/função, não aspas.
+    // Keeps user-typed — if it's CURRENT_TIMESTAMP/a function, no quotes.
     const isFunc = /^(CURRENT_TIMESTAMP|NULL|TRUE|FALSE|\d)/i.test(
       d.default.trim(),
     );
@@ -1049,7 +1051,7 @@ function columnChanged(orig: Column, d: DraftColumn): boolean {
   if ((orig.default ?? null) !== (d.default ?? null)) return true;
   if ((orig.comment ?? "") !== d.comment) return true;
   if (orig.is_auto_increment !== d.isAutoIncrement) return true;
-  // PK é tratada separado via DROP/ADD PK.
+  // PK is handled separately via DROP/ADD PK.
   return false;
 }
 
@@ -1141,7 +1143,7 @@ function IndexesEditor({
       },
     ]);
 
-  // Filtra PRIMARY da exibição.
+  // Filters PRIMARY out of the display.
   const visible = draft.filter((d) => d.name.toLowerCase() !== "primary");
 
   return (
@@ -1274,8 +1276,8 @@ function ForeignKeysEditor({
   const ensureSnapshot = useSchemaCache((s) => s.ensureSnapshot);
   const ensureColumns = useSchemaCache((s) => s.ensureColumns);
 
-  // Schemas disponíveis + tabelas da ref schema (cache-backed — ensure
-  // se precisar quando usuário troca).
+  // Available schemas + tables of the ref schema (cache-backed — ensure
+  // if needed when the user switches).
   const schemas = useMemo(
     () => (cache?.schemas ?? []).map((s) => s.name),
     [cache?.schemas],
@@ -1301,8 +1303,8 @@ function ForeignKeysEditor({
       },
     ]);
 
-  // Quando o user escolhe ref schema, garante snapshot carregado
-  // (tabelas + colunas) pro autocomplete funcionar.
+  // When the user picks a ref schema, ensure the snapshot is loaded
+  // (tables + columns) so autocomplete works.
   const handleRefSchema = (uid: string, newSchema: string) => {
     update(uid, { refSchema: newSchema, refTable: "", refColumns: [] });
     if (newSchema) {
@@ -1379,8 +1381,8 @@ function ForeignKeysEditor({
                       options={["", ...refTables]}
                     />
                   ) : (
-                    // Fallback pra digitação manual se o schema não
-                    // carregou tabelas (ex: recém-criado ou cache vazio).
+                    // Fallback to manual typing if the schema didn't
+                    // load tables (e.g., just created or empty cache).
                     <Input
                       value={f.refTable}
                       onChange={(v) =>

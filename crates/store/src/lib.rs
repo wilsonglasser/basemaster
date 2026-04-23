@@ -1,7 +1,7 @@
 //! basemaster-store
 //!
-//! SQLite local que guarda perfis de conexão, settings e (no futuro)
-//! histórico de queries e cache de schema. Senhas vão pro keyring do SO
+//! Local SQLite that keeps connection profiles, settings, and (later)
+//! query history and schema cache. Passwords go to the OS keyring
 //! via [`secrets`].
 
 use std::path::{Path, PathBuf};
@@ -51,7 +51,7 @@ pub enum StoreError {
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
-/// Caminhos padrão do app por SO (segue convenções `directories`).
+/// Default app paths per OS (follows `directories` conventions).
 #[derive(Clone, Debug)]
 pub struct AppPaths {
     pub data_dir: PathBuf,
@@ -61,14 +61,14 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn resolve() -> StoreResult<Self> {
-        // Convenções por SO:
+        // Conventions per OS:
         //   Windows: %APPDATA%\BaseMaster\data
         //   macOS:   ~/Library/Application Support/BaseMaster
         //   Linux:   ~/.local/share/basemaster
         //
-        // Dev usa sufixo `-Dev` pra não misturar com install de release:
-        // senão as migrations do dev contaminam o DB do app instalado e
-        // vice-versa.
+        // Dev uses the `-Dev` suffix so it doesn't mix with a release install:
+        // otherwise dev migrations contaminate the installed app's DB and
+        // vice versa.
         let pd = ProjectDirs::from("", "", Self::project_name())
             .ok_or(StoreError::NoProjectDirs)?;
         Ok(Self {
@@ -91,14 +91,14 @@ impl AppPaths {
     }
 }
 
-/// Handle do SQLite local. Compartilhe via `Arc<Store>` no estado do Tauri.
+/// Handle to the local SQLite. Share via `Arc<Store>` in the Tauri state.
 #[derive(Clone)]
 pub struct Store {
     pool: SqlitePool,
 }
 
 impl Store {
-    /// Abre o banco no caminho dado, cria pastas, roda migrations.
+    /// Opens the database at the given path, creates folders, runs migrations.
     pub async fn open(db_path: &Path) -> StoreResult<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;

@@ -2,10 +2,10 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-/// Valor genérico de célula — agnóstico ao SGBD.
+/// Generic cell value — DBMS-agnostic.
 ///
-/// Cada driver converte seus tipos nativos para `Value`. O front recebe
-/// via `serde_json` e formata conforme o tipo.
+/// Each driver converts its native types into `Value`. The frontend
+/// receives it via `serde_json` and formats it based on the type.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Value {
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn tag_uses_snake_case() {
-        // Contrato com o front: serializer usa tag "type" + "value" e snake_case.
+        // Contract with the frontend: serializer uses tag "type" + "value" and snake_case.
         let s = serde_json::to_string(&Value::Int(1)).unwrap();
         assert!(s.contains("\"type\":\"int\""), "got {s}");
         assert!(s.contains("\"value\":1"), "got {s}");

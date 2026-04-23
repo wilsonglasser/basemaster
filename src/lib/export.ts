@@ -5,7 +5,7 @@ import type { Value } from "./types";
 
 export type ExportFormat = "csv_comma" | "csv_semicolon" | "json" | "xlsx";
 
-/** Converte `Value` tagged-union pra valor plano JS/Excel. */
+/** Convert `Value` tagged-union into a plain JS/Excel value. */
 export function valueToPlain(v: Value): string | number | boolean | null {
   switch (v.type) {
     case "null":
@@ -49,12 +49,12 @@ function escapeCsvField(raw: unknown, sep: string): string {
   return s;
 }
 
-/** Separador derivado do formato. */
+/** Separator derived from format. */
 export function csvSeparator(format: ExportFormat): string {
   return format === "csv_semicolon" ? ";" : ",";
 }
 
-/** CSV: linha do header (sem BOM — adicione externamente na 1ª write). */
+/** CSV: header line (no BOM — add externally on the 1st write). */
 export function csvHeaderLine(
   columns: readonly string[],
   sep: string,
@@ -62,7 +62,7 @@ export function csvHeaderLine(
   return columns.map((c) => escapeCsvField(c, sep)).join(sep);
 }
 
-/** CSV: formata uma linha de dados. */
+/** CSV: format a data row. */
 export function csvDataLine(
   row: readonly Value[],
   sep: string,
@@ -72,7 +72,7 @@ export function csvDataLine(
     .join(sep);
 }
 
-/** JSON: formata uma linha como objeto {col: val}. */
+/** JSON: format a row as a {col: val} object. */
 export function jsonRowObject(
   columns: readonly string[],
   row: readonly Value[],
@@ -84,7 +84,7 @@ export function jsonRowObject(
   return obj;
 }
 
-/** XLSX: in-memory, sem streaming. */
+/** XLSX: in-memory, no streaming. */
 export function buildXlsx(
   columns: readonly string[],
   rows: readonly (readonly Value[])[],
@@ -100,7 +100,7 @@ export function buildXlsx(
   return new Uint8Array(out);
 }
 
-/** Escreve bytes num path — wrapper do command Rust. */
+/** Write bytes to a path — wrapper for the Rust command. */
 export async function writeFile(
   path: string,
   data: Uint8Array,
@@ -114,8 +114,8 @@ export async function writeFile(
 }
 
 /**
- * Export in-memory (todas as linhas já estão disponíveis). Usado quando
- * os dados já foram carregados — query-tab, table-view página atual.
+ * In-memory export (all rows already available). Used when data is
+ * already loaded — query-tab, table-view current page.
  */
 export async function writeInMemory(
   path: string,

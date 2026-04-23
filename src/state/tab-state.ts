@@ -4,20 +4,20 @@ import { persist } from "zustand/middleware";
 import type { Filter, FilterNode, OrderBy } from "@/lib/types";
 
 /**
- * Runtime state DAS ABAS — source of truth pro estado "vivo" que deve
- * sobreviver a detach/reattach e (futuramente) a restart do app. Cada
- * aba (keyed por tabId) escreve aqui; quem monta a aba lê no mount
- * (via `snapshot`) pra se inicializar.
+ * TAB runtime state — source of truth for "live" state that must
+ * survive detach/reattach and (eventually) app restart. Each tab
+ * (keyed by tabId) writes here; the mounting component reads on mount
+ * (via `snapshot`) to initialize.
  *
- * Por ser `persist` em localStorage, e localStorage ser compartilhado
- * entre WebviewWindows na mesma origem, o estado SOBREVIVE a detach
- * (nova janela lê pelo mesmo tabId) sem precisar passar payload via
- * event. Também habilita no futuro uma função de "abrir últimas abas"
- * ao subir o app.
+ * Because it's `persist`ed to localStorage, and localStorage is shared
+ * between WebviewWindows on the same origin, state SURVIVES detach
+ * (the new window reads via the same tabId) without passing a payload
+ * via event. Also enables a future "reopen last tabs" feature on app
+ * startup.
  *
- * ⚠ Conteúdo DINÂMICO e pesado (rows da grid, dirty edits) NÃO vai aqui
- * — só config. Dirty edits sobrevivem a reattach via outro mecanismo
- * dedicado (separado, próxima iteração).
+ * Heads-up: DYNAMIC, heavy content (grid rows, dirty edits) does NOT go
+ * here — config only. Dirty edits survive reattach through another
+ * dedicated mechanism (separate, next iteration).
  */
 
 export interface QueryTabState {
@@ -30,12 +30,12 @@ export interface TableTabState {
   limit?: number;
   orderBy?: OrderBy | null;
   hiddenColumns?: string[];
-  /** Nomes das colunas na ordem visual escolhida pelo usuário (reorder). */
+  /** Column names in the visual order chosen by the user (reorder). */
   columnOrder?: string[];
-  /** Árvore de filtros (AND/OR aninhados). V1 salvou `filters` flat; o
-   *  loader converte pra `filterTree` automaticamente. */
+  /** Filter tree (nested AND/OR). V1 stored flat `filters`; the loader
+   *  converts to `filterTree` automatically. */
   filterTree?: FilterNode | null;
-  /** @deprecated V1. Convertido pra filterTree no mount. */
+  /** @deprecated V1. Converted to filterTree on mount. */
   filters?: Filter[];
 }
 
@@ -51,8 +51,8 @@ interface TabStateStore {
   queryOf: (tabId: string) => QueryTabState | undefined;
   tableOf: (tabId: string) => TableTabState | undefined;
   remove: (tabId: string) => void;
-  /** Copia (ou move, se `removeSource`) uma entrada de `from` pra `to`.
-   *  Usado no tear-off/reattach pra transferir state entre tabIds. */
+  /** Copy (or move, if `removeSource`) an entry from `from` to `to`.
+   *  Used in tear-off/reattach to transfer state between tabIds. */
   move: (from: string, to: string, removeSource?: boolean) => void;
 }
 

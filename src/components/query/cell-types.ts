@@ -1,6 +1,6 @@
 /**
- * Helpers para mapear ColumnType ↔ Glide cells (Custom + builtin),
- * e conversões Value ↔ string usadas pelo dirty state.
+ * Helpers to map ColumnType ↔ Glide cells (Custom + builtin),
+ * and Value ↔ string conversions used by dirty state.
  */
 
 import type { EditableGridCell } from "@glideapps/glide-data-grid";
@@ -15,16 +15,16 @@ export type EditorKind =
   | { kind: "text" }
   | {
       kind: "number";
-      /** false bloqueia sinal negativo (tipos UNSIGNED). */
+      /** false blocks negative sign (UNSIGNED types). */
       allowNegative: boolean;
-      /** Casas decimais fixas pra DECIMAL(p,s). undefined = livre. */
+      /** Fixed decimals for DECIMAL(p,s). undefined = unrestricted. */
       fixedDecimals?: number;
     }
   | { kind: "boolean" }
   | { kind: "enum"; values: string[] }
   | { kind: "date"; dateKind: DateKind };
 
-/** Resolve qual editor usar pra uma coluna. */
+/** Resolves which editor to use for a column. */
 export function pickEditorKind(column: Column | undefined): EditorKind {
   if (!column) return { kind: "text" };
   const t: ColumnType = column.column_type;
@@ -56,7 +56,7 @@ export function pickEditorKind(column: Column | undefined): EditorKind {
   }
 }
 
-/** Parse texto MySQL-ish ("YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS", "HH:MM:SS") em Date. */
+/** Parses MySQL-ish text ("YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS", "HH:MM:SS") into Date. */
 export function parseDateText(text: string, kind: DateKind): Date | null {
   if (!text) return null;
   if (kind === "date") {
@@ -77,7 +77,7 @@ export function parseDateText(text: string, kind: DateKind): Date | null {
   return isNaN(parsed.getTime()) ? null : parsed;
 }
 
-/** Formata Date → texto MySQL. */
+/** Formats Date → MySQL text. */
 export function formatDateForMysql(d: Date, kind: DateKind): string {
   const pad = (n: number) => n.toString().padStart(2, "0");
   if (kind === "date") {
@@ -92,7 +92,7 @@ export function formatDateForMysql(d: Date, kind: DateKind): string {
   );
 }
 
-/** Extrai o "texto" de um cell editado (qualquer kind). Esse texto vai pro dirty. */
+/** Extracts the "text" from an edited cell (any kind). This text goes to dirty. */
 export function extractCellText(cell: EditableGridCell): string {
   if (cell.kind === GridCellKind.Text) {
     return String(cell.data ?? "");
@@ -127,7 +127,7 @@ export function extractCellText(cell: EditableGridCell): string {
   return "";
 }
 
-/** Parse de valor pra Number cell (retorna undefined pra NULL/inválido). */
+/** Parses a value into Number cell (returns undefined for NULL/invalid). */
 export function valueToNumber(v: Value | undefined): number | undefined {
   if (!v || isNullish(v)) return undefined;
   switch (v.type) {
@@ -146,14 +146,14 @@ export function valueToNumber(v: Value | undefined): number | undefined {
   }
 }
 
-/** Parse string do dirty pra Number. */
+/** Parses a dirty-state string to Number. */
 export function textToNumber(text: string): number | undefined {
   if (!text) return undefined;
   const n = Number(text);
   return isNaN(n) ? undefined : n;
 }
 
-/** Parse pra Boolean cell. */
+/** Parses to Boolean cell. */
 export function valueToBoolean(v: Value | undefined): boolean | undefined {
   if (!v || isNullish(v)) return undefined;
   if (v.type === "bool") return v.value;
@@ -162,7 +162,7 @@ export function valueToBoolean(v: Value | undefined): boolean | undefined {
   return undefined;
 }
 
-/** Texto de display "padrão" (NULL ou formatado). */
+/** Default display text (NULL or formatted). */
 export function displayText(v: Value | undefined, isDirty: boolean, dirtyText: string | undefined): string {
   if (isDirty) return dirtyText ?? "";
   return isNullish(v) ? "NULL" : formatValue(v);

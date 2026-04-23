@@ -1,25 +1,25 @@
 import { create } from "zustand";
 
 /**
- * Estado "vivo" da aba ativa que a status bar precisa exibir.
- * QueryTab (ou outras) escreve aqui; StatusBar lê.
+ * Live state of the active tab that the status bar needs to display.
+ * QueryTab (and others) writes here; StatusBar reads.
  *
- * Mantemos por tabId para não perder info quando o usuário troca de aba.
+ * Keyed by tabId so we don't lose info when the user switches tabs.
  */
 export interface QueryTabLive {
-  /** SQL do resultado focado no momento. */
+  /** SQL of the currently focused result. */
   currentSql?: string;
-  /** Linhas no resultado focado. undefined = não-aplicável (ex: Mensagens). */
+  /** Rows in the focused result. undefined = N/A (e.g. Messages). */
   totalRows?: number;
-  /** Tempo de execução do statement focado em ms. */
+  /** Execution time of the focused statement in ms. */
   elapsedMs?: number;
-  /** Coluna selecionada no grid (zero-based). */
+  /** Selected column in the grid (zero-based). */
   cellCol?: number;
-  /** Linha selecionada no grid (zero-based). */
+  /** Selected row in the grid (zero-based). */
   cellRow?: number;
-  /** Conteúdo atual do editor (live) — lido pelo tear-off de query tabs. */
+  /** Current editor content (live) — read by query-tab tear-off. */
   editorSql?: string;
-  /** Schema selecionado no seletor do editor (pra reatachar no mesmo). */
+  /** Schema selected in the editor selector (to reattach into the same). */
   editorSchema?: string;
 }
 

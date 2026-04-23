@@ -4,6 +4,7 @@ import { AlertTriangle, Loader2, RefreshCw, Skull } from "lucide-react";
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { Uuid, Value } from "@/lib/types";
+import { appAlert, appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 
@@ -59,7 +60,7 @@ function killStatement(driver: string | undefined, id: string) {
   return `KILL ${id}`;
 }
 
-/** Encontra a coluna "ID" do processo no resultado. Mysql: "Id". PG: "pid". */
+/** Finds the process "ID" column in the result. MySQL: "Id". PG: "pid". */
 function findIdCol(cols: string[]): number {
   const lower = cols.map((c) => c.toLowerCase());
   const idx = lower.indexOf("id");
@@ -90,7 +91,7 @@ export function ProcessListView({ connectionId }: Props) {
     setLoading(true);
     setError(null);
     try {
-      // Auto-open da conexão — após restart ela pode ter sido fechada.
+      // Auto-open the connection — after a restart it may have been closed.
       if (!connActive) {
         await openConn(connectionId);
       }
@@ -120,7 +121,7 @@ export function ProcessListView({ connectionId }: Props) {
 
   const killProcess = async (id: string) => {
     if (!conn) return;
-    const ok = window.confirm(
+    const ok = await appConfirm(
       t("processList.killConfirm", { id, name: conn.name }),
     );
     if (!ok) return;
@@ -129,7 +130,7 @@ export function ProcessListView({ connectionId }: Props) {
       await ipc.db.runQuery(connectionId, killStatement(conn.driver, id), null);
       await load();
     } catch (e) {
-      alert(
+      void appAlert(
         t("processList.killFailed", {
           id,
           error: e instanceof Error ? e.message : String(e),

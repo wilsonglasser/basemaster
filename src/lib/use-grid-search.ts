@@ -6,12 +6,12 @@ import type { Value } from "@/lib/types";
 import type { SearchState } from "@/components/grid/search-bar";
 
 /**
- * Calcula matches da SearchBar contra um result set.
+ * Compute SearchBar matches against a result set.
  *
- * - Modo "campo": colunas cujo nome contém o termo.
- * - Modo "dado": células cujo displayValue contém o termo (case-insensitive).
+ * - "campo" mode: columns whose name contains the term.
+ * - "dado" mode: cells whose displayValue contains the term (case-insensitive).
  *
- * Retorna match list, índice corrente, prev/next handlers.
+ * Returns match list, current index, prev/next handlers.
  */
 export function useGridSearch(
   search: SearchState,
@@ -22,15 +22,15 @@ export function useGridSearch(
     const term = search.value.trim();
     if (!term) return [];
 
-    // Compila um predicate conforme os flags: regex compila uma vez com
-    // /i opcional; senão usa includes case-sensitive ou lower-case.
+    // Compile a predicate per flags: regex compiles once with
+    // optional /i; otherwise uses case-sensitive includes or lower-case.
     let match: (s: string) => boolean;
     if (search.regex) {
       try {
         const re = new RegExp(term, search.caseSensitive ? "" : "i");
         match = (s) => re.test(s);
       } catch {
-        // Regex inválida → zero matches em vez de throw.
+        // Invalid regex → zero matches instead of throw.
         return [];
       }
     } else if (search.caseSensitive) {
@@ -48,7 +48,7 @@ export function useGridSearch(
       return out;
     }
 
-    // Modo Dado: scan completo. O(rows * cols).
+    // Dado mode: full scan. O(rows * cols).
     const out: Array<[number, number]> = [];
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
@@ -65,7 +65,7 @@ export function useGridSearch(
 
   const [index, setIndex] = useState(0);
 
-  // Reset índice quando matches mudam.
+  // Reset index when matches change.
   useEffect(() => {
     setIndex(0);
   }, [matches]);
@@ -79,8 +79,8 @@ export function useGridSearch(
     setIndex((i) => (i + 1) % matches.length);
   };
 
-  // Clamp para evitar `matches[index]` undefined no render imediatamente
-  // após `matches` shrink (o useEffect que reseta o índice só roda depois).
+  // Clamp to avoid `matches[index]` undefined on render right after
+  // `matches` shrinks (the useEffect that resets index only runs later).
   const safeIndex = matches.length === 0 ? 0 : Math.min(index, matches.length - 1);
 
   return { matches, index: safeIndex, prev, next };

@@ -66,7 +66,7 @@ function Dialog({ onClose }: { onClose: () => void }) {
       );
       await useConnections.getState().refresh();
       setCreatedIds((prev) => new Set(prev).add(c.id));
-      // Abre a conexão em background pra já aparecer expandida na árvore.
+      // Open the connection in the background so it appears expanded in the tree.
       void useConnections.getState().open(profile.id).catch(() => void 0);
     } catch (e) {
       alert(
@@ -85,7 +85,7 @@ function Dialog({ onClose }: { onClose: () => void }) {
       kind: { kind: "new-connection" },
     });
     onClose();
-    // TODO: futuro — pré-preencher via state. Por ora só abre o form.
+    // TODO: future — pre-fill via state. For now just open the form.
   };
 
   return (

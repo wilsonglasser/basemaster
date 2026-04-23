@@ -6,14 +6,14 @@ import { EXPORT_FORMATS, type ExportFormat } from "@/lib/export";
 import { cn } from "@/lib/utils";
 import { useT } from "@/state/i18n";
 
-/** Resultado do picker. O caller decide o que fazer com format + columns. */
+/** Picker result. The caller decides what to do with format + columns. */
 export interface ExportChoice {
   format: ExportFormat;
   columns: string[];
   path: string;
 }
 
-/** Progresso do export — informado pelo caller durante o trabalho. */
+/** Export progress — reported by the caller during the work. */
 export interface ExportProgress {
   done: number;
   total: number | null;
@@ -24,15 +24,15 @@ interface Props {
   open: boolean;
   onClose: () => void;
   columns: readonly string[];
-  /** Nome-base default sugerido no save dialog. */
+  /** Default base name suggested in the save dialog. */
   defaultName: string;
-  /** Total conhecido de linhas (opcional — streaming pode não saber). */
+  /** Known total row count (optional — streaming may not know). */
   rowCount?: number | null;
-  /** Formatos suportados. Default = todos. Útil pra desabilitar XLSX em
-   *  modo streaming (in-memory-only). */
+  /** Supported formats. Default = all. Useful to disable XLSX in
+   *  streaming mode (in-memory-only). */
   allowedFormats?: ExportFormat[];
-  /** Dispara export. Recebe o que o user escolheu. Pode atualizar o
-   *  progresso via setProgress (reportado pelo dialog). Lança em erro. */
+  /** Runs the export. Receives what the user chose. Can update
+   *  progress via setProgress (rendered by the dialog). Throws on error. */
   onExport: (
     choice: ExportChoice,
     setProgress: (p: ExportProgress | null) => void,

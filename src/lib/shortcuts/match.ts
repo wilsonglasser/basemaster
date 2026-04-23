@@ -1,5 +1,5 @@
-/** Normaliza uma string de binding: minúsculas nos modificadores,
- *  última parte com primeira letra maiúscula. Ex: "ctrl+shift+f" → "Ctrl+Shift+F". */
+/** Normalize a binding string: lowercase modifiers,
+ *  last part with first letter capitalized. Ex: "ctrl+shift+f" → "Ctrl+Shift+F". */
 export function normalizeBinding(s: string): string {
   const parts = s
     .split("+")
@@ -8,7 +8,7 @@ export function normalizeBinding(s: string): string {
   if (parts.length === 0) return "";
   const key = parts[parts.length - 1];
   const mods = parts.slice(0, -1).map(capitalize);
-  // Ordena modificadores canonicamente: Mod, Ctrl, Alt, Shift, Meta.
+  // Canonical modifier order: Mod, Ctrl, Alt, Shift, Meta.
   const ORDER = ["Mod", "Ctrl", "Alt", "Shift", "Meta"];
   mods.sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
   const last = key.length === 1 ? key.toUpperCase() : capitalize(key);
@@ -49,13 +49,13 @@ const IS_MAC =
   typeof navigator !== "undefined" &&
   /Mac|iPhone|iPad/.test(navigator.platform);
 
-/** Converte um KeyboardEvent para a string canônica ("Mod+Shift+F").
- *  Usa "Mod" quando Ctrl (win/linux) ou Meta (mac) é o modificador primário. */
+/** Convert a KeyboardEvent to the canonical string ("Mod+Shift+F").
+ *  Uses "Mod" when Ctrl (win/linux) or Meta (mac) is the primary modifier. */
 export function eventToBinding(e: KeyboardEvent): string | null {
   const key = e.key;
   if (!key || key === "Unidentified") return null;
 
-  // Ignora quando só modificador foi pressionado.
+  // Ignore when only a modifier was pressed.
   if (
     key === "Control" ||
     key === "Shift" ||
@@ -68,7 +68,7 @@ export function eventToBinding(e: KeyboardEvent): string | null {
   const mods: string[] = [];
   const primary = IS_MAC ? e.metaKey : e.ctrlKey;
   if (primary) mods.push("Mod");
-  // Ctrl sem Meta no mac ainda conta como Ctrl explícito.
+  // Ctrl without Meta on mac still counts as explicit Ctrl.
   if (IS_MAC && e.ctrlKey && !e.metaKey) mods.push("Ctrl");
   if (!IS_MAC && e.metaKey) mods.push("Meta");
   if (e.altKey) mods.push("Alt");
@@ -80,9 +80,9 @@ export function eventToBinding(e: KeyboardEvent): string | null {
   return normalizeBinding(out);
 }
 
-/** Converte "Mod+Shift+F" em labels humanos dependendo da plataforma:
+/** Convert "Mod+Shift+F" into human labels per platform:
  *  - mac: "⌘⇧F"
- *  - outros: "Ctrl+Shift+F" */
+ *  - others: "Ctrl+Shift+F" */
 export function displayBinding(binding: string | null): string {
   if (!binding) return "—";
   const parts = binding.split("+");

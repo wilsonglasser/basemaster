@@ -1,8 +1,8 @@
 //! basemaster-core
 //!
-//! Modelos compartilhados e a trait `Driver` — contrato que cada SGBD
-//! (MySQL, PostgreSQL, SQLite, ...) implementa. Toda a interação do app
-//! com bancos passa por aqui.
+//! Shared models and the `Driver` trait — the contract each DBMS
+//! (MySQL, PostgreSQL, SQLite, ...) implements. All of the app's
+//! database interaction flows through here.
 
 pub mod connection;
 pub mod driver;
@@ -13,7 +13,7 @@ pub mod value;
 pub use connection::{ConnectionConfig, SshTunnelConfig, TlsMode};
 pub use driver::{
     Driver, ExecuteResult, Filter, FilterNode, FilterOp, GroupOp, OrderBy, PageOptions,
-    QueryResult, SchemaSnapshot, SortDir,
+    QueryResult, SchemaSnapshot, SortDir, Txn,
 };
 pub use error::{Error, Result};
 pub use schema::{

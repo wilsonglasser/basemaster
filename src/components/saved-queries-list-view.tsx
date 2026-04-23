@@ -13,6 +13,7 @@ import {
 import { useContextMenu, type ContextEntry } from "@/hooks/use-context-menu";
 import type { SavedQuery, Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { appAlert, appConfirm, appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { filterBySchema, useSavedQueries } from "@/state/saved-queries";
@@ -122,10 +123,9 @@ export function SavedQueriesListView({ connectionId, schema }: Props) {
   };
 
   const createBlank = async () => {
-    const name = window.prompt(
-      t("savedQueriesList.newNamePrompt"),
-      t("query.savedQueryDefaultName"),
-    );
+    const name = await appPrompt(t("savedQueriesList.newNamePrompt"), {
+      defaultValue: t("query.savedQueryDefaultName"),
+    });
     if (!name || !name.trim()) return;
     try {
       const saved = await createQuery(connectionId, {
@@ -135,12 +135,14 @@ export function SavedQueriesListView({ connectionId, schema }: Props) {
       });
       openQuery(saved);
     } catch (e) {
-      alert(`${t("savedQueriesList.createFailed")}: ${e}`);
+      void appAlert(`${t("savedQueriesList.createFailed")}: ${e}`);
     }
   };
 
   const renameQuery = async (q: SavedQuery) => {
-    const next = window.prompt(t("tree.renameSavedQueryPrompt"), q.name);
+    const next = await appPrompt(t("tree.renameSavedQueryPrompt"), {
+      defaultValue: q.name,
+    });
     if (!next || next.trim() === "" || next === q.name) return;
     try {
       await updateQuery(q.id, {
@@ -149,22 +151,19 @@ export function SavedQueriesListView({ connectionId, schema }: Props) {
         schema: q.schema,
       });
     } catch (e) {
-      alert(`${t("tree.renameFailed")}: ${e}`);
+      void appAlert(`${t("tree.renameFailed")}: ${e}`);
     }
   };
 
   const removeQuery = async (q: SavedQuery) => {
-    if (
-      !window.confirm(
-        t("tree.deleteSavedQueryConfirm", { name: q.name }),
-      )
-    ) {
-      return;
-    }
+    const ok = await appConfirm(
+      t("tree.deleteSavedQueryConfirm", { name: q.name }),
+    );
+    if (!ok) return;
     try {
       await deleteQuery(connectionId, q.id);
     } catch (e) {
-      alert(`${t("tree.deleteFailed")}: ${e}`);
+      void appAlert(`${t("tree.deleteFailed")}: ${e}`);
     }
   };
 

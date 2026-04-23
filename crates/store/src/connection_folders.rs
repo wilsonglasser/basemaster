@@ -47,7 +47,7 @@ impl<'a> ConnectionFolderRepo<'a> {
     ) -> StoreResult<ConnectionFolder> {
         let id = Uuid::new_v4();
         let now = Utc::now().timestamp();
-        // Novo vai pro fim da lista por ordem.
+        // New ones go to the end of the list by order.
         let next_sort: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM connection_folders",
         )
@@ -100,7 +100,7 @@ impl<'a> ConnectionFolderRepo<'a> {
     }
 
     pub async fn delete(&self, id: Uuid) -> StoreResult<()> {
-        // FK com ON DELETE SET NULL já move conexões pro root.
+        // FK with ON DELETE SET NULL already moves connections to the root.
         sqlx::query("DELETE FROM connection_folders WHERE id = ?1")
             .bind(id.to_string())
             .execute(self.pool)
@@ -108,7 +108,7 @@ impl<'a> ConnectionFolderRepo<'a> {
         Ok(())
     }
 
-    /// Move uma conexão pra uma pasta (ou pro root se `folder_id=None`).
+    /// Moves a connection to a folder (or to the root if `folder_id=None`).
     pub async fn move_connection(
         &self,
         connection_id: Uuid,

@@ -11,8 +11,8 @@ const DICTS: Record<Lang, Dict> = {
   en,
 };
 
-/** Dot-path keys da árvore de traduções. Gera tipo string-literal recursivo
- *  pra autocomplete no call-site. */
+/** Dot-path keys of the translation tree. Generates a recursive
+ *  string-literal type for call-site autocomplete. */
 type Leaves<T, P extends string = ""> = T extends string
   ? P
   : {
@@ -71,7 +71,7 @@ export const useI18n = create<I18nState>()(
   ),
 );
 
-/** Hook de conveniência. `const t = useT();` depois `t('sidebar.connections')`. */
+/** Convenience hook. `const t = useT();` then `t('sidebar.connections')`. */
 export function useT() {
   return useI18n((s) => s.t);
 }

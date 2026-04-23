@@ -1,19 +1,19 @@
-//! MCP (Model Context Protocol) server local.
+//! Local MCP (Model Context Protocol) server.
 //!
-//! Expõe um subset do MCP via HTTP JSON-RPC 2.0 em 127.0.0.1:<porta>.
-//! O token de autenticação é gerado no start e exibido pro usuário —
-//! qualquer cliente MCP que configurar `MCP_TOKEN` + URL acessa.
+//! Exposes a subset of MCP over HTTP JSON-RPC 2.0 on 127.0.0.1:<port>.
+//! The auth token is generated at start and shown to the user —
+//! any MCP client that configures `MCP_TOKEN` + URL can access it.
 //!
-//! Ferramentas expostas:
-//!  - `list_connections` — conexões salvas (sem senhas).
-//!  - `open_connection` / `close_connection` — controla qual conn está viva.
+//! Exposed tools:
+//!  - `list_connections` — saved connections (without passwords).
+//!  - `open_connection` / `close_connection` — controls which conn is alive.
 //!  - `list_schemas`, `list_tables`, `describe_table`, `get_table_ddl`.
-//!  - `run_query` — executa SQL arbitrário, retorna rows limitadas.
+//!  - `run_query` — runs arbitrary SQL, returns bounded rows.
 //!
-//! Segurança:
-//!  - Bind em 127.0.0.1 only (nunca 0.0.0.0).
-//!  - Token Bearer obrigatório em todo request.
-//!  - Token aleatório de 32 bytes, regenerado em cada start.
+//! Security:
+//!  - Bind on 127.0.0.1 only (never 0.0.0.0).
+//!  - Bearer token required on every request.
+//!  - Random 32-byte token, regenerated on every start.
 
 use std::sync::Arc;
 
@@ -34,11 +34,11 @@ use crate::state::AppState;
 
 #[derive(Clone)]
 pub struct McpServer {
-    /// Token gerado no start. Clients passam via `Authorization: Bearer <token>`.
+    /// Token generated at start. Clients pass via `Authorization: Bearer <token>`.
     pub token: Arc<RwLock<Option<String>>>,
-    /// Porta em uso (0 = não iniciado).
+    /// Port in use (0 = not started).
     pub port: Arc<RwLock<u16>>,
-    /// Handle do task do servidor pra poder parar.
+    /// Handle for the server task so it can be stopped.
     pub handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Shutdown signal.
     pub shutdown: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
@@ -66,7 +66,7 @@ impl McpServer {
         *self.port.read().await
     }
 
-    /// Inicia o servidor HTTP. Se já tá rodando, para e recomeça.
+    /// Starts the HTTP server. If already running, stops and restarts it.
     pub async fn start(
         &self,
         app_handle: AppHandle,
@@ -360,7 +360,7 @@ async fn call_tool(
                 .list()
                 .await
                 .map_err(|e| e.to_string())?;
-            // Devolve só o essencial — sem passwords.
+            // Return only the essentials — no passwords.
             let items: Vec<_> = list
                 .into_iter()
                 .map(|c| {
@@ -378,9 +378,9 @@ async fn call_tool(
         }
         "open_connection" => {
             let id: Uuid = parse_uuid(&args, "connection_id")?;
-            // Reusa a lógica do command — precisamos chamar o mesmo path.
-            // Aqui uma réplica simplificada: pega profile, monta config
-            // com senha do keyring, chama driver.connect.
+            // Reuses the command's logic — we need to call the same path.
+            // Here's a simplified replica: get profile, build config
+            // with the keyring password, call driver.connect.
             open_connection_impl(app, id).await?;
             Ok(json!({ "ok": true }))
         }
@@ -522,8 +522,8 @@ fn parse_str(args: &JsonValue, key: &str) -> Result<String, String> {
 }
 
 fn random_hex_token(bytes: usize) -> String {
-    // Fonte: Uuid::new_v4() fornece 128 bits; concatena até atingir o
-    // tamanho pedido. Não é CSPRNG full mas suficiente pra token local.
+    // Source: Uuid::new_v4() provides 128 bits; concatenates until
+    // reaching the requested size. Not a full CSPRNG but enough for a local token.
     let mut out = String::with_capacity(bytes * 2);
     while out.len() < bytes * 2 {
         let u = Uuid::new_v4();

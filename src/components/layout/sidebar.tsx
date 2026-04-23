@@ -5,6 +5,7 @@ import { Container, Database, Folder as FolderIcon, Moon, Plug, Plus, Search, Se
 import { useContextMenu, type ContextEntry } from "@/hooks/use-context-menu";
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
+import { appAlert, appConfirm, appPrompt } from "@/state/app-dialog";
 import { useTheme } from "@/state/theme";
 import { useConnections } from "@/state/connections";
 import { useDockerDiscover } from "@/state/docker-discover";
@@ -68,10 +69,10 @@ export function Sidebar({ className }: SidebarProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
 
-  // Typing-to-search: qualquer letra/número digitado fora de
-  // input/textarea/contenteditable/CodeMirror vai pro campo de busca da
-  // sidebar. Não exige que o foco esteja literalmente dentro da aside —
-  // no estado normal o foco fica em `body`, que não é descendente.
+  // Typing-to-search: any letter/number typed outside an
+  // input/textarea/contenteditable/CodeMirror goes to the sidebar's search
+  // field. Doesn't require focus literally inside the aside — in the normal
+  // state focus is on `body`, which isn't a descendant.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -107,7 +108,7 @@ export function Sidebar({ className }: SidebarProps) {
     const onUp = () => setDragging(false);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    // Mantém o cursor de resize enquanto arrasta, mesmo fora do handle.
+    // Keep the resize cursor while dragging, even outside the handle.
     const prevCursor = document.body.style.cursor;
     const prevUserSelect = document.body.style.userSelect;
     document.body.style.cursor = "col-resize";
@@ -264,13 +265,13 @@ function AddConnectionMenu() {
     );
 
   const newFolder = async () => {
-    const name = window.prompt(t("sidebar.newFolderPrompt"));
+    const name = await appPrompt(t("sidebar.newFolderPrompt"));
     if (!name || !name.trim()) return;
     try {
       await ipc.folders.create({ name: name.trim() });
       await refreshFolders();
     } catch (e) {
-      alert(t("common.failure", { error: String(e) }));
+      void appAlert(t("common.failure", { error: String(e) }));
     }
   };
 
@@ -308,10 +309,10 @@ function AddConnectionMenu() {
   );
 }
 
-/** Área do tree com context menu na área vazia: right-click num espaço
- *  sem conexão/pasta oferece "Nova conexão" / "Nova pasta" / "Importar".
- *  Context menus dos próprios nós (ConnectionNode/FolderNode) dão
- *  stopPropagation, então não conflitam. */
+/** Tree area with a context menu in the empty space: right-click on a spot
+ *  without a connection/folder offers "New connection" / "New folder" / "Import".
+ *  Context menus on the nodes themselves (ConnectionNode/FolderNode) call
+ *  stopPropagation, so they don't conflict. */
 function SidebarTreeArea({ children }: { children: React.ReactNode }) {
   const t = useT();
   const openOrFocus = useTabs((s) => s.openOrFocus);
@@ -329,13 +330,13 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
     );
 
   const newFolder = async () => {
-    const name = window.prompt(t("sidebar.newFolderPrompt"));
+    const name = await appPrompt(t("sidebar.newFolderPrompt"));
     if (!name || !name.trim()) return;
     try {
       await ipc.folders.create({ name: name.trim() });
       await refreshFolders();
     } catch (e) {
-      alert(t("common.failure", { error: String(e) }));
+      void appAlert(t("common.failure", { error: String(e) }));
     }
   };
 
@@ -353,10 +354,10 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
       if (!path || Array.isArray(path)) return;
       const payload = await ipc.portability.importParse(path);
       if (payload.connections.length === 0) {
-        alert(t("welcome.fileHasNoConnections"));
+        void appAlert(t("welcome.fileHasNoConnections"));
         return;
       }
-      const ok = window.confirm(
+      const ok = await appConfirm(
         t("welcome.confirmImport", {
           count: payload.connections.length,
           folders: "",
@@ -366,7 +367,7 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
       await ipc.portability.importApply(payload);
       await refresh();
     } catch (e) {
-      alert(t("common.failure", { error: String(e) }));
+      void appAlert(t("common.failure", { error: String(e) }));
     }
   };
 
@@ -409,13 +410,13 @@ function NewFolderButton() {
   const refreshFolders = useConnections((s) => s.refreshFolders);
   const t = useT();
   const run = async () => {
-    const name = window.prompt(t("sidebar.newFolderPrompt"));
+    const name = await appPrompt(t("sidebar.newFolderPrompt"));
     if (!name || !name.trim()) return;
     try {
       await ipc.folders.create({ name: name.trim() });
       await refreshFolders();
     } catch (e) {
-      alert(t("common.failure", { error: String(e) }));
+      void appAlert(t("common.failure", { error: String(e) }));
     }
   };
   return (
@@ -449,21 +450,21 @@ function ImportConnectionsButton() {
       const payload = await ipc.portability.importParse(path);
       const count = payload.connections.length;
       if (count === 0) {
-        alert(t("welcome.fileHasNoConnections"));
+        void appAlert(t("welcome.fileHasNoConnections"));
         return;
       }
       const folders = payload.folders.length
         ? t("welcome.foldersSuffix", { n: payload.folders.length })
         : "";
-      const ok = window.confirm(
+      const ok = await appConfirm(
         t("welcome.confirmImport", { count, folders }),
       );
       if (!ok) return;
       const applied = await ipc.portability.importApply(payload);
-      alert(t("welcome.imported", { count: applied }));
+      void appAlert(t("welcome.imported", { count: applied }));
       await refresh();
     } catch (e) {
-      alert(t("welcome.importFailed", { error: String(e) }));
+      void appAlert(t("welcome.importFailed", { error: String(e) }));
     }
   };
 

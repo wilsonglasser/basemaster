@@ -12,7 +12,7 @@ export const useSidebarFilter = create<SidebarFilterState>((set) => ({
   },
 }));
 
-/** Match case-insensitive, strip-acento. */
+/** Case-insensitive match, accent-stripped. */
 export function matches(text: string, query: string): boolean {
   if (!query) return true;
   return norm(text).includes(norm(query));
@@ -25,11 +25,11 @@ function norm(s: string): string {
     .toLowerCase();
 }
 
-/** Encontra o range [start, end) do match na string normalizada,
- *  mas retornando índices sobre a string ORIGINAL. Retorna null se
- *  não acha. Suporta NFD mantendo 1:1 char-length (normalize NFD pode
- *  aumentar o tamanho; pra simplicidade, comparação é simples sem
- *  stripping de acento pros índices). */
+/** Find the [start, end) range of the match in the normalized string,
+ *  but return indices over the ORIGINAL string. Returns null if not
+ *  found. Supports NFD keeping 1:1 char-length (NFD normalize may
+ *  increase size; for simplicity, comparison is plain without
+ *  accent-stripping for the indices). */
 export function matchRange(
   text: string,
   query: string,

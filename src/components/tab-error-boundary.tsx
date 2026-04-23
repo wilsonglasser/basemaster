@@ -5,9 +5,10 @@ interface State {
 }
 
 /**
- * Error boundary por aba. Sem isso, um erro em qualquer componente filho
- * derruba toda a árvore React e o usuário vê tela preta. Aqui exibimos
- * o stack trace localizado na própria aba — o resto do app continua vivo.
+ * Per-tab error boundary. Without it, an error in any child component
+ * takes down the whole React tree and the user sees a black screen.
+ * Here we show the stack trace localized within the tab — the rest of
+ * the app stays alive.
  */
 export class TabErrorBoundary extends React.Component<
   { children: React.ReactNode },

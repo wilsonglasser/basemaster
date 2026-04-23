@@ -1,10 +1,10 @@
-//! Detecta containers Docker rodando mysql/mariadb/percona/postgres
-//! e extrai host:port + credenciais (via env vars) pra sugerir novas
-//! conexões. Roda `docker ps --format json` + `docker inspect`.
+//! Detects Docker containers running mysql/mariadb/percona/postgres
+//! and extracts host:port + credentials (via env vars) to suggest new
+//! connections. Runs `docker ps --format json` + `docker inspect`.
 //!
-//! Windows: tenta `docker` (Docker Desktop expõe no PATH). Se falhar
-//! com "not found", tenta `wsl docker` — caso o usuário só rode docker
-//! dentro do WSL.
+//! Windows: tries `docker` (Docker Desktop exposes it on PATH). If it
+//! fails with "not found", tries `wsl docker` — in case the user only
+//! runs docker inside WSL.
 
 use std::process::Stdio;
 
@@ -23,7 +23,7 @@ pub struct DockerCandidate {
     pub password: Option<String>,
     pub default_database: Option<String>,
     pub running: bool,
-    /// Via `docker` ou via `wsl docker`.
+    /// Via `docker` or via `wsl docker`.
     pub via_wsl: bool,
 }
 
@@ -59,7 +59,7 @@ struct InspectNetwork {
     ports: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// Ordem de tentativa: (program, args-prefix, via_wsl).
+/// Attempt order: (program, args-prefix, via_wsl).
 fn base_commands() -> Vec<(&'static str, Vec<&'static str>, bool)> {
     if cfg!(target_os = "windows") {
         vec![
@@ -76,7 +76,7 @@ async fn run(program: &str, args: &[&str]) -> Result<String, String> {
     cmd.args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Windows: esconde janela de console do child process.
+    // Windows: hide the child process's console window.
     #[cfg(target_os = "windows")]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -96,7 +96,7 @@ async fn run(program: &str, args: &[&str]) -> Result<String, String> {
 
 fn image_driver(image: &str) -> Option<&'static str> {
     let i = image.to_ascii_lowercase();
-    // Separa repositório da tag pra matchar nomes tipo "library/mysql:8".
+    // Separate repository from tag to match names like "library/mysql:8".
     let repo = i.split(':').next().unwrap_or(&i);
     let last = repo.rsplit('/').next().unwrap_or(repo);
     if last == "mysql"
@@ -161,7 +161,7 @@ fn credentials_from_env(
             let user = env_get(envs, &["MYSQL_USER", "MARIADB_USER"])
                 .map(|s| s.to_string())
                 .or_else(|| Some("root".to_string()));
-            // Se MYSQL_USER definido, usa MYSQL_PASSWORD; senão ROOT_PASSWORD.
+            // If MYSQL_USER is defined, use MYSQL_PASSWORD; otherwise ROOT_PASSWORD.
             let password = if env_get(envs, &["MYSQL_USER", "MARIADB_USER"]).is_some() {
                 env_get(
                     envs,
@@ -231,7 +231,7 @@ async fn inspect(
         .ok_or_else(|| "inspect vazio".to_string())
 }
 
-/// Tenta as variantes de CLI até uma funcionar.
+/// Try the CLI variants until one works.
 pub async fn discover() -> Result<Vec<DockerCandidate>, String> {
     let variants = base_commands();
     let mut last_err = String::new();
@@ -258,9 +258,9 @@ pub async fn discover() -> Result<Vec<DockerCandidate>, String> {
                     let envs = info.config.env.unwrap_or_default();
                     let (user, password, db) = credentials_from_env(&envs, driver);
 
-                    // Containers sem port mapping não são úteis (a gente
-                    // conecta via host; talvez o usuário só exponha pra
-                    // outras pods). Pula.
+                    // Containers without port mapping aren't useful (we
+                    // connect via host; the user may only expose to
+                    // other pods). Skip.
                     let port = match host_port {
                         Some(p) => p,
                         None => continue,
@@ -280,7 +280,7 @@ pub async fn discover() -> Result<Vec<DockerCandidate>, String> {
                         via_wsl,
                     });
                 }
-                // Running primeiro, depois alfabético.
+                // Running first, then alphabetical.
                 out.sort_by(|a, b| {
                     b.running
                         .cmp(&a.running)

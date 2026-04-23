@@ -3,6 +3,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { useShortcut } from "@/lib/shortcuts/use-shortcuts";
 import { useAiAgent } from "@/state/ai-agent";
+import { appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useI18n } from "@/state/i18n";
 import { useSidebarSelection } from "@/state/sidebar-selection";
@@ -10,7 +11,7 @@ import { useTableViewBridge } from "@/state/table-view-bridge";
 import { useTabs } from "@/state/tabs";
 import { useUiZoom } from "@/state/ui-zoom";
 
-/** Registra handlers globais dos atalhos. Nada renderiza — só hooks. */
+/** Registers global handlers for the shortcuts. Nothing rendered — hooks only. */
 export function ShortcutBindings() {
   // --- Ctrl+D — abrir/focar estrutura da tabela ---
   useShortcut(
@@ -19,7 +20,7 @@ export function ShortcutBindings() {
       const tabsSt = useTabs.getState();
       const active = tabsSt.tabs.find((t) => t.id === tabsSt.activeId);
 
-      // Caso 1: aba ativa é TableView → alterna pra Estrutura + edit.
+      // Case 1: active tab is TableView → toggle to Structure + edit.
       if (active && active.kind.kind === "table") {
         const bridge = useTableViewBridge.getState();
         const ok = bridge.setViewOf(active.id, "structure");
@@ -30,7 +31,7 @@ export function ShortcutBindings() {
         }
       }
 
-      // Caso 2: seleção na sidebar é uma tabela → abre TableView em Estrutura.
+      // Case 2: sidebar selection is a table → open TableView in Structure.
       const sel = useSidebarSelection.getState().selected;
       if (sel && sel.kind === "table") {
         const accent =
@@ -61,7 +62,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- Ctrl+T — nova query (na conexão focada, se houver) ---
+  // --- Ctrl+T — new query (on the focused connection, if any) ---
   useShortcut(
     "tab.newQuery",
     useCallback(() => {
@@ -94,7 +95,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- Ctrl+Tab / Ctrl+Shift+Tab — navegação ---
+  // --- Ctrl+Tab / Ctrl+Shift+Tab — navigation ---
   useShortcut(
     "tab.next",
     useCallback(() => {
@@ -124,7 +125,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- F2 — rename da seleção atual (sidebar) ---
+  // --- F2 — rename the current selection (sidebar) ---
   useShortcut(
     "rename.selected",
     useCallback(async () => {
@@ -134,9 +135,9 @@ export function ShortcutBindings() {
       const { ipc } = await import("@/lib/ipc");
       try {
         if (sel.kind === "table") {
-          const next = window.prompt(
+          const next = await appPrompt(
             t("shortcuts.renameTablePrompt", { name: sel.table }),
-            sel.table,
+            { defaultValue: sel.table },
           );
           if (!next || !next.trim() || next === sel.table) return;
           await ipc.db.renameTable(
@@ -153,14 +154,14 @@ export function ShortcutBindings() {
             .getState()
             .ensureSnapshot(sel.connectionId, sel.schema);
         } else if (sel.kind === "schema") {
-          const next = window.prompt(
+          const next = await appPrompt(
             t("shortcuts.renameSchemaPrompt", { name: sel.schema }),
-            sel.schema,
+            { defaultValue: sel.schema },
           );
           if (!next || !next.trim() || next === sel.schema) return;
           await ipc.db.renameSchema(sel.connectionId, sel.schema, next.trim());
         } else if (sel.kind === "connection") {
-          // Abre tab de edit da conexão.
+          // Open the connection's edit tab.
           useTabs.getState().openOrFocus(
             (tab) =>
               tab.kind.kind === "edit-connection" &&
@@ -178,9 +179,9 @@ export function ShortcutBindings() {
           const cache = useSavedQueries.getState().cache[sel.connectionId];
           const q = cache?.find((x) => x.id === sel.savedQueryId);
           if (!q) return;
-          const next = window.prompt(
+          const next = await appPrompt(
             t("shortcuts.renameSavedQueryPrompt", { name: q.name }),
-            q.name,
+            { defaultValue: q.name },
           );
           if (!next || !next.trim() || next === q.name) return;
           await useSavedQueries
@@ -209,15 +210,15 @@ export function ShortcutBindings() {
 
   // --- Zoom ---
   // Listener dedicado em CAPTURE phase, antes do sistema de shortcuts.
-  // Cobre todas variações de `=` / `+` / `-` / `_` independente de layout
+  // Covers all variations of `=` / `+` / `-` / `_` regardless of layout
   // de teclado (Ctrl+= em US, Ctrl+Shift+= pra gerar +, Ctrl+NumpadAdd,
   // etc). O sistema de shortcuts geral falha em alguns combos por causa
-  // de shift/layout; isso aqui é o bruteforce que sempre funciona.
+  // of shift/layout; this is the bruteforce that always works.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
-      // Ignora se foco tá num input/editor (composer da IA, etc).
+      // Ignore if focus is in an input/editor (AI composer, etc.).
       const t = e.target as HTMLElement | null;
       if (t) {
         const tag = t.tagName;
@@ -262,7 +263,7 @@ export function ShortcutBindings() {
   );
 
   // Aplica o zoom sempre que muda — tenta via API nativa do webview
-  // primeiro; se falhar (ex: permission não concedida porque não
+  // first; if it fails (e.g., permission not granted because the user
   // reiniciou), cai no CSS zoom como fallback.
   const zoom = useUiZoom((s) => s.zoom);
   useEffect(() => {

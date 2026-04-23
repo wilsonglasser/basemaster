@@ -24,8 +24,8 @@ export type LightPresetId =
 
 export type PresetId = DarkPresetId | LightPresetId;
 
-/** Todos os tokens aplicados como CSS vars no :root. Cada preset fornece
- *  um set completo — sem merge / fallback. Valores em oklch(...). */
+/** All tokens applied as CSS vars on :root. Each preset provides
+ *  a complete set — no merge / fallback. Values in oklch(...). */
 export interface ThemeTokens {
   background: string;
   foreground: string;
@@ -94,7 +94,7 @@ const slateDark: ThemeTokens = {
   connAccentForeground: "oklch(0.145 0 0)",
 };
 
-// Darcula — JetBrains clássico. Base #2B2B2B, fg #A9B7C6, accent laranja.
+// Darcula — classic JetBrains. Base #2B2B2B, fg #A9B7C6, orange accent.
 const darculaTokens: ThemeTokens = {
   background: "oklch(0.27 0.002 90)",
   foreground: "oklch(0.77 0.025 240)",
@@ -154,7 +154,7 @@ const oneDarkTokens: ThemeTokens = {
   connAccentForeground: "oklch(0.15 0 0)",
 };
 
-// Tokyo Night. Base #1A1B26, fg #A9B1D6, acento roxo.
+// Tokyo Night. Base #1A1B26, fg #A9B1D6, purple accent.
 const tokyoNightTokens: ThemeTokens = {
   background: "oklch(0.19 0.02 280)",
   foreground: "oklch(0.75 0.04 270)",
@@ -245,7 +245,7 @@ const cleanLight: ThemeTokens = {
   connAccentForeground: "oklch(0.985 0 0)",
 };
 
-// IntelliJ Light — JetBrains. Fundo #FFFFFF, editor #FFFFFF, accent azul #4A8CC7.
+// IntelliJ Light — JetBrains. Background #FFFFFF, editor #FFFFFF, blue accent #4A8CC7.
 const intellijLightTokens: ThemeTokens = {
   background: "oklch(0.99 0 0)",
   foreground: "oklch(0.15 0.005 240)",
@@ -275,7 +275,7 @@ const intellijLightTokens: ThemeTokens = {
   connAccentForeground: "oklch(0.99 0 0)",
 };
 
-// GitHub Light. Base #FFFFFF, fg #24292E, accent azul #0969DA.
+// GitHub Light. Base #FFFFFF, fg #24292E, blue accent #0969DA.
 const githubLightTokens: ThemeTokens = {
   background: "oklch(1 0 0)",
   foreground: "oklch(0.24 0.01 250)",
@@ -305,7 +305,7 @@ const githubLightTokens: ThemeTokens = {
   connAccentForeground: "oklch(0.99 0 0)",
 };
 
-// Solarized Light. Base #FDF6E3 (creme), fg #657B83, accent azul #268BD2.
+// Solarized Light. Base #FDF6E3 (cream), fg #657B83, blue accent #268BD2.
 const solarizedLightTokens: ThemeTokens = {
   background: "oklch(0.965 0.025 85)",
   foreground: "oklch(0.45 0.02 210)",
@@ -357,10 +357,10 @@ export const LIGHT_PRESETS: LightPreset[] = [
 
 // ---------------- CUSTOM ----------------
 
-/** Deriva um preset custom a partir de uma cor base em hex (#rrggbb).
- *  Estratégia: converte hex→oklch pra achar L/C/H, e gera os tokens
- *  derivados a partir da lightness + hue da base. Custom-dark assume
- *  L ≤ 0.35; custom-light assume L ≥ 0.85. */
+/** Derive a custom preset from a base hex color (#rrggbb).
+ *  Strategy: convert hex→oklch to find L/C/H, and generate derived
+ *  tokens from the base lightness + hue. Custom-dark assumes
+ *  L ≤ 0.35; custom-light assumes L ≥ 0.85. */
 export function deriveCustomPreset(
   id: "custom-dark" | "custom-light",
   baseHex: string,
@@ -465,7 +465,7 @@ export function getPreset(id: PresetId, customBg?: string): Preset {
   return all.find((p) => p.id === id) ?? DARK_PRESETS[0];
 }
 
-/** Injeta os tokens como CSS custom properties no :root. */
+/** Inject the tokens as CSS custom properties on :root. */
 export function applyTokens(tokens: ThemeTokens) {
   const root = document.documentElement;
   const map: Record<string, string> = {
@@ -499,8 +499,8 @@ export function applyTokens(tokens: ThemeTokens) {
   for (const [k, v] of Object.entries(map)) root.style.setProperty(k, v);
 }
 
-// Mini parser hex → oklch via sRGB→Lab→OKLab. Suficiente pra input do
-// color picker (user escolhe uma cor base; precisão < 1% é irrelevante).
+// Mini hex → oklch parser via sRGB→Lab→OKLab. Sufficient for color-picker
+// input (user picks a base color; <1% precision is irrelevant).
 function hexToOklch(hex: string): { l: number; c: number; h: number } {
   const s = hex.replace("#", "");
   const full = s.length === 3 ? s.split("").map((c) => c + c).join("") : s;

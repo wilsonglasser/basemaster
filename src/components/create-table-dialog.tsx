@@ -7,7 +7,7 @@ import { useCreateTable } from "@/state/create-table-state";
 import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
 
-/** Tipos comuns. Length/precision viram placeholder quando não é relevante. */
+/** Common types. Length/precision becomes a placeholder when not relevant. */
 const COLUMN_TYPES = [
   "INT",
   "BIGINT",
@@ -37,9 +37,9 @@ const ENGINES = ["InnoDB", "MyISAM", "MEMORY"] as const;
 interface ColumnDraft {
   name: string;
   type: string;
-  length: string; // VARCHAR(255), DECIMAL(10,2) — string livre
+  length: string; // VARCHAR(255), DECIMAL(10,2) — free-form string
   nullable: boolean;
-  default: string; // "" = sem default; "NULL" explícito aceito
+  default: string; // "" = no default; explicit "NULL" accepted
   autoIncrement: boolean;
   primaryKey: boolean;
   unique: boolean;
@@ -78,8 +78,8 @@ function buildCreateSql(
     let line = `${quote(c.name.trim())} ${tname}`;
     line += c.nullable ? " NULL" : " NOT NULL";
     if (c.default.trim()) {
-      // Decide aspas: palavras reservadas (NULL, CURRENT_TIMESTAMP) sem aspas;
-      // resto com aspas ANSI.
+      // Quoting: reserved words (NULL, CURRENT_TIMESTAMP) unquoted;
+      // everything else with ANSI quotes.
       const d = c.default.trim();
       const reserved =
         /^(NULL|CURRENT_TIMESTAMP|CURRENT_DATE|NOW\(\)|TRUE|FALSE)$/i.test(d) ||
@@ -108,7 +108,7 @@ function buildCreateSql(
   return sql + ";";
 }
 
-/** Montado uma vez no root — reage ao store. */
+/** Mounted once at the root — reacts to the store. */
 export function CreateTableDialog() {
   const t = useT();
   const request = useCreateTable((s) => s.request);
@@ -156,7 +156,7 @@ export function CreateTableDialog() {
       await ipc.db.runQuery(connectionId, sql, schema);
       invalidate(connectionId, schema);
       ensureSnapshot(connectionId, schema).catch(() => {});
-      // Reset state pra próxima abertura.
+      // Reset state for the next opening.
       setName("");
       setCols([
         {
@@ -206,7 +206,7 @@ export function CreateTableDialog() {
         </header>
 
         <div className="min-h-0 flex-1 overflow-auto p-4">
-          {/* Nome + opções rápidas */}
+          {/* Name + quick options */}
           <div className="mb-3 grid grid-cols-[1fr_auto_auto] gap-2">
             <input
               type="text"
@@ -246,7 +246,7 @@ export function CreateTableDialog() {
             className="mb-3 w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground"
           />
 
-          {/* Tabela de colunas */}
+          {/* Column table */}
           <div className="rounded-md border border-border">
             <div className="grid grid-cols-[1.5fr_1fr_0.8fr_auto_auto_auto_auto_1fr_auto] items-center gap-1 border-b border-border bg-card/40 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               <span>{t("createTableDialog.colName")}</span>
@@ -277,7 +277,7 @@ export function CreateTableDialog() {
             </button>
           </div>
 
-          {/* Preview SQL */}
+          {/* SQL preview */}
           <div className="mt-3">
             <button
               type="button"
@@ -386,7 +386,7 @@ function ColumnRow({
         onChange={(e) =>
           onChange({
             primaryKey: e.target.checked,
-            // PK implica NOT NULL — sobrescreve pra consistência.
+            // PK implies NOT NULL — overwrite for consistency.
             nullable: e.target.checked ? false : col.nullable,
           })
         }

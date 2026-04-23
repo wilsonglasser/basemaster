@@ -23,9 +23,9 @@ export interface FormCellEdit {
 interface Props {
   columns: readonly string[];
   rows: readonly (readonly Value[])[];
-  /** Opcional: metadata visual (ex: coluna PK) — só pra mostrar badge. */
+  /** Optional: visual metadata (e.g. PK column) — just for the badge. */
   pkColumns?: ReadonlySet<string>;
-  /** Dirty overlay — se a célula (row, col) tem uma edição pendente. */
+  /** Dirty overlay — whether the (row, col) cell has a pending edit. */
   dirtyValues?: Map<string, string>; // key: "row:col"
   dirtyIntents?: Map<string, "edit" | "null" | "empty">;
   editable: boolean;
@@ -55,7 +55,7 @@ export function RecordFormView({
   const clampedIdx = Math.min(rowIdx, Math.max(0, rows.length - 1));
   const row = rows[clampedIdx];
 
-  // Reset da posição se o underlying rows mudou (ex: refresh pra nova página).
+  // Reset position if the underlying rows changed (e.g. refresh to a new page).
   useMemo(() => {
     if (rowIdx > rows.length - 1) setRowIdx(Math.max(0, rows.length - 1));
     // eslint-disable-next-line react-hooks/exhaustive-deps

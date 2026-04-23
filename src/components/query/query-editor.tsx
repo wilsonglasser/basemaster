@@ -80,7 +80,7 @@ export function QueryEditor({
   const themeCompartment = useRef(new Compartment());
   const cmTheme = useTheme((s) => s.effectivePreset().cmTheme);
 
-  // Mantém callbacks atuais sem recriar o editor.
+  // Keeps current callbacks without recreating the editor.
   useEffect(() => {
     onRunRef.current = onRun;
     onChangeRef.current = onChange;

@@ -5,10 +5,10 @@ import App from "./App";
 import { initSentry } from "./lib/sentry";
 import "./index.css";
 
-// Mostra a janela assim que o módulo carrega — o splash já está no DOM
-// porque o <script> fica no fim do body. Isso elimina o flash de janela
-// preta entre a abertura do Tauri e o paint do WebView. Roda antes de
-// qualquer render do React pra garantir que user veja o splash direto.
+// Show the window as soon as the module loads — the splash is already in the DOM
+// because the <script> is at the end of body. This eliminates the flash of a
+// black window between Tauri opening and the WebView paint. Runs before any
+// React render to guarantee the user sees the splash right away.
 getCurrentWebviewWindow().show().catch(() => {});
 
 initSentry();

@@ -17,7 +17,7 @@ export function UpdateDialog() {
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50"
       onClick={() => {
-        // Só fecha no click-fora se não estiver baixando/instalando.
+        // Only closes on click-outside when not downloading/installing.
         if (status.kind === "available" || status.kind === "error") dismiss();
       }}
     >

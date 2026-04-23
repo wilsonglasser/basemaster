@@ -50,6 +50,7 @@ import type {
 } from "@/lib/types";
 import { DbIcon } from "@/components/ui/db-icon";
 import { cn } from "@/lib/utils";
+import { appAlert, appConfirm, appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { filterBySchema, useSavedQueries } from "@/state/saved-queries";
@@ -119,7 +120,7 @@ export function ConnTree() {
   useSidebarShortcuts();
   if (connections.length === 0 && folders.length === 0) return null;
 
-  // Agrupa conexões por folder_id. Null = root.
+  // Group connections by folder_id. Null = root.
   const byFolder = new Map<string, ConnectionProfile[]>();
   for (const c of connections) {
     const key = c.folder_id ?? "__root__";
@@ -129,7 +130,7 @@ export function ConnTree() {
 
   return (
     <ul className="grid gap-0.5">
-      {/* Pastas primeiro, na ordem definida. */}
+      {/* Folders first, in the defined order. */}
       {folders.map((f) => (
         <FolderNode
           key={f.id}
@@ -137,10 +138,10 @@ export function ConnTree() {
           connections={byFolder.get(f.id) ?? []}
         />
       ))}
-      {/* Drop zone pro root (aparece só se há pastas — senão não
-           faz sentido tirar conexão "pro root" já que já tá lá). */}
+      {/* Root drop zone (only appears if there are folders — otherwise
+           it makes no sense to "move to root" since it's already there). */}
       {folders.length > 0 && <RootDropZone />}
-      {/* Conexões soltas no root. */}
+      {/* Connections at the root. */}
       {(byFolder.get("__root__") ?? []).map((c) => (
         <ConnectionNode key={c.id} conn={c} />
       ))}
@@ -148,10 +149,10 @@ export function ConnTree() {
   );
 }
 
-/** Drop zone invisível entre pastas e conexões root — só aparece
- *  visualmente quando há drag em cima. */
-/** Ícone oficial (simple-icons) do driver. Acende na cor da conexão
- *  quando ativa; fica dim/muted quando desconectada. */
+/** Invisible drop zone between folders and root connections — only
+ *  appears visually when being dragged over. */
+/** Official driver icon (simple-icons). Lights up in the connection color
+ *  when active; goes dim/muted when disconnected. */
 function DriverIcon({
   driver,
   active,
@@ -195,7 +196,7 @@ function RootDropZone() {
           await ipc.folders.move(id, null);
           await refresh();
         } catch (err) {
-          alert(t("tree.moveFailed", { error: String(err) }));
+          void appAlert(t("tree.moveFailed", { error: String(err) }));
         }
       }}
     />
@@ -216,30 +217,35 @@ function FolderNode({
   const [dragOver, setDragOver] = useState(false);
 
   const rename = async () => {
-    const next = window.prompt(t("tree.renameFolderPrompt"), folder.name);
+    const next = await appPrompt(t("tree.renameFolderPrompt"), {
+      defaultValue: folder.name,
+    });
     if (!next || !next.trim() || next === folder.name) return;
     try {
       await ipc.folders.rename(folder.id, next.trim());
       await refreshFolders();
     } catch (e) {
-      alert(t("tree.renameTableErr", { error: String(e) }));
+      await appAlert(t("tree.renameTableErr", { error: String(e) }));
     }
   };
 
   const remove = async () => {
     const hasConns = connections.length > 0;
     if (!hasConns) {
-      if (!window.confirm(t("tree.deleteEmptyFolderConfirm", { name: folder.name }))) return;
+      const ok = await appConfirm(
+        t("tree.deleteEmptyFolderConfirm", { name: folder.name }),
+      );
+      if (!ok) return;
       try {
         await ipc.folders.delete(folder.id);
         await refresh();
       } catch (e) {
-        alert(t("common.failure", { error: String(e) }));
+        await appAlert(t("common.failure", { error: String(e) }));
       }
       return;
     }
-    // Tem conexões: 3 opções — cancelar, mover pro root, apagar junto.
-    const choice = window.confirm(
+    // Has connections: 3 options — cancel, move to root, delete together.
+    const choice = await appConfirm(
       t("tree.deleteFolderWithConnsConfirm", {
         name: folder.name,
         count: connections.length,
@@ -247,7 +253,7 @@ function FolderNode({
     );
     try {
       if (choice) {
-        // Apagar conexões uma a uma.
+        // Delete connections one by one.
         for (const c of connections) {
           await ipc.connections.delete(c.id);
         }
@@ -255,13 +261,13 @@ function FolderNode({
       await ipc.folders.delete(folder.id);
       await refresh();
     } catch (e) {
-      alert(t("common.failure", { error: String(e) }));
+      await appAlert(t("common.failure", { error: String(e) }));
     }
   };
 
   const exportConnections = async () => {
     try {
-      const includePasswords = window.confirm(
+      const includePasswords = await appConfirm(
         t("tree.exportFolderPrompt", {
           count: connections.length,
           name: folder.name,
@@ -275,7 +281,7 @@ function FolderNode({
         connections: payload.connections.filter((c) => connNames.has(c.name)),
       };
       if (filtered.connections.length === 0) {
-        alert(t("tree.nothingToExport"));
+        void appAlert(t("tree.nothingToExport"));
         return;
       }
       const { save } = await import("@tauri-apps/plugin-dialog");
@@ -288,7 +294,7 @@ function FolderNode({
       const { invoke: doInvoke } = await import("@tauri-apps/api/core");
       await doInvoke("save_file", { path, data: Array.from(bytes) });
     } catch (e) {
-      alert(t("common.failure", { error: String(e) }));
+      void appAlert(t("common.failure", { error: String(e) }));
     }
   };
 
@@ -301,7 +307,7 @@ function FolderNode({
       await ipc.folders.move(id, folder.id);
       await refresh();
     } catch (err) {
-      alert(t("tree.moveFailed", { error: String(err) }));
+      void appAlert(t("tree.moveFailed", { error: String(err) }));
     }
   };
 
@@ -374,11 +380,11 @@ function FolderNode({
   );
 }
 
-/** Atalhos globais na sidebar. Ctrl+C copia a seleção atual pro clipboard
- *  (1 tabela se for table, todas as tabelas do schema se for schema).
- *  Ctrl+V abre o wizard de transferência com a seleção atual como target
- *  (connection ou schema). Ignora quando o foco tá em input/textarea,
- *  pra não atropelar copy/paste normal em campos. */
+/** Global sidebar shortcuts. Ctrl+C copies the current selection to the
+ *  clipboard (1 table if it's a table, all tables of the schema if a schema).
+ *  Ctrl+V opens the transfer wizard with the current selection as target
+ *  (connection or schema). Ignored when focus is in an input/textarea,
+ *  so we don't steal normal copy/paste in fields. */
 function useSidebarShortcuts() {
   const newTab = useTabs((s) => s.open);
   const t = useT();
@@ -388,7 +394,7 @@ function useSidebarShortcuts() {
       if (!ctrl) return;
       const key = e.key.toLowerCase();
       if (key !== "c" && key !== "v") return;
-      // Não atropela copy/paste em inputs/textareas/content-editable.
+      // Don't stomp on copy/paste in inputs/textareas/content-editable.
       const tgt = e.target as HTMLElement | null;
       if (tgt) {
         const tag = tgt.tagName;
@@ -465,6 +471,8 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   const openTab = useTabs((s) => s.openOrFocus);
   const newTab = useTabs((s) => s.open);
   const invalidate = useSchemaCache((s) => s.invalidate);
+  const bumpSchemaList = useSchemaCache((s) => s.bumpSchemaList);
+  const schemaListTick = useSchemaCache((s) => s.schemaListTick[conn.id] ?? 0);
   const t = useT();
   const sidebarSelected = useSidebarSelection((s) => s.selected);
   const setSidebarSelected = useSidebarSelection((s) => s.setSelected);
@@ -488,12 +496,12 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
     const dragged = all.find((c) => c.id === draggedId);
     if (!target || !dragged) return;
 
-    // Se folder mudou, move primeiro (mesmo IPC pra folder).
+    // If folder changed, move first (same IPC for folder).
     if (dragged.folder_id !== target.folder_id) {
       await ipc.folders.move(draggedId, target.folder_id ?? null);
     }
 
-    // Reordena dentro do mesmo grupo (folder_id do target).
+    // Reorder within the same group (target's folder_id).
     const group = st.connections
       .filter((c) => c.folder_id === target.folder_id && c.id !== draggedId);
     const targetIdx = group.findIndex((c) => c.id === targetId);
@@ -523,6 +531,15 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       setLoading(false);
     }
   };
+
+  // Auto-reload when someone (e.g. create/drop schema) bumps the tick.
+  // Only refetch if the connection is active — otherwise the next connect handles it.
+  useEffect(() => {
+    if (schemaListTick === 0) return;
+    if (!active) return;
+    void refreshSchemas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schemaListTick]);
 
   const handleClick = async () => {
     setError(null);
@@ -594,7 +611,8 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   };
 
   const deleteConn = async () => {
-    if (!window.confirm(t("tree.deleteConfirm", { name: conn.name }))) return;
+    const ok = await appConfirm(t("tree.deleteConfirm", { name: conn.name }));
+    if (!ok) return;
     invalidate(conn.id);
     await remove(conn.id);
   };
@@ -607,18 +625,18 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       await ipc.folders.move(conn.id, folderId);
       await refreshConns();
     } catch (e) {
-      alert(t("tree.moveFailed", { error: String(e) }));
+      void appAlert(t("tree.moveFailed", { error: String(e) }));
     }
   };
   const createFolderAndMove = async () => {
-    const name = window.prompt(t("sidebar.newFolderPrompt"));
+    const name = await appPrompt(t("sidebar.newFolderPrompt"));
     if (!name || !name.trim()) return;
     try {
       const f = await ipc.folders.create({ name: name.trim() });
       await refreshFolders();
       await moveToFolder(f.id);
     } catch (e) {
-      alert(t("tree.createFolderFailed", { error: String(e) }));
+      await appAlert(t("tree.createFolderFailed", { error: String(e) }));
     }
   };
 
@@ -669,17 +687,17 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
 
   const exportConnection = async () => {
     try {
-      const includePasswords = window.confirm(
+      const includePasswords = await appConfirm(
         t("tree.exportConnPrompt", { name: conn.name }),
       );
       const payload = await ipc.portability.export(includePasswords);
-      // Filtra só a conexão clicada.
+      // Filter to just the clicked connection.
       const filtered = {
         ...payload,
         connections: payload.connections.filter((c) => c.name === conn.name),
       };
       if (filtered.connections.length === 0) {
-        alert(t("tree.connNotFoundInPayload"));
+        void appAlert(t("tree.connNotFoundInPayload"));
         return;
       }
       const { save } = await import("@tauri-apps/plugin-dialog");
@@ -694,7 +712,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       const { invoke: doInvoke } = await import("@tauri-apps/api/core");
       await doInvoke("save_file", { path, data: Array.from(bytes) });
     } catch (e) {
-      alert(t("tree.exportFailed", { error: String(e) }));
+      void appAlert(t("tree.exportFailed", { error: String(e) }));
     }
   };
 
@@ -703,7 +721,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       const payload = await ipc.portability.export(true);
       const src = payload.connections.find((c) => c.name === conn.name);
       if (!src) {
-        alert(t("tree.connNotFound"));
+        void appAlert(t("tree.connNotFound"));
         return;
       }
       const dup = {
@@ -716,32 +734,31 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       const n = await ipc.portability.importApply(dup);
       if (n > 0) await refresh_();
     } catch (e) {
-      alert(t("tree.duplicateFailed", { error: String(e) }));
+      void appAlert(t("tree.duplicateFailed", { error: String(e) }));
     }
   };
 
   const invalidateForConn = useSchemaCache((s) => s.invalidateSchema);
   const ensureForConn = useSchemaCache((s) => s.ensureSnapshot);
 
-  /** Paste na conexão: lê clipboard, decide se abre transfer ou duplica. */
+  /** Paste onto the connection: reads clipboard, decides whether to open transfer or duplicate. */
   const pasteTables = async () => {
     const payload = await readTableClipboard();
     if (!payload) {
-      alert(t("tree.pasteInvalid"));
+      await appAlert(t("tree.pasteInvalid"));
       return;
     }
-    // Target assumed: esta conexão. Schema: pergunta qual (prompt com default).
-    const targetSchema = window.prompt(
-      t("tree.pasteSchemaPrompt"),
-      conn.default_database ?? payload.schema,
-    );
+    // Target assumed: this connection. Schema: ask which (prompt with default).
+    const targetSchema = await appPrompt(t("tree.pasteSchemaPrompt"), {
+      defaultValue: conn.default_database ?? payload.schema,
+    });
     if (!targetSchema || !targetSchema.trim()) return;
     const tgtSchema = targetSchema.trim();
 
     const sameConn = payload.connectionId === conn.id;
     const sameSchema = sameConn && payload.schema === tgtSchema;
     if (sameConn && sameSchema) {
-      // Mesma origem: duplica cada uma localmente.
+      // Same source: duplicate each one locally.
       try {
         const failed: string[] = [];
         for (const name of payload.tables) {
@@ -764,14 +781,16 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
         }
         invalidateForConn(conn.id, tgtSchema);
         await ensureForConn(conn.id, tgtSchema);
-        if (failed.length > 0) alert(t("tree.pasteFailures", { list: failed.join("\n") }));
+        if (failed.length > 0) {
+          await appAlert(t("tree.pasteFailures", { list: failed.join("\n") }));
+        }
       } catch (e) {
-        alert(t("tree.pasteFailed", { error: String(e) }));
+        await appAlert(t("tree.pasteFailed", { error: String(e) }));
       }
       return;
     }
 
-    // Origem diferente: abre wizard pré-configurado.
+    // Different source: open a pre-configured wizard.
     newTab({
       label: t("tree.dataTransfer"),
       kind: {
@@ -786,8 +805,8 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
     });
   };
 
-  // Items de "mover pra pasta" — um por folder existente + opção de
-  // criar nova pasta + opção de tirar da pasta (ir pro root).
+  // "Move to folder" items — one per existing folder + option to
+  // create a new folder + option to remove from folder (go to root).
   const moveItems: ContextEntry[] = [
     ...folders.map<ContextEntry>((f) => ({
       icon: <FolderIcon className="h-3.5 w-3.5" />,
@@ -811,9 +830,8 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
       : []),
   ];
 
-  const createDatabaseOrSchema = () => {
-    const label = conn.driver === "postgres" ? t("tree.dbLabelSchema") : t("tree.dbLabelDatabase");
-    const name = window.prompt(
+  const createDatabaseOrSchema = async () => {
+    const name = await appPrompt(
       conn.driver === "postgres"
         ? t("tabs.newDatabasePromptPg")
         : t("tabs.newDatabasePromptMysql"),
@@ -825,15 +843,17 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
         : `\`${name.trim().replace(/`/g, "``")}\``;
     const keyword = conn.driver === "postgres" ? "SCHEMA" : "DATABASE";
     const sql = `CREATE ${keyword} ${quoted};`;
-    newTab({
-      label: t("tree.newDbLabel", { kind: label, name: name.trim() }),
-      kind: {
-        kind: "query",
-        connectionId: conn.id,
-        initialSql: sql,
-      },
-      accentColor: conn.color,
-    });
+    try {
+      await ipc.db.runQuery(conn.id, sql, null);
+      bumpSchemaList(conn.id);
+    } catch (e) {
+      await appAlert(
+        t("tree.createDbFailed", {
+          name: name.trim(),
+          error: String(e),
+        }),
+      );
+    }
   };
 
   const openProcesses = () => {
@@ -888,10 +908,10 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   return (
     <li
       style={
-        // Sempre re-escopar o --conn-accent por conexão pra não herdar
-        // o do root (App.tsx seta ele baseado na aba ativa). Sem isso,
-        // editar a cor de uma conexão no form vaza visualmente pra
-        // qualquer conexão sem cor própria.
+        // Always re-scope --conn-accent per connection so it doesn't inherit
+        // the root's (App.tsx sets it based on the active tab). Without this,
+        // editing a connection's color in the form would visually leak to
+        // any connection without its own color.
         {
           "--conn-accent": conn.color ?? "var(--conn-accent-default)",
         } as React.CSSProperties
@@ -942,7 +962,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
           try {
             await reorderConnectionRelativeTo(draggedId, conn.id, wantAbove);
           } catch (err) {
-            alert(t("tree.reorderFailed", { error: String(err) }));
+            void appAlert(t("tree.reorderFailed", { error: String(err) }));
           }
         }}
         onClick={() => {
@@ -1061,12 +1081,19 @@ function isSystemSchema(driver: string, name: string): boolean {
   const lower = name.toLowerCase();
   if (driver === "postgres") {
     if (SYSTEM_SCHEMAS_POSTGRES.has(lower)) return true;
-    // Schemas pg_temp_*, pg_toast_* também são internos.
+    // Schemas pg_temp_*, pg_toast_* are also internal.
     if (lower.startsWith("pg_temp_") || lower.startsWith("pg_toast_")) return true;
     return false;
   }
   return SYSTEM_SCHEMAS_MYSQL.has(lower);
 }
+
+// Natural sort: "sis_2" < "sis_10" < "sis_100". Backend orders lexically,
+// but for humans the order "1, 2, 10, 100" is expected (Navicat, Explorer etc).
+const naturalCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
 
 function SchemasList({
   conn,
@@ -1082,6 +1109,8 @@ function SchemasList({
       if (isSystemSchema(conn.driver, sc.name)) s.push(sc);
       else u.push(sc);
     }
+    u.sort((a, b) => naturalCollator.compare(a.name, b.name));
+    s.sort((a, b) => naturalCollator.compare(a.name, b.name));
     return { user: u, system: s };
   }, [schemas, conn.driver]);
 
@@ -1107,13 +1136,13 @@ function EngineSchemasGroup({
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const query = useSidebarFilter((s) => s.query);
-  // Se filtro bate com algum nome interno, abre auto.
+  // If the filter matches an internal name, auto-expand.
   const anyMatch = query
     ? schemas.some((s) => matches(s.name, query))
     : false;
   const effectiveExpanded = expanded || anyMatch;
 
-  // Se filtro tá ativo e nenhum system schema casa, esconde o grupo inteiro.
+  // If filter is active and no system schema matches, hide the whole group.
   if (query && !anyMatch) return null;
 
   return (
@@ -1155,6 +1184,7 @@ function SchemaNode({
 }) {
   const ensureSnapshot = useSchemaCache((s) => s.ensureSnapshot);
   const invalidateSchema = useSchemaCache((s) => s.invalidateSchema);
+  const bumpSchemaList = useSchemaCache((s) => s.bumpSchemaList);
   const tables = useSchemaCache((s) => s.caches[conn.id]?.tables[schema.name]);
   const newTab = useTabs((s) => s.open);
   const t = useT();
@@ -1171,8 +1201,8 @@ function SchemaNode({
 
   const [expanded, setExpanded] = useState(false);
 
-  // Só consideramos matches dentro do schema quando ele tá EXPANDIDO
-  // (o usuário já abriu). Schemas fechados ficam fora do escopo da busca.
+  // We only consider matches inside a schema when it is EXPANDED
+  // (already opened by the user). Closed schemas are out of search scope.
   const hasMatchingTable = useMemo(() => {
     if (!query || !expanded || !tables) return false;
     return tables.some((tb) => matches(tb.name, query));
@@ -1200,7 +1230,7 @@ function SchemaNode({
     }
   };
 
-  // Auto-expande se for o banco padrão da conexão.
+  // Auto-expand if it's the connection's default database.
   useEffect(() => {
     if (conn.default_database === schema.name && !expanded) {
       setExpanded(true);
@@ -1247,21 +1277,17 @@ function SchemaNode({
   const closeMany = useTabs((s) => s.closeMany);
   const invalidateConn = useSchemaCache((s) => s.invalidate);
   const renameSchema = async () => {
-    const next = window.prompt(
-      t("tree.renameSchemaPrompt"),
-      schema.name,
-    );
+    const next = await appPrompt(t("tree.renameSchemaPrompt"), {
+      defaultValue: schema.name,
+    });
     if (!next || !next.trim() || next === schema.name) return;
-    if (
-      !window.confirm(
-        t("tree.renameSchemaConfirm", { old: schema.name, next }),
-      )
-    ) {
-      return;
-    }
+    const ok = await appConfirm(
+      t("tree.renameSchemaConfirm", { old: schema.name, next }),
+    );
+    if (!ok) return;
     try {
       await ipc.db.renameSchema(conn.id, schema.name, next.trim());
-      // Fecha abas ligadas ao schema antigo.
+      // Close tabs tied to the old schema.
       closeMany(
         (tab) =>
           (tab.kind.kind === "table" || tab.kind.kind === "tables-list") &&
@@ -1270,7 +1296,7 @@ function SchemaNode({
       );
       invalidateConn(conn.id);
     } catch (e) {
-      alert(t("tree.renameTableErr", { error: String(e) }));
+      await appAlert(t("tree.renameTableErr", { error: String(e) }));
     }
   };
 
@@ -1300,8 +1326,8 @@ function SchemaNode({
 
   const dbLabel = conn.driver === "postgres" ? t("tree.dbLabelSchema") : t("tree.dbLabelDatabase");
 
-  const createSiblingDatabase = () => {
-    const name = window.prompt(
+  const createSiblingDatabase = async () => {
+    const name = await appPrompt(
       conn.driver === "postgres"
         ? t("tabs.newDatabasePromptPg")
         : t("tabs.newDatabasePromptMysql"),
@@ -1312,28 +1338,30 @@ function SchemaNode({
       ? `"${name.trim().replace(/"/g, '""')}"`
       : `\`${name.trim().replace(/`/g, "``")}\``;
     const keyword = isPg ? "SCHEMA" : "DATABASE";
-    newTab({
-      label: t("tree.newDbLabel", { kind: dbLabel, name: name.trim() }),
-      kind: {
-        kind: "query",
-        connectionId: conn.id,
-        initialSql: `CREATE ${keyword} ${quoted};`,
-      },
-      accentColor: conn.color,
-    });
+    try {
+      await ipc.db.runQuery(conn.id, `CREATE ${keyword} ${quoted};`, null);
+      bumpSchemaList(conn.id);
+    } catch (e) {
+      await appAlert(
+        t("tree.createDbFailed", {
+          name: name.trim(),
+          error: String(e),
+        }),
+      );
+    }
   };
 
   const dropSchema = async () => {
-    const confirmed = window.confirm(
+    const confirmed = await appConfirm(
       t("tree.dropDbConfirm", { kind: dbLabel, name: schema.name }),
     );
     if (!confirmed) return;
-    // Segunda confirmação digitando o nome (proteção extra).
-    const typed = window.prompt(
+    // Second confirmation by typing the name (extra protection).
+    const typed = await appPrompt(
       t("tree.dropDbTypePrompt", { name: schema.name }),
     );
     if (typed !== schema.name) {
-      alert(t("tree.dropDbNameMismatch"));
+      await appAlert(t("tree.dropDbNameMismatch"));
       return;
     }
     const isPg = conn.driver === "postgres";
@@ -1346,17 +1374,94 @@ function SchemaNode({
     try {
       await ipc.db.runQuery(conn.id, sql, null);
       invalidateSchema(conn.id, schema.name);
-      // Força reload de schemas da conexão — expand colapsado primeiro.
-      // A árvore do conn reconstrói no próximo tick.
+      bumpSchemaList(conn.id);
     } catch (e) {
-      alert(t("tree.dropDbFailed", { error: String(e) }));
+      await appAlert(t("tree.dropDbFailed", { error: String(e) }));
     }
+  };
+
+  // Copy ALL tables in the schema to the clipboard — shortcut for
+  // transfer/paste to another connection without opening the listing.
+  const copyAllTables = async () => {
+    try {
+      const snap = await ensureSnapshot(conn.id, schema.name);
+      const tableNames = snap
+        .filter((tb) => tb.kind !== "view" && tb.kind !== "materialized_view")
+        .map((tb) => tb.name);
+      if (tableNames.length === 0) {
+        void appAlert(t("tree.noTables"));
+        return;
+      }
+      await writeTableClipboard({
+        connectionId: conn.id,
+        schema: schema.name,
+        tables: tableNames,
+      });
+    } catch (e) {
+      void appAlert(t("tree.pasteFailed", { error: String(e) }));
+    }
+  };
+
+  const pasteTablesHere = async () => {
+    const payload = await readTableClipboard();
+    if (!payload) {
+      void appAlert(t("tree.pasteInvalid"));
+      return;
+    }
+    const sameConn = payload.connectionId === conn.id;
+    const sameSchema = sameConn && payload.schema === schema.name;
+
+    if (sameConn && sameSchema) {
+      // Same schema: duplicate each one (_copy, _copy_1…).
+      const failed: string[] = [];
+      for (const name of payload.tables) {
+        try {
+          const avail = await ipc.db.findAvailableTableName(
+            conn.id,
+            schema.name,
+            name,
+          );
+          await ipc.db.duplicateTable(
+            conn.id,
+            schema.name,
+            name,
+            avail,
+            true,
+          );
+        } catch (e) {
+          failed.push(`${name}: ${e}`);
+        }
+      }
+      invalidateSchema(conn.id, schema.name);
+      await ensureSnapshot(conn.id, schema.name);
+      if (failed.length > 0) {
+        void appAlert(t("tree.pasteFailures", { list: failed.join("\n") }));
+      }
+      return;
+    }
+
+    // Different source: open a pre-configured wizard.
+    newTab({
+      label: t("tree.dataTransfer"),
+      kind: {
+        kind: "data-transfer",
+        sourceConnectionId: payload.connectionId,
+        sourceSchema: payload.schema,
+        targetConnectionId: conn.id,
+        targetSchema: schema.name,
+        tables: payload.tables,
+      },
+      accentColor: conn.color,
+    });
   };
 
   const menu = useContextMenu([
     { icon: <FileCode2 className="h-3.5 w-3.5" />, label: t("tree.newQuerySchema"), onClick: newQuery },
     { icon: <Plus className="h-3.5 w-3.5" />, label: t("tree.newTable"), onClick: newTableHere },
     { icon: <Database className="h-3.5 w-3.5" />, label: t("tree.newDbSibling", { kind: dbLabel }), onClick: createSiblingDatabase },
+    { separator: true },
+    { icon: <Copy className="h-3.5 w-3.5" />, label: t("tree.copyTables"), onClick: copyAllTables },
+    { icon: <ClipboardPaste className="h-3.5 w-3.5" />, label: t("tree.pasteTables"), onClick: pasteTablesHere },
     { separator: true },
     { icon: <FileText className="h-3.5 w-3.5" />, label: t("tree.sqlDump"), onClick: openSchemaDump },
     { icon: <Upload className="h-3.5 w-3.5" />, label: t("tree.sqlImport"), onClick: openSchemaImport },
@@ -1443,9 +1548,9 @@ function SchemaNode({
   );
 }
 
-/** Agrupa itens do schema em categorias (Tabelas / Views / Functions /
- *  Procedures / Queries salvas). Functions/Procedures/Queries são
- *  placeholders até o backend expor. */
+/** Groups schema items into categories (Tables / Views / Functions /
+ *  Procedures / Saved queries). Functions/Procedures/Queries are
+ *  placeholders until the backend exposes them. */
 function CategoryGroup({
   conn,
   schema,
@@ -1471,7 +1576,7 @@ function CategoryGroup({
     sidebarSelected.schema === schema &&
     sidebarSelected.category === "views";
   const query = useSidebarFilter((s) => s.query);
-  // Se schema já combina com a query, mostra tudo. Senão filtra por nome.
+  // If the schema already matches the query, show everything. Otherwise filter by name.
   const schemaMatches = matches(schema, query);
   const { tableList, viewList } = useMemo(() => {
     const tL: TableInfo[] = [];
@@ -1484,8 +1589,8 @@ function CategoryGroup({
     return { tableList: tL, viewList: v };
   }, [tables, query, schemaMatches]);
 
-  // Mantém o store de multi-select sincronizado com a lista visível —
-  // shift+click precisa do range ordenado pra funcionar.
+  // Keep the multi-select store in sync with the visible list —
+  // shift+click needs the ordered range to work.
   useEffect(() => {
     setOrderedList(
       { connectionId: conn.id, schema },
@@ -1554,6 +1659,7 @@ function CategoryGroup({
         empty={t("tree.noTables")}
         onClick={openTablesList}
         selected={tablesSelected}
+        clickableWhenEmpty
       >
         {tableList.map((it) => (
           <TableNode key={it.name} conn={conn} table={it} />
@@ -1622,12 +1728,12 @@ function Category({
   children: React.ReactNode;
   defaultExpanded?: boolean;
   empty: string;
-  /** Click no label (não na chevron) — ex: abrir tables-list. */
+  /** Click on the label (not the chevron) — e.g., open tables-list. */
   onClick?: () => void;
-  /** Se true, o onClick dispara mesmo sem itens — útil pra "Queries"
-   *  onde a tela vazia tem sentido (botão de criar primeira query). */
+  /** If true, onClick fires even without items — useful for "Queries"
+   *  where the empty screen has meaning (button to create the first query). */
   clickableWhenEmpty?: boolean;
-  /** Se true, pinta o header com o highlight de seleção. */
+  /** If true, paints the header with the selection highlight. */
   selected?: boolean;
 }) {
   const t = useT();
@@ -1781,9 +1887,9 @@ function TableNode({
   // Maintain-submenu label reuses t via the outer scope.
 
   const rename = async () => {
-    const next = window.prompt(
+    const next = await appPrompt(
       t("tree.renameTablePrompt", { name: table.name }),
-      table.name,
+      { defaultValue: table.name },
     );
     if (!next || !next.trim() || next === table.name) return;
     try {
@@ -1793,7 +1899,7 @@ function TableNode({
         table.name,
         next.trim(),
       );
-      // Fecha abas da tabela antiga — o kind referencia o nome velho.
+      // Close tabs for the old table — kind references the old name.
       closeTabsForTable(
         (tab) =>
           tab.kind.kind === "table" &&
@@ -1804,24 +1910,24 @@ function TableNode({
       invalidateSchema(conn.id, table.schema);
       ensureSnapshot(conn.id, table.schema).catch(() => {});
     } catch (e) {
-      alert(t("tree.renameTableErr", { error: String(e) }));
+      void appAlert(t("tree.renameTableErr", { error: String(e) }));
     }
   };
 
   const duplicate = async () => {
     try {
-      // Sugere nome disponível e pergunta ao usuário.
+      // Suggest an available name and ask the user.
       const suggested = await ipc.db.findAvailableTableName(
         conn.id,
         table.schema,
         table.name,
       );
-      const newName = window.prompt(
+      const newName = await appPrompt(
         t("tree.duplicatePrompt", { source: table.name }),
-        suggested,
+        { defaultValue: suggested },
       );
       if (!newName || newName.trim() === "") return;
-      // Copia estrutura + dados. V2 pode perguntar se só estrutura.
+      // Copy structure + data. V2 could ask for structure-only.
       await ipc.db.duplicateTable(
         conn.id,
         table.schema,
@@ -1829,11 +1935,11 @@ function TableNode({
         newName.trim(),
         true,
       );
-      // Refresh da árvore pra mostrar a nova tabela.
+      // Refresh the tree to show the new table.
       invalidateSchema(conn.id, table.schema);
       ensureSnapshot(conn.id, table.schema).catch(() => {});
     } catch (e) {
-      alert(t("tree.duplicateFailed", { error: String(e) }));
+      void appAlert(t("tree.duplicateFailed", { error: String(e) }));
     }
   };
 
@@ -1888,8 +1994,8 @@ function TableNode({
     }
   };
 
-  /** Tabelas alvo da ação destrutiva: respeita o multi-select se o
-   *  table clicado faz parte dele; senão, opera só em si mesmo. */
+  /** Target tables for the destructive action: respects multi-select if the
+   *  clicked table is part of it; otherwise operates on itself only. */
   const destructiveTargets = (): string[] => {
     if (isView) return [table.name];
     if (multiSelected && multiSelected.has(table.name) && multiSelected.size > 1) {
@@ -1912,7 +2018,7 @@ function TableNode({
     const failed = results.filter((r) => r.error);
     if (failed.length === 0) return;
     const list = failed.map((r) => `${r.table}: ${r.error}`).join("\n");
-    alert(t("tree.bulkOpFailures", { list }));
+    void appAlert(t("tree.bulkOpFailures", { list }));
   };
 
   const dropSelected = async () => {
@@ -1931,7 +2037,7 @@ function TableNode({
     });
     if (!ok) return;
     try {
-      // View → DROP VIEW (caso de tabela única + isView).
+      // View → DROP VIEW (single table + isView case).
       const results = isView
         ? [
             {
@@ -1961,7 +2067,7 @@ function TableNode({
       clearMulti();
       reportFailures(results);
     } catch (e) {
-      alert(t("tree.bulkOpFailed", { error: String(e) }));
+      void appAlert(t("tree.bulkOpFailed", { error: String(e) }));
     }
   };
 
@@ -1986,12 +2092,12 @@ function TableNode({
         table.schema,
         targets,
       );
-      // Não fecha tabs — só apaga linhas; o user continua editando estrutura.
+      // Don't close tabs — rows only; the user keeps editing structure.
       invalidateSchema(conn.id, table.schema);
       ensureSnapshot(conn.id, table.schema).catch(() => {});
       reportFailures(results);
     } catch (e) {
-      alert(t("tree.bulkOpFailed", { error: String(e) }));
+      void appAlert(t("tree.bulkOpFailed", { error: String(e) }));
     }
   };
 
@@ -2016,7 +2122,7 @@ function TableNode({
       ensureSnapshot(conn.id, table.schema).catch(() => {});
       reportFailures(results);
     } catch (e) {
-      alert(t("tree.bulkOpFailed", { error: String(e) }));
+      void appAlert(t("tree.bulkOpFailed", { error: String(e) }));
     }
   };
 
@@ -2150,7 +2256,7 @@ function TableNode({
         }),
     },
     { separator: true },
-    // Truncate / Empty só fazem sentido em tabela; em view são ocultados.
+    // Truncate / Empty only make sense on tables; hidden on views.
     ...((): ContextEntry[] => {
       const count = destructiveTargets().length;
       const many = count > 1;
@@ -2232,8 +2338,8 @@ function TableNode({
             {t("tree.view")}
           </span>
         )}
-        {/* Badge com contagem aprox — some em hover pra dar espaço aos
-            botões de ação. */}
+        {/* Approx row count badge — hides on hover to make room for the
+            action buttons. */}
         {table.row_estimate != null && (
           <span className="text-[10px] tabular-nums text-muted-foreground/60 group-hover:hidden">
             {formatCompactNumber(table.row_estimate)}
@@ -2267,8 +2373,8 @@ function TableNode({
   );
 }
 
-/** Categoria "Queries salvas" sob cada schema — lista queries
- *  persistidas em SQLite local (via saved_queries repo). */
+/** "Saved queries" category under each schema — lists queries
+ *  persisted in local SQLite (via saved_queries repo). */
 function SavedQueriesCategory({
   conn,
   schema,
@@ -2295,7 +2401,7 @@ function SavedQueriesCategory({
     return base.filter((q) => matches(q.name, query));
   }, [all, schema, query, schemaMatches]);
 
-  // Carrega sob demanda. `ensure` devolve cache se já tem.
+  // Loads on demand. `ensure` returns the cache if already present.
   useEffect(() => {
     ensure(conn.id).catch((e) =>
       console.warn("saved_queries ensure:", e),
@@ -2395,7 +2501,9 @@ function SavedQueryNode({
   };
 
   const rename = async () => {
-    const next = window.prompt(t("tree.renameSavedQueryPrompt"), saved.name);
+    const next = await appPrompt(t("tree.renameSavedQueryPrompt"), {
+      defaultValue: saved.name,
+    });
     if (!next || next.trim() === "" || next === saved.name) return;
     try {
       await updateQuery(saved.id, {
@@ -2404,20 +2512,19 @@ function SavedQueryNode({
         schema: saved.schema,
       });
     } catch (e) {
-      alert(`${t("tree.renameFailed")}: ${e}`);
+      void appAlert(`${t("tree.renameFailed")}: ${e}`);
     }
   };
 
   const remove = async () => {
-    if (
-      !window.confirm(t("tree.deleteSavedQueryConfirm", { name: saved.name }))
-    ) {
-      return;
-    }
+    const ok = await appConfirm(
+      t("tree.deleteSavedQueryConfirm", { name: saved.name }),
+    );
+    if (!ok) return;
     try {
       await deleteQuery(conn.id, saved.id);
     } catch (e) {
-      alert(`${t("tree.deleteFailed")}: ${e}`);
+      void appAlert(`${t("tree.deleteFailed")}: ${e}`);
     }
   };
 

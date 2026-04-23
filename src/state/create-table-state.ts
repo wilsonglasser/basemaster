@@ -2,11 +2,11 @@ import { create } from "zustand";
 
 import type { Uuid } from "@/lib/types";
 
-/** Abre o dialog de criar tabela pra qualquer lugar. */
+/** Opens the create-table dialog from anywhere. */
 export interface CreateTableRequest {
   connectionId: Uuid;
   schema: string;
-  /** Hex do accent da conexão — pro visual. */
+  /** Connection accent hex — for styling. */
   color?: string | null;
 }
 

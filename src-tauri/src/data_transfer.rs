@@ -1,14 +1,14 @@
-//! Data Transfer V1.0 — move dados entre duas conexões.
+//! Data Transfer V1.0 — moves data between two connections.
 //!
-//! Para cada tabela:
-//!   1. (opcional) DROP TABLE destino
-//!   2. (opcional) CREATE TABLE destino via SHOW CREATE TABLE (origem)
-//!   3. (opcional) DELETE FROM destino (se não dropou)
-//!   4. SELECT * em chunks + INSERT extended no destino
+//! For each table:
+//!   1. (optional) DROP TABLE target
+//!   2. (optional) CREATE TABLE target via SHOW CREATE TABLE (source)
+//!   3. (optional) DELETE FROM target (if not dropped)
+//!   4. SELECT * in chunks + extended INSERT into the target
 //!
-//! Paralelismo, FKs, triggers, options finas (ignore/replace/hex BLOB) entram na V1.1.
+//! Parallelism, FKs, triggers, fine-grained options (ignore/replace/hex BLOB) come in V1.1.
 //!
-//! Emite eventos Tauri:
+//! Emits Tauri events:
 //!   `transfer:progress` — { table, done, total, rows_transferred }
 //!   `transfer:table_done` — { table, rows, elapsed_ms, error }
 //!   `transfer:done` — { total_rows, elapsed_ms }
@@ -23,8 +23,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-/// Controle de pausa/stop compartilhado pela transferência em execução.
-/// Workers chamam `wait_if_paused_or_stopped` entre batches pra cooperar.
+/// Pause/stop control shared by the running transfer.
+/// Workers call `wait_if_paused_or_stopped` between batches to cooperate.
 pub struct TransferControl {
     stop: AtomicBool,
     paused: AtomicBool,
@@ -39,7 +39,7 @@ impl TransferControl {
             notify: Notify::new(),
         }
     }
-    /// Chamado antes de cada transferência pra reiniciar flags.
+    /// Called before each transfer to reset flags.
     pub fn reset(&self) {
         self.stop.store(false, Ordering::Relaxed);
         self.paused.store(false, Ordering::Relaxed);
@@ -55,8 +55,8 @@ impl TransferControl {
         self.stop.store(true, Ordering::Relaxed);
         self.notify.notify_waiters();
     }
-    /// Retorna `true` se deve continuar, `false` se foi pedido stop.
-    /// Enquanto estiver pausado, dorme aguardando notify.
+    /// Returns `true` to continue, `false` if stop was requested.
+    /// While paused, sleeps waiting for notify.
     pub async fn check(&self) -> bool {
         while self.paused.load(Ordering::Relaxed) && !self.stop.load(Ordering::Relaxed) {
             self.notify.notified().await;
@@ -74,12 +74,12 @@ impl Default for TransferControl {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InsertMode {
-    /// `INSERT INTO ... VALUES ...` — falha se PK duplicada.
+    /// `INSERT INTO ... VALUES ...` — fails on duplicate PK.
     #[default]
     Insert,
-    /// `INSERT IGNORE INTO ...` — pula linhas com PK duplicada.
+    /// `INSERT IGNORE INTO ...` — skips rows with duplicate PK.
     InsertIgnore,
-    /// `REPLACE INTO ...` — substitui linhas com PK duplicada.
+    /// `REPLACE INTO ...` — replaces rows with duplicate PK.
     Replace,
 }
 
@@ -90,98 +90,98 @@ pub struct TransferOptions {
     pub target_connection_id: Uuid,
     pub target_schema: String,
     pub tables: Vec<String>,
-    /// Se true, DROP TABLE no destino antes de recriar.
+    /// If true, DROP TABLE on target before recreating.
     #[serde(default)]
     pub drop_target: bool,
-    /// Se true, cria as tabelas (via SHOW CREATE TABLE). Se false, assume existentes.
+    /// If true, creates the tables (via SHOW CREATE TABLE). If false, assumes existing.
     #[serde(default = "default_true")]
     pub create_tables: bool,
-    /// Se true e não dropou, faz DELETE FROM antes de inserir.
+    /// If true and not dropped, DELETE FROM before inserting.
     #[serde(default)]
     pub empty_target: bool,
-    /// Linhas por batch no SELECT (e também base pro INSERT extended).
+    /// Rows per batch in the SELECT (also base for the extended INSERT).
     #[serde(default = "default_chunk")]
     pub chunk_size: u64,
-    /// Se true, continua na próxima tabela em caso de erro.
+    /// If true, continues to the next table on error.
     #[serde(default)]
     pub continue_on_error: bool,
-    /// Quantas tabelas transferir em paralelo. Default 1 (sequencial).
-    /// Limitado pelo `max_connections` do pool (hoje = 8).
+    /// How many tables to transfer in parallel. Default 1 (sequential).
+    /// Limited by the pool's `max_connections` (currently = 8).
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
-    /// Modo de INSERT — permite ignorar/substituir duplicatas.
+    /// INSERT mode — allows ignoring/replacing duplicates.
     #[serde(default)]
     pub insert_mode: InsertMode,
-    // --- Otimizações ---
-    /// SET FOREIGN_KEY_CHECKS=0 durante inserts. Essencial pra velocidade.
+    // --- Optimizations ---
+    /// SET FOREIGN_KEY_CHECKS=0 during inserts. Essential for speed.
     #[serde(default = "default_true")]
     pub disable_fk_checks: bool,
-    /// SET UNIQUE_CHECKS=0 — pula validação de UNIQUE.
+    /// SET UNIQUE_CHECKS=0 — skips UNIQUE validation.
     #[serde(default = "default_true")]
     pub disable_unique_checks: bool,
-    /// SET SQL_LOG_BIN=0 — pula binlog. Opt-in (não usar em master com replicas).
+    /// SET SQL_LOG_BIN=0 — skips binlog. Opt-in (don't use on a master with replicas).
     #[serde(default)]
     pub disable_binlog: bool,
-    /// Envolve os INSERTs de cada tabela em BEGIN/COMMIT.
+    /// Wraps each table's INSERTs in BEGIN/COMMIT.
     #[serde(default = "default_true")]
     pub use_transaction: bool,
-    /// LOCK TABLES <target> WRITE durante o load.
+    /// LOCK TABLES <target> WRITE during load.
     #[serde(default)]
     pub lock_target: bool,
-    /// Limite do tamanho de cada INSERT em KB (pra não estourar max_allowed_packet).
+    /// Size limit of each INSERT in KB (to avoid exceeding max_allowed_packet).
     #[serde(default = "default_stmt_kb")]
     pub max_statement_size_kb: u64,
-    /// Usa keyset pagination (WHERE pk > last LIMIT N) quando a tabela
-    /// tem PK de coluna única inteira. Muito mais rápido que OFFSET
-    /// em tabelas grandes.
+    /// Uses keyset pagination (WHERE pk > last LIMIT N) when the table
+    /// has a single integer-column PK. Much faster than OFFSET
+    /// on large tables.
     #[serde(default = "default_true")]
     pub use_keyset_pagination: bool,
-    // --- Opções no estilo Navicat ---
-    /// Cria o schema/database de destino se não existir.
+    // --- Navicat-style options ---
+    /// Create the target schema/database if it doesn't exist.
     #[serde(default = "default_true")]
     pub create_target_schema: bool,
-    /// Se true, copia dados (INSERT). Se false, só estrutura.
+    /// If true, copies data (INSERT). If false, structure only.
     #[serde(default = "default_true")]
     pub create_records: bool,
     /// INSERT INTO t (col1, col2, ...) VALUES vs INSERT INTO t VALUES.
-    /// Recomendado ON — mais seguro em caso de ordem de colunas diferente.
+    /// Recommended ON — safer when column order differs.
     #[serde(default = "default_true")]
     pub complete_inserts: bool,
-    /// Multi-row INSERT. Se false, um INSERT por linha (mais lento mas
-    /// pode ajudar em debug ou com triggers que esperam 1 row).
+    /// Multi-row INSERT. If false, one INSERT per row (slower but may
+    /// help for debugging or triggers that expect 1 row).
     #[serde(default = "default_true")]
     pub extended_inserts: bool,
-    /// BLOB como 0xFF... (hex). Alternativa: escape string (problemático).
-    /// Default = true, Navicat também.
+    /// BLOB as 0xFF... (hex). Alternative: escape string (problematic).
+    /// Default = true, same as Navicat.
     #[serde(default = "default_true")]
     pub hex_blob: bool,
-    /// BEGIN/COMMIT envolvendo TODAS as tabelas (uma tx só).
-    /// Se false e use_transaction=true → uma tx por tabela.
+    /// BEGIN/COMMIT wrapping ALL tables (a single tx).
+    /// If false and use_transaction=true → one tx per table.
     #[serde(default)]
     pub single_transaction: bool,
-    /// LOCK TABLES source.* READ durante o load — snapshot consistente.
+    /// LOCK TABLES source.* READ during load — consistent snapshot.
     #[serde(default)]
     pub lock_source: bool,
-    /// Adiciona NO_AUTO_VALUE_ON_ZERO ao sql_mode. Sem isso, inserir 0 em
-    /// coluna AUTO_INCREMENT vira o próximo valor da sequência (default
-    /// do MySQL). Precisa pra preservar registros com PK=0 originais.
-    /// Mesmo comportamento do mysqldump.
+    /// Adds NO_AUTO_VALUE_ON_ZERO to sql_mode. Without it, inserting 0 into
+    /// an AUTO_INCREMENT column becomes the next sequence value (MySQL
+    /// default). Needed to preserve original records with PK=0.
+    /// Same behavior as mysqldump.
     #[serde(default = "default_true")]
     pub preserve_zero_auto_increment: bool,
-    /// Copia os triggers de cada tabela. SHOW TRIGGERS + SHOW CREATE
-    /// TRIGGER na origem, DROP + CREATE no destino. Rodado DEPOIS dos
-    /// inserts pra não disparar os triggers durante o load.
+    /// Copies the triggers of each table. SHOW TRIGGERS + SHOW CREATE
+    /// TRIGGER on the source, DROP + CREATE on the target. Run AFTER the
+    /// inserts so triggers don't fire during the load.
     #[serde(default = "default_true")]
     pub copy_triggers: bool,
-    /// Paralelismo *intra*-tabela: divide o range da PK inteira em N
-    /// intervalos e copia cada um em paralelo. Default 1 (desligado).
-    /// Só ativa se a tabela tem PK inteira de coluna única (mesma
-    /// condição do keyset) e total > intra_table_min_rows.
+    /// Intra-table parallelism: splits the integer PK range into N
+    /// intervals and copies each in parallel. Default 1 (off).
+    /// Only activated if the table has a single integer-column PK (same
+    /// condition as keyset) and total > intra_table_min_rows.
     #[serde(default = "default_intra_workers")]
     pub intra_table_workers: u32,
-    /// Threshold mínimo de linhas pra acionar split intra-tabela. Em
-    /// tabelas pequenas, o overhead de 2x MIN/MAX + N conexões não
-    /// compensa. Default 50k.
+    /// Minimum row threshold to trigger intra-table split. On small
+    /// tables, the overhead of 2x MIN/MAX + N connections doesn't
+    /// pay off. Default 50k.
     #[serde(default = "default_intra_min_rows")]
     pub intra_table_min_rows: u64,
 }
@@ -196,7 +196,7 @@ fn default_concurrency() -> u32 {
     1
 }
 fn default_stmt_kb() -> u64 {
-    1024 // 1 MB — folga confortável antes do max_allowed_packet padrão (4 MB).
+    1024 // 1 MB — comfortable margin below the default max_allowed_packet (4 MB).
 }
 fn default_intra_workers() -> u32 {
     1
@@ -221,9 +221,9 @@ pub struct TableDone {
     pub error: Option<String>,
 }
 
-/// Mensagem informativa sobre uma tabela — ex: "intra-parallel solicitado
-/// mas não ativado porque …". Permite ao front explicar decisões sem
-/// ter que replicar a lógica do backend.
+/// Informational message about a table — e.g., "intra-parallel requested
+/// but not activated because …". Lets the front explain decisions without
+/// replicating backend logic.
 #[derive(Clone, Debug, Serialize)]
 pub struct TableNote {
     pub table: String,
@@ -232,20 +232,20 @@ pub struct TableNote {
     pub level: String,
 }
 
-/// Progresso de um worker de intra-table parallelism. Emitido como
-/// `transfer:worker_progress`. Além do agregado por tabela, o front
-/// pode mostrar cada faixa individualmente (range, done, status).
+/// Progress of an intra-table parallelism worker. Emitted as
+/// `transfer:worker_progress`. Beyond the per-table aggregate, the front
+/// can show each range individually (range, done, status).
 #[derive(Clone, Debug, Serialize)]
 pub struct TableWorkerProgress {
     pub table: String,
     pub worker_id: u32,
-    /// Bounds do range de PK: `[low_pk, high_pk)`. String porque i128
-    /// não serializa limpo em serde_json (sem `arbitrary_precision`).
+    /// Bounds of the PK range: `[low_pk, high_pk)`. String because i128
+    /// doesn't serialize cleanly in serde_json (without `arbitrary_precision`).
     pub low_pk: String,
     pub high_pk: String,
     pub done: u64,
     pub elapsed_ms: u64,
-    /// Tornou-se `true` quando o worker terminou (com ou sem erro).
+    /// Becomes `true` when the worker has finished (with or without error).
     pub finished: bool,
     pub error: Option<String>,
 }
@@ -257,12 +257,12 @@ pub struct TransferDone {
     pub failed: u32,
 }
 
-/// Executa a transferência no runtime Tokio do Tauri. Retorna o total
-/// global. Eventos progressivos são emitidos via `AppHandle::emit`.
+/// Runs the transfer on Tauri's Tokio runtime. Returns the global total.
+/// Progressive events are emitted via `AppHandle::emit`.
 ///
-/// Paralelismo: se `concurrency > 1`, spawn N workers que consomem uma
-/// fila (mpsc) de nomes de tabelas. Cada worker faz `transfer_one`
-/// isoladamente. Sequencial se `concurrency == 1` (menos overhead).
+/// Parallelism: if `concurrency > 1`, spawn N workers consuming a queue
+/// (mpsc) of table names. Each worker runs `transfer_one` in isolation.
+/// Sequential if `concurrency == 1` (less overhead).
 pub async fn run_transfer(
     app: AppHandle,
     opts: TransferOptions,
@@ -273,8 +273,8 @@ pub async fn run_transfer(
     let total_started = Instant::now();
     let concurrency = opts.concurrency.clamp(1, 16) as usize;
 
-    // Cria o schema/database de destino. MySQL: CREATE DATABASE;
-    // PostgreSQL: CREATE SCHEMA (schemas ≠ databases em PG).
+    // Create the target schema/database. MySQL: CREATE DATABASE;
+    // PostgreSQL: CREATE SCHEMA (schemas ≠ databases in PG).
     if opts.create_target_schema {
         let keyword = if target.dialect() == "postgres" {
             "SCHEMA"
@@ -292,13 +292,17 @@ pub async fn run_transfer(
             .map_err(|e| format!("create target schema: {}", e))?;
     }
 
-    // single_transaction: wrap TODO o transfer numa tx única no target.
-    // Usado pra atomicidade total mas pode prender conns/lock logs.
-    if opts.single_transaction {
-        let _ = target.execute(Some(&opts.target_schema), "START TRANSACTION").await;
-    }
+    // single_transaction: wrap the WHOLE transfer in a single tx on the target.
+    // Disabled — same problem as per-table tx (see eff_use_tx in
+    // transfer_one): sqlx pool doesn't guarantee the same conn between START
+    // and COMMIT, so the tx becomes orphan and pollutes the pool. To
+    // reactivate, need to pin a connection via pool.acquire() for the whole
+    // transfer.
+    // if opts.single_transaction {
+    //     let _ = target.execute(Some(&opts.target_schema), "START TRANSACTION").await;
+    // }
 
-    // Se só 1 worker, caminho simples mantém a semântica de abort-on-error.
+    // If only 1 worker, simple path keeps the abort-on-error semantics.
     let result = if concurrency == 1 {
         run_sequential(
             app.clone(),
@@ -322,14 +326,10 @@ pub async fn run_transfer(
         .await
     };
 
-    if opts.single_transaction {
-        let sql = if result.as_ref().map(|r| r.failed == 0).unwrap_or(false) {
-            "COMMIT"
-        } else {
-            "ROLLBACK"
-        };
-        let _ = target.execute(Some(&opts.target_schema), sql).await;
-    }
+    // single_transaction disabled — see comment above. COMMIT/ROLLBACK here
+    // would go to a different conn from START, so it was a no-op most of
+    // the time and polluted the pool when the START happened to stick.
+    // if opts.single_transaction { ... }
 
     result
 }
@@ -344,12 +344,12 @@ async fn run_parallel(
     control: Arc<TransferControl>,
 ) -> Result<TransferDone, String> {
 
-    // Parallel (continuação): canal de tarefas.
+    // Parallel (cont.): task channel.
     let (tx, rx) = async_channel::unbounded::<String>();
     for t in &opts.tables {
         let _ = tx.send(t.clone()).await;
     }
-    drop(tx); // fecha — workers saem quando a fila esvazia.
+    drop(tx); // close — workers exit when the queue drains.
 
     let totals = Arc::new(tokio::sync::Mutex::new(RunTotals::default()));
     let opts = Arc::new(opts);
@@ -364,7 +364,7 @@ async fn run_parallel(
         let control = control.clone();
         handles.push(tokio::spawn(async move {
             while let Ok(table) = rx.recv().await {
-                // Pausa/stop cooperativo ANTES de pegar a próxima tabela.
+                // Cooperative pause/stop BEFORE picking the next table.
                 if !control.check().await {
                     break;
                 }
@@ -378,9 +378,9 @@ async fn run_parallel(
                     &control,
                 )
                 .await;
-                // `control` aqui é Arc<TransferControl>, transfer_one
-                // aceita `&Arc<TransferControl>` — o `&control` faz a
-                // coerção certa.
+                // `control` here is Arc<TransferControl>, transfer_one
+                // takes `&Arc<TransferControl>` — `&control` performs the
+                // right coercion.
                 let (rows, error) = match result {
                     Ok(r) => (r, None),
                     Err(e) => (0, Some(e)),
@@ -400,7 +400,7 @@ async fn run_parallel(
                 if error.is_some() {
                     t.failed += 1;
                     if !opts.continue_on_error {
-                        // Sinaliza abort — drena o canal.
+                        // Signal abort — drain the channel.
                         rx.close();
                     }
                 }
@@ -501,18 +501,35 @@ async fn transfer_one(
 ) -> Result<u64, String> {
     let qi = |s: &str| source.quote_ident(s);
 
-    // 1. Conta total pra progresso.
+    // 1. Count total for progress.
     let total = source
         .count_table_rows(&opts.source_schema, table)
         .await
         .map_err(|e| format!("count {}: {}", table, e))?;
 
-    // Os session-level SETs abaixo são MySQL-only. Em PG todos viram
-    // no-op (o prelude fica vazio).
+    // The session-level SETs below are MySQL-only. On PG they all become
+    // no-ops (the prelude stays empty).
     let target_is_mysql = target.dialect() == "mysql";
     let mut session_prelude = String::new();
     let mut session_restore = String::new();
     if target_is_mysql {
+        // COMMIT first — if the server has autocommit=0 by default (or the
+        // connection is already in an implicit tx), SET SQL_LOG_BIN fails
+        // with 1694. COMMIT without an active tx is a no-op in MySQL.
+        if opts.disable_binlog
+            || opts.disable_fk_checks
+            || opts.disable_unique_checks
+            || opts.preserve_zero_auto_increment
+        {
+            session_prelude.push_str("COMMIT; ");
+        }
+        if opts.disable_binlog {
+            // Binlog first — if it errors with ER_WRONG_VALUE_FOR_VAR
+            // (missing SUPER/REPLICATION CLIENT privilege), the query fails
+            // before other SETs, making diagnosis easier.
+            session_prelude.push_str("SET SQL_LOG_BIN=0; ");
+            session_restore.push_str("SET SQL_LOG_BIN=1; ");
+        }
         if opts.disable_fk_checks {
             session_prelude.push_str("SET FOREIGN_KEY_CHECKS=0; ");
             session_restore.push_str("SET FOREIGN_KEY_CHECKS=1; ");
@@ -520,10 +537,6 @@ async fn transfer_one(
         if opts.disable_unique_checks {
             session_prelude.push_str("SET UNIQUE_CHECKS=0; ");
             session_restore.push_str("SET UNIQUE_CHECKS=1; ");
-        }
-        if opts.disable_binlog {
-            session_prelude.push_str("SET SQL_LOG_BIN=0; ");
-            session_restore.push_str("SET SQL_LOG_BIN=1; ");
         }
         if opts.preserve_zero_auto_increment {
             session_prelude.push_str(
@@ -537,10 +550,10 @@ async fn transfer_one(
             .await
             .map_err(|e| format!("session prelude {}: {}", table, e))?;
     }
-    // Prelude alternativa p/ ser prepended em INSERTs dentro de uma tx.
-    // MySQL recusa `SET SQL_LOG_BIN` dentro de transação (erro 1694),
-    // então construímos uma variação sem isso para a fase DML. O SET
-    // de binlog só roda em DDL (fora de tx) via `session_prelude`.
+    // Alternative prelude to be prepended to INSERTs inside a tx.
+    // MySQL rejects `SET SQL_LOG_BIN` inside a transaction (error 1694),
+    // so we build a variant without it for the DML phase. The binlog SET
+    // only runs on DDL (outside tx) via `session_prelude`.
     let mut insert_prelude = String::new();
     if target_is_mysql {
         if opts.disable_fk_checks {
@@ -556,14 +569,14 @@ async fn transfer_one(
         }
     }
 
-    // 3. Drop + Create (ou só Empty) conforme opts.
-    // CRÍTICO: prepend session_prelude em CADA statement. SET SESSION só
-    // vale na conexão atual, e sqlx pool pode devolver outra conn entre
-    // chamadas. Multi-statement "SET FK=0; DROP..." numa execute só
-    // garante mesma conn.
+    // 3. Drop + Create (or just Empty) per opts.
+    // CRITICAL: prepend session_prelude on EVERY statement. SET SESSION only
+    // applies to the current connection, and the sqlx pool may hand out a
+    // different conn between calls. Multi-statement "SET FK=0; DROP..." in a
+    // single execute is the only way to guarantee the same conn.
     if opts.drop_target {
-        // PG: CASCADE remove FKs que bloqueariam o DROP (equivalente ao
-        // SET FOREIGN_KEY_CHECKS=0 do MySQL).
+        // PG: CASCADE removes FKs that would block the DROP (equivalent to
+        // MySQL's SET FOREIGN_KEY_CHECKS=0).
         let cascade = if !target_is_mysql { " CASCADE" } else { "" };
         let sql = format!(
             "{}DROP TABLE IF EXISTS {}.{}{}",
@@ -584,7 +597,7 @@ async fn transfer_one(
             .await
             .map_err(|e| format!("ddl {}: {}", table, e))?;
 
-        // Se source e target são dialetos diferentes, traduz o DDL.
+        // If source and target are different dialects, translate the DDL.
         let source_d = crate::sql_translate::Dialect::from_driver_name(
             source.dialect(),
         );
@@ -602,7 +615,7 @@ async fn transfer_one(
         } else {
             ddl.replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
         };
-        // Em target PG, pula o session_prelude (é MySQL-only).
+        // On PG target, skip session_prelude (it's MySQL-only).
         let create_sql = if matches!(
             target_d,
             crate::sql_translate::Dialect::Postgres
@@ -628,11 +641,11 @@ async fn transfer_one(
             .map_err(|e| format!("empty {}: {}", table, e))?;
     }
 
-    // Detecta keyset col AGORA (antes dos locks) pra decidir se vamos
-    // usar intra-table parallelism. Motivo: LOCK TABLES WRITE na
-    // orquestradora bloquearia os workers, e a BEGIN/COMMIT não faz
-    // sentido num cenário multi-conn. Quando intra ativo, skipamos
-    // lock_target e a tx por-tabela.
+    // Detect keyset col NOW (before the locks) to decide whether to use
+    // intra-table parallelism. Reason: LOCK TABLES WRITE on the
+    // orchestrator would block the workers, and BEGIN/COMMIT doesn't make
+    // sense in a multi-conn scenario. When intra is active, we skip
+    // lock_target and the per-table tx.
     let keyset_col = if opts.use_keyset_pagination {
         find_keyset_column(&*source, &opts.source_schema, table).await
     } else {
@@ -643,8 +656,9 @@ async fn transfer_one(
         && keyset_col.is_some()
         && total >= opts.intra_table_min_rows.max(1);
 
-    // Diagnóstico pro front: se usuário configurou intra > 1, explicita
-    // se ativou e por quê. Elimina dúvida quando o drill-down não aparece.
+    // Diagnostic for the front: if the user configured intra > 1, make
+    // explicit whether it was enabled and why. Removes ambiguity when the
+    // drill-down doesn't show up.
     if opts.intra_table_workers > 1 {
         let (level, msg) = if use_intra {
             (
@@ -687,10 +701,20 @@ async fn transfer_one(
             },
         );
     }
-    // Flags efetivas pra prelude/postlude: quando intra ativo, desliga
-    // lock_target e a tx por-tabela orquestrada.
+    // Effective flags for prelude/postlude: when intra is active, turn off
+    // lock_target and the orchestrated per-table tx.
     let eff_lock_target = opts.lock_target && !use_intra;
-    let eff_use_tx = opts.use_transaction && !opts.single_transaction && !use_intra;
+    // `eff_use_tx` hard-disabled — the previous implementation wrapped
+    // START/COMMIT via `Driver::execute()`, which goes through the sqlx pool
+    // and may pick different connections for START, INSERTs, and COMMIT.
+    // Without pinning, START left a pending tx on some pool conn (with no
+    // atomic effect and potentially polluting the pool after errors, causing
+    // hangs on subsequent operations). Until we refactor to pin via
+    // `pool.acquire()`, transfers run in autocommit — traditional bulk-load
+    // behavior.
+    let _ = opts.use_transaction; // opt still in the UI, but has no effect for now
+    let _ = opts.single_transaction;
+    let eff_use_tx = false;
 
     if eff_lock_target {
         let lock_sql = format!(
@@ -714,7 +738,7 @@ async fn transfer_one(
         let _ = target.execute(Some(&opts.target_schema), "START TRANSACTION").await;
     }
 
-    // Se não é pra criar registros, pula o loop de dados.
+    // If records shouldn't be created, skip the data loop.
     if !opts.create_records {
         let _ = app.emit(
             "transfer:progress",
@@ -750,7 +774,7 @@ async fn transfer_one(
                 elapsed_ms: 0,
             },
         );
-        // Fecha prelude mesmo com 0 linhas.
+        // Close prelude even with 0 rows.
         if eff_use_tx {
             let _ = target.execute(Some(&opts.target_schema), "COMMIT").await;
         }
@@ -770,6 +794,17 @@ async fn transfer_one(
     let max_bytes = (opts.max_statement_size_kb as usize).saturating_mul(1024).max(1024);
     let started = Instant::now();
 
+    // Generated columns (STORED/VIRTUAL) can't appear in INSERT —
+    // `SELECT *` from source includes them, so we build the set ONCE per
+    // table and pass it to the copy loop to filter the column list.
+    let generated_cols: std::collections::HashSet<String> = source
+        .list_generated_columns(&opts.source_schema, table)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let generated_cols_arc = Arc::new(generated_cols);
+
     let transfer_result = if use_intra {
         let col = keyset_col.as_deref().unwrap();
         run_table_copy_ranges(
@@ -786,11 +821,12 @@ async fn transfer_one(
             &insert_prelude,
             intra_workers,
             control,
+            generated_cols_arc.clone(),
         )
         .await
     } else {
-        // Pega estrutura + valor inicial com 1 SELECT, pra ter colunas.
-        // Chunk #0: sempre LIMIT N (keyset precisa de lastPk, começa com nada).
+        // Gets structure + initial value with 1 SELECT, to obtain columns.
+        // Chunk #0: always LIMIT N (keyset needs lastPk; starts with nothing).
         let first_select = if let Some(col) = &keyset_col {
             format!(
                 "SELECT * FROM {}.{} ORDER BY {} LIMIT {}",
@@ -822,6 +858,7 @@ async fn transfer_one(
             started,
             &insert_prelude,
             control,
+            generated_cols_arc.as_ref(),
         )
         .await
     };
@@ -848,13 +885,13 @@ async fn transfer_one(
         let _ = target.execute(Some(&opts.target_schema), "UNLOCK TABLES").await;
     }
 
-    // Triggers — só se o transfer da tabela não falhou. Emitidos
-    // DEPOIS do UNLOCK porque CREATE TRIGGER é DDL e LOCK TABLES
-    // restringe; e DEPOIS do COMMIT pra não disparar durante o load.
-    // Erros aqui são soft — logam mas não falham a tabela, já que os
-    // dados já estão salvos.
-    // Triggers são copiados apenas em MySQL→MySQL. PG usa plpgsql que
-    // tem sintaxe e semântica diferentes; V1 não traduz corpos de trigger.
+    // Triggers — only if the table transfer didn't fail. Emitted AFTER the
+    // UNLOCK because CREATE TRIGGER is DDL and LOCK TABLES restricts it;
+    // and AFTER the COMMIT to avoid firing during the load. Errors here are
+    // soft — they log but don't fail the table, since the data is already
+    // saved.
+    // Triggers are copied only in MySQL→MySQL. PG uses plpgsql, which has
+    // different syntax and semantics; V1 doesn't translate trigger bodies.
     let triggers_cross_dialect = source.dialect() != target.dialect();
     if opts.copy_triggers && final_result.is_ok() && !triggers_cross_dialect {
         if let Err(e) = copy_table_triggers(&*source, &*target, opts, table).await {
@@ -868,19 +905,19 @@ async fn transfer_one(
     final_result
 }
 
-/// Copia triggers associados a uma tabela. Passos:
-///  1. SHOW TRIGGERS FROM src_schema LIKE 'table' — lista nomes.
-///  2. Pra cada: SHOW CREATE TRIGGER src_schema.trg_name — DDL completo.
+/// Copies triggers associated with a table. Steps:
+///  1. SHOW TRIGGERS FROM src_schema LIKE 'table' — lists names.
+///  2. For each: SHOW CREATE TRIGGER src_schema.trg_name — full DDL.
 ///  3. DROP TRIGGER IF EXISTS tgt_schema.trg_name.
-///  4. CREATE TRIGGER (com DEFINER stripado — o definer original pode
-///     não existir no destino).
+///  4. CREATE TRIGGER (with DEFINER stripped — the original definer may
+///     not exist on the target).
 async fn copy_table_triggers(
     source: &dyn Driver,
     target: &dyn Driver,
     opts: &TransferOptions,
     table: &str,
 ) -> Result<(), String> {
-    // `SHOW TRIGGERS` só existe em MySQL. PG usa `pg_trigger`/plpgsql.
+    // `SHOW TRIGGERS` only exists in MySQL. PG uses `pg_trigger`/plpgsql.
     if source.dialect() != "mysql" || target.dialect() != "mysql" {
         return Ok(());
     }
@@ -893,7 +930,7 @@ async fn copy_table_triggers(
         .query(Some(&opts.source_schema), &list_sql)
         .await
         .map_err(|e| format!("show triggers: {}", e))?;
-    // Índice da coluna "Trigger" no resultado de SHOW TRIGGERS.
+    // Index of the "Trigger" column in SHOW TRIGGERS' result.
     let name_col = list
         .columns
         .iter()
@@ -917,7 +954,7 @@ async fn copy_table_triggers(
             .query(Some(&opts.source_schema), &show_sql)
             .await
             .map_err(|e| format!("show create trigger {}: {}", name, e))?;
-        // Coluna "SQL Original Statement".
+        // Column "SQL Original Statement".
         let stmt_col = show
             .columns
             .iter()
@@ -937,7 +974,7 @@ async fn copy_table_triggers(
         };
         let ddl = strip_definer(&ddl);
 
-        // Drop + create no destino.
+        // Drop + create on the target.
         let drop_sql = format!(
             "DROP TRIGGER IF EXISTS {}.{}",
             target.quote_ident(&opts.target_schema),
@@ -955,15 +992,15 @@ async fn copy_table_triggers(
     Ok(())
 }
 
-/// Remove a cláusula `DEFINER=<user>@<host>` de um CREATE TRIGGER
-/// (ou CREATE PROCEDURE/FUNCTION/VIEW/EVENT). Sem isso, o DDL falha
-/// no destino se o usuário da origem não existir lá. Preserva backticks,
-/// aspas simples e duplas no valor do DEFINER.
+/// Removes the `DEFINER=<user>@<host>` clause from a CREATE TRIGGER
+/// (or CREATE PROCEDURE/FUNCTION/VIEW/EVENT). Without this, the DDL fails
+/// on the target if the source user doesn't exist there. Preserves
+/// backticks, single quotes, and double quotes in the DEFINER's value.
 fn strip_definer(sql: &str) -> String {
     let Some(start) = sql.find("DEFINER") else {
         return sql.to_string();
     };
-    // Sanity: DEFINER deve ser o modifier logo após CREATE.
+    // Sanity: DEFINER should be the modifier right after CREATE.
     if !sql[..start].trim_start().to_ascii_uppercase().starts_with("CREATE") {
         return sql.to_string();
     }
@@ -981,7 +1018,7 @@ fn strip_definer(sql: &str) -> String {
         i += 1;
     }
 
-    // Consome valor, respeitando ` " ' com escape duplicado.
+    // Consume value, respecting ` " ' with doubled escape.
     let mut quote: Option<u8> = None;
     while i < bytes.len() {
         let b = bytes[i];
@@ -1007,7 +1044,7 @@ fn strip_definer(sql: &str) -> String {
             }
         }
     }
-    // Trim ws após o valor removido.
+    // Trim ws after the removed value.
     let tail = sql[i..].trim_start();
     format!("{}{}", &sql[..start], tail)
 }
@@ -1027,6 +1064,7 @@ async fn run_table_copy(
     started: Instant,
     session_prelude: &str,
     control: &Arc<TransferControl>,
+    generated_cols: &std::collections::HashSet<String>,
 ) -> Result<u64, String> {
     let qi = |s: &str| source.quote_ident(s);
     let verb = match opts.insert_mode {
@@ -1053,15 +1091,25 @@ async fn run_table_copy(
             break;
         }
 
+        // Mask of insertable columns — GENERATED cols must be dropped from
+        // the INSERT or MySQL rejects ("value specified for generated column
+        // is not allowed"). `keep[i] = false` → skip index i in cols + rows.
+        let keep: Vec<bool> = batch
+            .columns
+            .iter()
+            .map(|c| !generated_cols.contains(c))
+            .collect();
         let cols: Vec<String> = batch
             .columns
             .iter()
-            .map(|c| target.quote_ident(c))
+            .zip(keep.iter())
+            .filter(|(_, &k)| k)
+            .map(|(c, _)| target.quote_ident(c))
             .collect();
-        // complete_inserts: inclui a lista de colunas no INSERT (recomendado).
-        // !complete_inserts: omite. Posição-dependente, só funciona se
-        // a ordem de colunas no destino for idêntica à origem.
-        // Prepend session_prelude pra garantir FK_CHECKS=0 na MESMA conn.
+        // complete_inserts: includes the column list in the INSERT (recommended).
+        // !complete_inserts: omits it. Position-dependent; only works if the
+        // column order on the target is identical to the source.
+        // Prepend session_prelude to ensure FK_CHECKS=0 on the SAME conn.
         let prefix = if opts.complete_inserts {
             format!(
                 "{}{} {}.{} ({}) VALUES ",
@@ -1082,14 +1130,18 @@ async fn run_table_copy(
         };
 
         if opts.extended_inserts {
-            // Multi-row: monta INSERTs respeitando max_statement_size_kb.
+            // Multi-row: builds INSERTs respecting max_statement_size_kb.
             let mut buf = String::with_capacity(max_bytes.min(4 * 1024 * 1024));
             buf.push_str(&prefix);
             let mut rows_in_buf = 0u64;
 
             for row in &batch.rows {
-                let parts: Vec<String> =
-                    row.iter().map(|v| sql_literal_opts(v, opts.hex_blob)).collect();
+                let parts: Vec<String> = row
+                    .iter()
+                    .zip(keep.iter())
+                    .filter(|(_, &k)| k)
+                    .map(|(v, _)| sql_literal_opts(v, opts.hex_blob))
+                    .collect();
                 let row_sql = format!("({})", parts.join(", "));
                 if rows_in_buf > 0 && buf.len() + 2 + row_sql.len() > max_bytes {
                     target
@@ -1113,11 +1165,15 @@ async fn run_table_copy(
                     .map_err(|e| format!("insert {}: {}", table, e))?;
             }
         } else {
-            // One INSERT per row. Mais lento mas pode ajudar com triggers
-            // que esperam 1 row por vez ou pra debug.
+            // One INSERT per row. Slower but may help with triggers expecting
+            // 1 row at a time or for debugging.
             for row in &batch.rows {
-                let parts: Vec<String> =
-                    row.iter().map(|v| sql_literal_opts(v, opts.hex_blob)).collect();
+                let parts: Vec<String> = row
+                    .iter()
+                    .zip(keep.iter())
+                    .filter(|(_, &k)| k)
+                    .map(|(v, _)| sql_literal_opts(v, opts.hex_blob))
+                    .collect();
                 let sql = format!("{}({})", prefix, parts.join(", "));
                 target
                     .execute(Some(&opts.target_schema), &sql)
@@ -1128,9 +1184,9 @@ async fn run_table_copy(
 
         let n = batch.rows.len() as u64;
         transferred += n;
-        // Próxima chave/offset.
+        // Next key/offset.
         if let Some(col) = keyset_col {
-            // Pega o valor do último PK nesse batch.
+            // Grab the last PK value in this batch.
             let col_idx = batch.columns.iter().position(|c| c == col);
             if let Some(idx) = col_idx {
                 if let Some(last_row) = batch.rows.last() {
@@ -1157,7 +1213,7 @@ async fn run_table_copy(
             break;
         }
 
-        // Monta próximo SELECT.
+        // Build next SELECT.
         if let (Some(col), Some(key)) = (keyset_col, &last_key) {
             select_sql = format!(
                 "SELECT * FROM {}.{} WHERE {} > {} ORDER BY {} LIMIT {}",
@@ -1181,17 +1237,17 @@ async fn run_table_copy(
     Ok(transferred)
 }
 
-/// Split intra-tabela: divide o range [MIN(pk), MAX(pk)] em N faixas
-/// e copia cada uma em paralelo. Exige PK inteira (mesma condição do
-/// keyset). Cada worker tem sua própria conexão no pool; pra evitar
-/// que a orquestradora segure lock/tx que bloqueariam os workers,
-/// lock_target e use_transaction são desligados neste modo pelo
-/// chamador (ver `eff_lock_target`, `eff_use_tx` em `transfer_one`).
+/// Intra-table split: divides the range [MIN(pk), MAX(pk)] into N ranges
+/// and copies each in parallel. Requires integer PK (same condition as
+/// keyset). Each worker has its own pool connection; to avoid the
+/// orchestrator holding a lock/tx that would block the workers,
+/// lock_target and use_transaction are disabled in this mode by the
+/// caller (see `eff_lock_target`, `eff_use_tx` in `transfer_one`).
 ///
-/// Limitação: atomicidade por-tabela é perdida — cada worker faz
-/// auto-commit dos seus INSERTs. Falha parcial é visível parcialmente
-/// no destino. Esse trade-off é explicitamente o que o usuário escolhe
-/// ao ligar `intra_table_workers > 1`.
+/// Limitation: per-table atomicity is lost — each worker auto-commits its
+/// INSERTs. Partial failure is partially visible on the target. This
+/// trade-off is explicitly what the user opts into when they set
+/// `intra_table_workers > 1`.
 #[allow(clippy::too_many_arguments)]
 async fn run_table_copy_ranges(
     app: &AppHandle,
@@ -1207,8 +1263,9 @@ async fn run_table_copy_ranges(
     session_prelude: &str,
     workers: usize,
     control: &Arc<TransferControl>,
+    generated_cols: Arc<std::collections::HashSet<String>>,
 ) -> Result<u64, String> {
-    // 1. MIN/MAX da PK pra saber o range total.
+    // 1. PK MIN/MAX to know the total range.
     let minmax_sql = format!(
         "SELECT MIN({col}), MAX({col}) FROM {sch}.{tbl}",
         col = source.quote_ident(keyset_col),
@@ -1227,7 +1284,7 @@ async fn run_table_copy_ranges(
     let (min_i, max_i) = match (value_to_i128(&min_v), value_to_i128(&max_v)) {
         (Some(a), Some(b)) => (a, b),
         _ => {
-            // Fallback: run_table_copy não-particionado
+            // Fallback: non-partitioned run_table_copy
             let first_select = format!(
                 "SELECT * FROM {}.{} ORDER BY {} LIMIT {}",
                 source.quote_ident(&opts.source_schema),
@@ -1249,12 +1306,13 @@ async fn run_table_copy_ranges(
                 started,
                 session_prelude,
                 control,
+                generated_cols.as_ref(),
             )
             .await;
         }
     };
     if min_i >= max_i {
-        // Só 1 valor — não vale particionar.
+        // Only 1 value — not worth partitioning.
         let first_select = format!(
             "SELECT * FROM {}.{} ORDER BY {} LIMIT {}",
             source.quote_ident(&opts.source_schema),
@@ -1276,12 +1334,13 @@ async fn run_table_copy_ranges(
             started,
             session_prelude,
             control,
+            generated_cols.as_ref(),
         )
         .await;
     }
 
-    // 2. Divide [min, max+1) em N faixas aproximadamente iguais por valor.
-    // (não por distribuição — assume PK uniformemente distribuída)
+    // 2. Split [min, max+1) into N roughly equal ranges by value.
+    // (not by distribution — assumes uniformly-distributed PK)
     let span = (max_i - min_i) + 1;
     let step = span.div_euclid(workers as i128).max(1);
     let mut ranges: Vec<(i128, i128)> = Vec::with_capacity(workers);
@@ -1316,6 +1375,7 @@ async fn run_table_copy_ranges(
         let keyset_col = keyset_col.to_string();
         let session_prelude = session_prelude.to_string();
         let control_w = control.clone();
+        let generated_cols = generated_cols.clone();
         handles.push(tokio::spawn(async move {
             let res = copy_pk_range(
                 &app,
@@ -1334,9 +1394,10 @@ async fn run_table_copy_ranges(
                 &session_prelude,
                 &counter,
                 &control_w,
+                &generated_cols,
             )
             .await;
-            // Emit final — finished=true com done/erro do worker.
+            // Final emit — finished=true with the worker's done/error.
             let (done_rows, err_str) = match &res {
                 Ok(n) => (*n, None),
                 Err(e) => (0, Some(e.clone())),
@@ -1378,9 +1439,9 @@ async fn run_table_copy_ranges(
     Ok(total_transferred)
 }
 
-/// Converte Value::Int/UInt/Decimal pra i128 se possível. Usado pra
-/// calcular range de PK. Decimal vem de MIN/MAX em colunas bigint
-/// unsigned via sqlx em alguns casos.
+/// Converts Value::Int/UInt/Decimal to i128 if possible. Used to compute
+/// PK range. Decimal comes from MIN/MAX on bigint unsigned columns via
+/// sqlx in some cases.
 fn value_to_i128(v: &basemaster_core::Value) -> Option<i128> {
     use basemaster_core::Value;
     match v {
@@ -1391,9 +1452,9 @@ fn value_to_i128(v: &basemaster_core::Value) -> Option<i128> {
     }
 }
 
-/// Worker de uma faixa de PK: replica o loop de run_table_copy mas com
-/// `WHERE pk >= low AND pk < high` fixado. Emite progresso somando ao
-/// contador global.
+/// Worker for one PK range: replicates run_table_copy's loop but with
+/// `WHERE pk >= low AND pk < high` pinned. Emits progress added to the
+/// global counter.
 #[allow(clippy::too_many_arguments)]
 async fn copy_pk_range(
     app: &AppHandle,
@@ -1412,6 +1473,7 @@ async fn copy_pk_range(
     session_prelude: &str,
     counter: &std::sync::atomic::AtomicU64,
     control: &Arc<TransferControl>,
+    generated_cols: &std::collections::HashSet<String>,
 ) -> Result<u64, String> {
     use std::sync::atomic::Ordering;
     let qi = |s: &str| source.quote_ident(s);
@@ -1421,7 +1483,7 @@ async fn copy_pk_range(
         InsertMode::Replace => "REPLACE INTO",
     };
 
-    // Emit inicial — front desenha o slot do worker imediatamente.
+    // Initial emit — front paints the worker slot immediately.
     let _ = app.emit(
         "transfer:worker_progress",
         &TableWorkerProgress {
@@ -1478,10 +1540,17 @@ async fn copy_pk_range(
             break;
         }
 
+        let keep: Vec<bool> = batch
+            .columns
+            .iter()
+            .map(|c| !generated_cols.contains(c))
+            .collect();
         let cols: Vec<String> = batch
             .columns
             .iter()
-            .map(|c| target.quote_ident(c))
+            .zip(keep.iter())
+            .filter(|(_, &k)| k)
+            .map(|(c, _)| target.quote_ident(c))
             .collect();
         let prefix = if opts.complete_inserts {
             format!(
@@ -1507,8 +1576,12 @@ async fn copy_pk_range(
             buf.push_str(&prefix);
             let mut rows_in_buf = 0u64;
             for row in &batch.rows {
-                let parts: Vec<String> =
-                    row.iter().map(|v| sql_literal_opts(v, opts.hex_blob)).collect();
+                let parts: Vec<String> = row
+                    .iter()
+                    .zip(keep.iter())
+                    .filter(|(_, &k)| k)
+                    .map(|(v, _)| sql_literal_opts(v, opts.hex_blob))
+                    .collect();
                 let row_sql = format!("({})", parts.join(", "));
                 if rows_in_buf > 0 && buf.len() + 2 + row_sql.len() > max_bytes {
                     target
@@ -1533,8 +1606,12 @@ async fn copy_pk_range(
             }
         } else {
             for row in &batch.rows {
-                let parts: Vec<String> =
-                    row.iter().map(|v| sql_literal_opts(v, opts.hex_blob)).collect();
+                let parts: Vec<String> = row
+                    .iter()
+                    .zip(keep.iter())
+                    .filter(|(_, &k)| k)
+                    .map(|(v, _)| sql_literal_opts(v, opts.hex_blob))
+                    .collect();
                 let sql = format!("{}({})", prefix, parts.join(", "));
                 target
                     .execute(Some(&opts.target_schema), &sql)
@@ -1546,7 +1623,7 @@ async fn copy_pk_range(
         let n = batch.rows.len() as u64;
         transferred += n;
 
-        // Atualiza contador global e emite progresso agregado.
+        // Update global counter and emit aggregated progress.
         let global = counter.fetch_add(n, Ordering::Relaxed) + n;
         let _ = app.emit(
             "transfer:progress",
@@ -1558,7 +1635,7 @@ async fn copy_pk_range(
             },
         );
 
-        // Emit por-worker — permite drill-down no UI por faixa.
+        // Per-worker emit — enables drill-down in the UI by range.
         let _ = app.emit(
             "transfer:worker_progress",
             &TableWorkerProgress {
@@ -1573,7 +1650,7 @@ async fn copy_pk_range(
             },
         );
 
-        // Próxima chave: último PK do batch.
+        // Next key: last PK in the batch.
         let col_idx = batch.columns.iter().position(|c| c == keyset_col);
         if let (Some(idx), Some(last_row)) = (col_idx, batch.rows.last()) {
             if let Some(v) = last_row.get(idx) {
@@ -1589,9 +1666,9 @@ async fn copy_pk_range(
     Ok(transferred)
 }
 
-/// Descobre uma coluna de PK inteira única pra keyset pagination.
-/// Retorna None se tabela não tem PK, tem PK composta, ou PK não-inteira
-/// (caímos em OFFSET pagination nesses casos).
+/// Finds a single integer PK column for keyset pagination.
+/// Returns None if the table has no PK, a composite PK, or a non-integer PK
+/// (we fall back to OFFSET pagination in those cases).
 async fn find_keyset_column(
     source: &dyn Driver,
     schema: &str,
@@ -1603,16 +1680,16 @@ async fn find_keyset_column(
         return None;
     }
     let pk = pks[0];
-    // Aceita tipos ordenáveis comuns. Strings também funcionam mas são
-    // mais lentas — por enquanto só inteiros.
+    // Accepts common orderable types. Strings also work but are
+    // slower — for now only integers.
     match &pk.column_type {
         basemaster_core::ColumnType::Integer { .. } => Some(pk.name.clone()),
         _ => None,
     }
 }
 
-/// Versão com flag pra BLOB: true = hex (`0xFF...`, seguro e canônico),
-/// false = string-escape (`'\x00...'`, pode corromper em certas encodings).
+/// Variant with a BLOB flag: true = hex (`0xFF...`, safe and canonical),
+/// false = string-escape (`'\x00...'`, may corrupt in certain encodings).
 /// Default hex.
 fn sql_literal_opts(v: &basemaster_core::Value, hex_blob: bool) -> String {
     use basemaster_core::Value;
@@ -1625,8 +1702,8 @@ fn sql_literal_opts(v: &basemaster_core::Value, hex_blob: bool) -> String {
     sql_literal(v)
 }
 
-/// Formata um `Value` como literal SQL. V1 — deixa para V1.1 a versão
-/// via bind parametrizado no driver (precisão de tipos, BLOBs corretos).
+/// Formats a `Value` as a SQL literal. V1 — defers to V1.1 a version
+/// using parametrized driver bind (type precision, correct BLOBs).
 fn sql_literal(v: &basemaster_core::Value) -> String {
     use basemaster_core::Value;
     fn quote(s: &str) -> String {

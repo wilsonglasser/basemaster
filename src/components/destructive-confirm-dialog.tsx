@@ -11,13 +11,13 @@ export function DestructiveConfirmDialog() {
   const resolve = useDestructive((s) => s.resolveCurrent);
   const [acknowledged, setAcknowledged] = useState(false);
 
-  // Reset checkbox a cada novo pedido — evita "ok automático" se o
-  // mesmo dialog reabre logo em seguida.
+  // Reset checkbox on each new request — avoids "auto-ok" if the
+  // same dialog reopens right after.
   useEffect(() => {
     setAcknowledged(false);
   }, [pending?.id]);
 
-  // Esc cancela. Enter só funciona se o checkbox tá marcado.
+  // Esc cancels. Enter only works if the checkbox is checked.
   useEffect(() => {
     if (!pending) return;
     const onKey = (e: KeyboardEvent) => {

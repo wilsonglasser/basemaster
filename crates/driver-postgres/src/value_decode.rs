@@ -1,5 +1,5 @@
-//! sqlx::Postgres row → Vec<Value>. Mapeia os tipos do catálogo do PG
-//! pro enum do core. Fallback: String → Bytes → Null.
+//! sqlx::Postgres row → Vec<Value>. Maps PG catalog types to the
+//! core's enum. Fallback: String → Bytes → Null.
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use rust_decimal::Decimal;
@@ -29,9 +29,9 @@ fn decode_one(row: &PgRow, i: usize, type_name: &str) -> Value {
         }};
     }
 
-    // Nomes dos tipos do PG (via sqlx): INT2, INT4, INT8, FLOAT4, FLOAT8,
+    // PG type names (via sqlx): INT2, INT4, INT8, FLOAT4, FLOAT8,
     // NUMERIC, BOOL, TEXT, VARCHAR, BPCHAR, BYTEA, DATE, TIME, TIMESTAMP,
-    // TIMESTAMPTZ, JSON, JSONB, UUID, etc. Arrays aparecem como "_INT4" etc.
+    // TIMESTAMPTZ, JSON, JSONB, UUID, etc. Arrays show up as "_INT4" etc.
     match type_name {
         "INT2" => match tg!(i16) {
             Some(v) => Value::Int(v as i64),
@@ -66,9 +66,9 @@ fn decode_one(row: &PgRow, i: usize, type_name: &str) -> Value {
             None => Value::Null,
         },
         "UUID" => {
-            // Postgres entrega UUID como binário — sqlx decoda via
-            // sqlx::types::Uuid. Convertemos pra string representada
-            // no formato hifenizado (8-4-4-4-12).
+            // Postgres delivers UUID as binary — sqlx decodes via
+            // sqlx::types::Uuid. We convert it to a string represented
+            // in the hyphenated format (8-4-4-4-12).
             match row.try_get::<Option<sqlx::types::Uuid>, _>(i) {
                 Ok(Some(v)) => Value::String(v.to_string()),
                 Ok(None) => Value::Null,

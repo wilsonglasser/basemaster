@@ -31,6 +31,7 @@ import { writeInMemory } from "@/lib/export";
 import { formatSqlText } from "@/lib/sql-format";
 import type { QueryRunBatch, QueryRunResult, Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { appPrompt } from "@/state/app-dialog";
 import { useActiveInfo } from "@/state/active-info";
 import { useTabState } from "@/state/tab-state";
 import { useConnections } from "@/state/connections";
@@ -69,7 +70,7 @@ type RunState =
       driver: string;
       raw: unknown;
       rawText: string;
-      /** Colunas + linhas do EXPLAIN clássico (MySQL). PG: undefined. */
+      /** Columns + rows of classic EXPLAIN (MySQL). PG: undefined. */
       classicColumns?: string[];
       classicRows?: import("@/lib/types").Value[][];
       sql: string;
@@ -98,9 +99,9 @@ export function QueryTab({
   const openConn = useConnections((s) => s.open);
   const cache = useSchemaCache((s) => s.caches[connectionId]);
 
-  // Auto-connect: quando a aba monta (ou vira ativa após restart do app)
-  // e a conexão ainda não foi aberta, abre em background. Evita o erro
-  // "conexão não está aberta" no primeiro run.
+  // Auto-connect: when the tab mounts (or becomes active after app restart)
+  // and the connection isn't open yet, open it in the background. Avoids
+  // the "connection not open" error on the first run.
   useEffect(() => {
     if (!conn || isActive) return;
     void openConn(connectionId).catch((e) =>
@@ -115,19 +116,19 @@ export function QueryTab({
   const patchQueryState = useTabState((s) => s.patchQuery);
   const createSaved = useSavedQueries((s) => s.create);
   const updateSaved = useSavedQueries((s) => s.update);
-  // Nome atual da saved query linkada (vive no state local porque a
-  // aba pode ter acabado de criar uma — antes do refresh via tab kind).
+  // Current name of the linked saved query (lives in local state because
+  // the tab may have just created one — before refresh via tab kind).
   const [currentSavedId, setCurrentSavedId] = useState<Uuid | null>(
     savedQueryId ?? null,
   );
   const [currentSavedName, setCurrentSavedName] = useState<string | null>(
     savedQueryName ?? null,
   );
-  /** SQL "limpo" contra o qual comparamos pra detectar dirty. Inicia
-   *  com o SQL no mount (snap restaurado ou initialSql ou default) e só
-   *  avança quando o usuário salva. CRÍTICO: usar lazy init — o snap
-   *  muda a cada keystroke (porque patchQueryState persiste sql pro
-   *  tab-state), então NÃO podemos recomputar isso em render. */
+  /** "Clean" SQL we compare against to detect dirty state. Initialized
+   *  with the SQL at mount (restored snap, initialSql, or default) and
+   *  only advances when the user saves. CRITICAL: use lazy init — the
+   *  snap changes on every keystroke (patchQueryState persists sql to
+   *  tab-state), so we CAN'T recompute this on render. */
   const [savedSqlBaseline, setSavedSqlBaseline] = useState<string>(
     () =>
       useTabState.getState().queryOf(tabId)?.sql ??
@@ -135,9 +136,9 @@ export function QueryTab({
       "SELECT 1;",
   );
 
-  // Lê snapshot persistido no tab-state — sobrevive a detach/reattach e
-  // futuramente restart do app. `getState()` sem reagir — só serve pra
-  // seeding inicial.
+  // Read the persisted snapshot from tab-state — survives detach/reattach
+  // and (later) app restart. `getState()` without subscribing — only used
+  // for initial seeding.
   const snap = useTabState.getState().queryOf(tabId);
   const [sql, setSql] = useState(
     () => snap?.sql ?? initialSql ?? "SELECT 1;",
@@ -145,8 +146,8 @@ export function QueryTab({
   const [schema, setSchema] = useState<string | null>(
     snap?.schema ?? initialSchema ?? conn?.default_database ?? null,
   );
-  // Dirty simples: sql atual diverge da baseline (que é estável — só
-  // muda em save). Funciona pra ad-hoc e pra saved_query linkada.
+  // Simple dirty check: current sql differs from the baseline (stable —
+  // only changes on save). Works for both ad-hoc and linked saved_query.
   const dirty = sql !== savedSqlBaseline;
   const [run, setRun] = useState<RunState>({ kind: "idle" });
   const [searchOpen, setSearchOpen] = useState(false);
@@ -162,8 +163,8 @@ export function QueryTab({
   const editorPanelRef = useRef<ImperativePanelHandle>(null);
   const gridRef = useRef<ResultGridHandle>(null);
 
-  // Expõe setSql pro AI agent (via bridge) enquanto essa aba está
-  // montada. Desregistra no unmount.
+  // Expose setSql to the AI agent (via bridge) while this tab is
+  // mounted. Unregisters on unmount.
   useEffect(() => {
     useQueryTabBridge.getState().register(tabId, setSql);
     return () => {
@@ -180,8 +181,8 @@ export function QueryTab({
     schemaRef.current = schema;
   }, [schema]);
 
-  // Publica o conteúdo do editor pro tear-off ler + persiste em tab-state
-  // (localStorage) pra sobreviver a detach/reattach e restart.
+  // Publish editor content for the tear-off to read + persist in tab-state
+  // (localStorage) to survive detach/reattach and restart.
   useEffect(() => {
     setLive(tabId, { editorSql: sql, editorSchema: schema ?? undefined });
     patchQueryState(tabId, { sql, schema: schema ?? undefined });
@@ -192,9 +193,9 @@ export function QueryTab({
     if (formatted !== sql) setSql(formatted);
   };
 
-  /** Token incremental pra invalidar runs antigos quando usuário clica Stop
-   *  ou dispara novo Run. O backend continua executando (sqlx não cancela
-   *  fácil), mas ignoramos o resultado tardio. */
+  /** Incremental token to invalidate old runs when the user clicks Stop
+   *  or triggers a new Run. The backend keeps executing (sqlx can't cancel
+   *  easily), but we ignore the late result. */
   const runTokenRef = useRef(0);
 
   const runSql = async (sqlNow: string, schemaNow: string | null) => {
@@ -202,9 +203,9 @@ export function QueryTab({
     setRun({ kind: "running" });
     const started = performance.now();
     try {
-      // Fallback: garante que a conexão está aberta antes de rodar.
-      // O useEffect acima já tenta abrir no mount, mas rodar a query
-      // pode chegar primeiro se o user for rápido.
+      // Fallback: ensure the connection is open before running. The
+      // useEffect above already tries to open on mount, but running the
+      // query may arrive first if the user is fast.
       if (!useConnections.getState().active.has(connectionId)) {
         await openConn(connectionId);
       }
@@ -246,15 +247,15 @@ export function QueryTab({
   const handleRun = () => runSql(sqlRef.current, schemaRef.current);
 
   const handleStop = () => {
-    // Invalida o run em voo — backend segue até terminar, mas ignoramos.
+    // Invalidate the in-flight run — backend keeps going until it finishes, but we ignore it.
     runTokenRef.current++;
     setRun({ kind: "error", message: t("query.cancelledByUser") });
   };
 
   const extractExplainJsonText = (batch: QueryRunBatch): string | null => {
-    // Ambos drivers retornam o JSON numa única coluna da primeira row
-    // do primeiro SELECT. PG pode vir como jsonb (type=json) ou string;
-    // MySQL vem sempre como string. Se vier em múltiplas linhas, junta.
+    // Both drivers return the JSON in a single column of the first row
+    // of the first SELECT. PG may come as jsonb (type=json) or string;
+    // MySQL always comes as a string. If split across multiple rows, joins them.
     for (const r of batch.results) {
       if (r.kind !== "select") continue;
       const pieces: string[] = [];
@@ -289,7 +290,7 @@ export function QueryTab({
       }
       if (runTokenRef.current !== token) return;
 
-      // Roda em paralelo: JSON (pra tree/stats/flame) e clássico (pro Grid).
+      // Run in parallel: JSON (for tree/stats/flame) and classic (for the Grid).
       const jsonP = ipc.db.runQuery(
         connectionId,
         `${prefixJson} ${sqlNow}`,
@@ -316,7 +317,7 @@ export function QueryTab({
       try {
         parsed = JSON.parse(rawText);
       } catch {
-        /* já é parseado */
+        /* already parsed */
       }
 
       let classicColumns: string[] | undefined;
@@ -355,8 +356,8 @@ export function QueryTab({
     handleRunRef.current = handleRun;
   });
 
-  /** Salva a query (cria nova ou atualiza a linkada). Prompta por nome
-   *  apenas quando não há uma query salva associada a essa aba. */
+  /** Saves the query (creates new or updates the linked one). Prompts for
+   *  a name only when there's no saved query associated with this tab. */
   const handleSave = async () => {
     const sqlNow = sqlRef.current;
     const schemaNow = schemaRef.current;
@@ -386,10 +387,9 @@ export function QueryTab({
           },
         });
       } else {
-        const name = window.prompt(
-          t("query.savedQueryNamePrompt"),
-          t("query.savedQueryDefaultName"),
-        );
+        const name = await appPrompt(t("query.savedQueryNamePrompt"), {
+          defaultValue: t("query.savedQueryDefaultName"),
+        });
         if (!name || !name.trim()) return;
         const saved = await createSaved(connectionId, {
           name: name.trim(),
@@ -461,14 +461,14 @@ export function QueryTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Atalhos globais (capture phase) — só atuam com a aba montada (key=active.id).
+  // Global shortcuts (capture phase) — only fire while the tab is mounted (key=active.id).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const inEditor = target?.closest(".cm-editor");
-      // Se foco tá em input/textarea/contenteditable FORA do editor da
-      // query, não engula atalhos — evita que Ctrl+Enter do input do
-      // agente rode a query, por exemplo.
+      // If focus is in an input/textarea/contenteditable OUTSIDE the
+      // query editor, don't swallow shortcuts — prevents the agent input's
+      // Ctrl+Enter from running the query, for example.
       const inOtherEditable =
         target &&
         !inEditor &&
@@ -525,7 +525,7 @@ export function QueryTab({
     }
   }, [focused, search.mode]);
 
-  // Sincroniza informação "viva" da aba para a status bar.
+  // Syncs "live" tab information to the status bar.
   useEffect(() => {
     if (run.kind !== "results") {
       clearLive(tabId);
@@ -717,7 +717,7 @@ function Toolbar({
   onSave: () => void;
   dirty: boolean;
   isLinkedSavedQuery: boolean;
-  /** Dispara o fluxo de export — undefined = sem result-set exportável. */
+  /** Triggers the export flow — undefined = no exportable result-set. */
   onExport?: () => void;
 }) {
   const t = useT();

@@ -20,6 +20,7 @@ import type {
   Uuid,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
@@ -119,9 +120,10 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
     setRunning(true);
     try {
       await ipc.sqlImport.start(opts);
-      // Invalida + re-fetch do schema afetado. Evita sumir a conexão
-      // inteira da tree (perda de "config prévia" enquanto re-carrega).
-      // Se não sabemos o schema, lista os schemas de novo — tree recarrega.
+      // Invalidate + re-fetch the affected schema. Avoids making the
+      // whole connection vanish from the tree (loss of "prior config"
+      // during reload). If we don't know the schema, re-list them — the
+      // tree reloads.
       if (targetSchema) {
         invalidateSchema(targetConnectionId, targetSchema);
         ensureSnapshot(targetConnectionId, targetSchema).catch(() => {});
@@ -135,9 +137,8 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
   };
 
   const handleStop = async () => {
-    if (!window.confirm(t("sqlImport.stopConfirm"))) {
-      return;
-    }
+    const ok = await appConfirm(t("sqlImport.stopConfirm"));
+    if (!ok) return;
     try {
       await ipc.transfer.stop();
     } catch (e) {

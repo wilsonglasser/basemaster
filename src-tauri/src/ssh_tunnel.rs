@@ -1,9 +1,9 @@
-//! SSH tunnel (local forward) via russh. V1: suporta password-auth.
-//! Key auth vem na próxima iteração.
+//! SSH tunnel (local forward) via russh. V1: supports password auth.
+//! Key auth comes in the next iteration.
 //!
-//! Uso:
+//! Usage:
 //!   let tunnel = SshTunnel::open(&ssh_cfg, target_host, target_port).await?;
-//!   // conecte MySQL em 127.0.0.1:tunnel.local_port
+//!   // connect MySQL to 127.0.0.1:tunnel.local_port
 //!   // ...
 //!   tunnel.close().await;
 
@@ -20,7 +20,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{oneshot, Mutex};
 use tokio::task::JoinHandle;
 
-/// Handler que aceita qualquer host key. TODO futura: "known hosts" like.
+/// Handler that accepts any host key. Future TODO: "known hosts" like.
 struct AcceptAllHostKeys;
 
 impl client::Handler for AcceptAllHostKeys {
@@ -41,14 +41,14 @@ pub struct SshTunnel {
 }
 
 impl SshTunnel {
-    /// Abre o túnel em uma porta local livre. Retorna a porta alocada.
-    /// `target_host:target_port` é o endereço DESTINO (do lado servidor do SSH).
+    /// Opens the tunnel on a free local port. Returns the allocated port.
+    /// `target_host:target_port` is the DESTINATION address (on the SSH server side).
     pub async fn open(
         ssh: &SshTunnelConfig,
         target_host: &str,
         target_port: u16,
     ) -> Result<Self, String> {
-        // 1. Conecta SSH
+        // 1. Connect SSH
         let config = Arc::new(Config {
             inactivity_timeout: Some(Duration::from_secs(300)),
             ..Config::default()
@@ -58,8 +58,8 @@ impl SshTunnel {
             .await
             .map_err(|e| format!("ssh connect: {}", e))?;
 
-        // 2. Auth — tenta private key primeiro (se configurada),
-        // fallback pra password. Pelo menos um deve estar presente.
+        // 2. Auth — tries private key first (if configured),
+        // fallback to password. At least one must be present.
         let mut tried = false;
         let mut last_err: Option<String> = None;
 
@@ -81,7 +81,7 @@ impl SshTunnel {
                         .await
                     {
                         Ok(r) if r.success() => {
-                            // autenticado com sucesso
+                            // successfully authenticated
                         }
                         Ok(_) => {
                             last_err = Some("chave privada rejeitada pelo servidor".into());
@@ -95,7 +95,7 @@ impl SshTunnel {
             }
         }
 
-        // Se ainda não autenticou e tem password, tenta.
+        // If not authenticated yet and a password is set, try it.
         let authed_via_key = tried && last_err.is_none();
         if !authed_via_key {
             if let Some(pwd) = ssh.password.as_deref().filter(|s| !s.is_empty()) {
@@ -119,7 +119,7 @@ impl SshTunnel {
             return Err(e);
         }
 
-        // 3. Listener local em porta livre (0 = sistema escolhe)
+        // 3. Local listener on a free port (0 = system picks)
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .map_err(|e| format!("bind local tunnel: {}", e))?;
@@ -128,7 +128,7 @@ impl SshTunnel {
             .map_err(|e| format!("local_addr: {}", e))?
             .port();
 
-        // 4. Task que aceita conexões locais e faz forward
+        // 4. Task that accepts local connections and forwards them
         let session = Arc::new(Mutex::new(session));
         let session_for_task = session.clone();
         let target_host = target_host.to_string();
@@ -173,7 +173,7 @@ impl SshTunnel {
         })
     }
 
-    /// Para o listener e fecha a sessão SSH.
+    /// Stops the listener and closes the SSH session.
     pub async fn close(mut self) {
         if let Some(tx) = self.stop_tx.take() {
             let _ = tx.send(());
@@ -188,7 +188,7 @@ impl SshTunnel {
     }
 }
 
-/// Pipe bidirecional entre uma conexão TCP local e um canal direct-tcpip SSH.
+/// Bidirectional pipe between a local TCP connection and an SSH direct-tcpip channel.
 async fn forward_connection(
     session: Arc<Mutex<Handle<AcceptAllHostKeys>>>,
     mut stream: TcpStream,

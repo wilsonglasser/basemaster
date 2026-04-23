@@ -1,12 +1,12 @@
-//! Secrets — encapsula keyring do SO atrás de uma API simples.
+//! Secrets — encapsulates the OS keyring behind a simple API.
 //!
-//! Cada senha é guardada no keyring nativo (Windows Credential Manager,
-//! macOS Keychain, Secret Service no Linux) sob:
+//! Each password is stored in the native keyring (Windows Credential Manager,
+//! macOS Keychain, Secret Service on Linux) under:
 //!   service = "basemaster"
 //!   account = `<connection_id>`
 //!
-//! No futuro, este módulo ganha uma variante "passphrase" para suporte
-//! ao export/import portátil — a API pública não muda.
+//! In the future, this module will gain a "passphrase" variant for
+//! portable export/import support — the public API doesn't change.
 
 use uuid::Uuid;
 
@@ -40,7 +40,7 @@ pub fn delete_password(connection_id: Uuid) -> StoreResult<()> {
     }
 }
 
-// --- SSH password (separate entry pra não colidir com DB password) ---
+// --- SSH password (separate entry so it doesn't collide with DB password) ---
 
 pub fn set_ssh_password(connection_id: Uuid, password: &str) -> StoreResult<()> {
     entry(SERVICE_SSH, connection_id)?.set_password(password)?;
@@ -62,7 +62,7 @@ pub fn delete_ssh_password(connection_id: Uuid) -> StoreResult<()> {
     }
 }
 
-// --- Passphrase da chave privada SSH ---
+// --- SSH private-key passphrase ---
 
 pub fn set_ssh_key_passphrase(connection_id: Uuid, p: &str) -> StoreResult<()> {
     entry(SERVICE_SSH_KEY, connection_id)?.set_password(p)?;

@@ -3,10 +3,10 @@ import { create } from "zustand";
 import type { Uuid, Value } from "@/lib/types";
 
 /**
- * Estado global pra abrir o dialog de export de qualquer lugar. Dois
- * modos: "memory" (rows já em memória, usado pelo result-set do query
- * tab / página atual do table view) e "stream" (só tem colunas — o
- * dialog vai buscar dados via streaming chunked).
+ * Global state to open the export dialog from anywhere. Two
+ * modes: "memory" (rows already in memory, used by the query tab
+ * result-set / table view current page) and "stream" (only columns —
+ * the dialog fetches data via chunked streaming).
  */
 export type ExportRequest =
   | {

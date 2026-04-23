@@ -1,9 +1,9 @@
 //! basemaster-driver-postgres
 //!
-//! MVP V1 — cobre conexão, listagem (schemas/tabelas/indexes/FKs),
-//! describe_table, query/execute, paginação simples, CRUD por linha.
-//! Funcionalidades MySQL-específicas (dump, transfer com SHOW CREATE,
-//! triggers) ainda não suportam PG.
+//! MVP V1 — covers connection, listing (schemas/tables/indexes/FKs),
+//! describe_table, query/execute, simple pagination, per-row CRUD.
+//! MySQL-specific features (dump, transfer with SHOW CREATE, triggers)
+//! don't support PG yet.
 
 use std::time::{Duration, Instant};
 
@@ -57,8 +57,8 @@ fn map_ssl(tls: &TlsMode) -> PgSslMode {
     }
 }
 
-/// Roda `SET search_path TO schema, public` pra escopar queries sem
-/// qualificação. Mais próximo de `USE schema` do MySQL.
+/// Runs `SET search_path TO schema, public` to scope queries without
+/// qualification. Closest to MySQL's `USE schema`.
 async fn set_search_path(pool: &PgPool, schema: &str) -> Result<()> {
     let quoted = quote_ident_raw(schema);
     let sql = format!("SET search_path TO {}, public", quoted);
@@ -144,8 +144,8 @@ impl Driver for PostgresDriver {
 
     async fn list_schemas(&self) -> Result<Vec<SchemaInfo>> {
         let pool = self.pool().await?;
-        // Filtra schemas do sistema. `pg_catalog`, `information_schema` e
-        // os `pg_toast*` não são interessantes pro usuário.
+        // Filters system schemas. `pg_catalog`, `information_schema` and
+        // `pg_toast*` aren't interesting to the user.
         let rows = sqlx::query(
             "SELECT schema_name
                FROM information_schema.schemata
@@ -167,11 +167,40 @@ impl Driver for PostgresDriver {
             .collect())
     }
 
+    async fn list_generated_columns(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<String>> {
+        let pool = self.pool().await?;
+        // PG 12+: pg_attribute.attgenerated = 's' (STORED) or '' (regular).
+        // attidentity ('a'/'d') is IDENTITY, NOT GENERATED — it's insertable
+        // (override via OVERRIDING SYSTEM VALUE), so we don't filter here.
+        let rows = sqlx::query(
+            "SELECT a.attname
+               FROM pg_attribute a
+               JOIN pg_class c ON c.oid = a.attrelid
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = $1 AND c.relname = $2
+                AND a.attnum > 0 AND NOT a.attisdropped
+                AND a.attgenerated <> ''",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| Error::Sql(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| r.try_get::<String, _>(0).ok())
+            .collect())
+    }
+
     async fn list_tables(&self, schema: &str) -> Result<Vec<TableInfo>> {
         let pool = self.pool().await?;
-        // Tabelas + views via pg_catalog. `reltuples` é o estimado do
-        // planner — suficiente pra UI. `pg_total_relation_size` inclui
-        // indexes + TOAST (comparável ao DATA+INDEX do MySQL).
+        // Tables + views via pg_catalog. `reltuples` is the planner's
+        // estimate — good enough for the UI. `pg_total_relation_size`
+        // includes indexes + TOAST (comparable to DATA+INDEX in MySQL).
         let rows = sqlx::query(
             "SELECT c.relname,
                     c.relkind,
@@ -220,8 +249,8 @@ impl Driver for PostgresDriver {
         table: &str,
     ) -> Result<Vec<BmColumn>> {
         let pool = self.pool().await?;
-        // Pega nome, tipo textual, nullability, default, PK e se é
-        // identity/serial (auto-increment). Comentários via col_description.
+        // Gets name, textual type, nullability, default, PK and whether it's
+        // identity/serial (auto-increment). Comments via col_description.
         let rows = sqlx::query(
             "SELECT
                a.attname AS name,
@@ -282,7 +311,7 @@ impl Driver for PostgresDriver {
         table: &str,
     ) -> Result<Vec<IndexInfo>> {
         let pool = self.pool().await?;
-        // pg_index + join com attributes — lista as colunas na ordem.
+        // pg_index + join with attributes — lists columns in order.
         let rows = sqlx::query(
             "SELECT i.relname AS index_name,
                     a.attname AS column_name,
@@ -307,7 +336,7 @@ impl Driver for PostgresDriver {
         .await
         .map_err(|e| Error::Sql(e.to_string()))?;
 
-        // Agrupa por index_name.
+        // Group by index_name.
         let mut idx_map: std::collections::BTreeMap<String, IndexInfo> =
             std::collections::BTreeMap::new();
         for r in rows {
@@ -334,8 +363,8 @@ impl Driver for PostgresDriver {
         table: &str,
     ) -> Result<Vec<ForeignKeyInfo>> {
         let pool = self.pool().await?;
-        // Lista FKs via pg_constraint; `conkey`/`confkey` são arrays de
-        // attnum — precisamos expandir e manter a ordem.
+        // Lists FKs via pg_constraint; `conkey`/`confkey` are arrays of
+        // attnum — we need to expand them preserving order.
         let rows = sqlx::query(
             "SELECT c.conname,
                     fns.nspname,
@@ -399,7 +428,7 @@ impl Driver for PostgresDriver {
         _schema: &str,
         _table: &str,
     ) -> Result<TableOptions> {
-        // PG não tem engine/row_format; devolvemos defaults.
+        // PG has no engine/row_format; we return defaults.
         Ok(TableOptions::default())
     }
 
@@ -452,7 +481,7 @@ impl Driver for PostgresDriver {
             .map_err(|e| Error::Sql(e.to_string()))?;
         Ok(ExecuteResult {
             rows_affected: r.rows_affected(),
-            last_insert_id: None, // PG não tem equivalente simples; RETURNING via query.
+            last_insert_id: None, // PG has no simple equivalent; RETURNING via query.
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
     }
@@ -628,8 +657,8 @@ fn map_fk_action(code: &str) -> String {
     }
 }
 
-/// Best-effort conversion de `format_type` output pro enum ColumnType.
-/// Cobre os mais comuns; resto fica em `Other`.
+/// Best-effort conversion from `format_type` output to the ColumnType enum.
+/// Covers the most common ones; the rest falls into `Other`.
 fn parse_pg_type(raw: &str) -> ColumnType {
     let lower = raw.to_lowercase();
     let base = lower.split('(').next().unwrap_or(&lower).trim();
@@ -642,7 +671,7 @@ fn parse_pg_type(raw: &str) -> ColumnType {
         "real" | "float4" => ColumnType::Float,
         "double precision" | "float8" => ColumnType::Double,
         "numeric" | "decimal" => {
-            // format_type devolve "numeric(10,2)".
+            // format_type returns "numeric(10,2)".
             let (p, s) = parse_numeric_params(&lower).unwrap_or((0, 0));
             ColumnType::Decimal { precision: p, scale: s }
         }
@@ -682,8 +711,8 @@ fn parse_numeric_params(s: &str) -> Option<(u8, u8)> {
     Some((p, sc))
 }
 
-/// Reconstrói `CREATE TABLE ... ;` a partir da introspecção do schema.
-/// PG não tem `SHOW CREATE TABLE` — esse é o substituto.
+/// Rebuilds `CREATE TABLE ... ;` from schema introspection.
+/// PG has no `SHOW CREATE TABLE` — this is the substitute.
 fn build_create_table(
     schema: &str,
     table: &str,
@@ -699,7 +728,7 @@ fn build_create_table(
         qi(table)
     ));
 
-    // 1. Colunas.
+    // 1. Columns.
     let mut parts: Vec<String> = Vec::new();
     for c in cols {
         let ty = pg_type_for(&c.column_type);
@@ -708,8 +737,8 @@ fn build_create_table(
             line.push_str(" NOT NULL");
         }
         if c.is_auto_increment {
-            // Preferência: IDENTITY sobre SERIAL (PG 10+). Se já tem
-            // default nextval, respeita — senão emite IDENTITY.
+            // Preference: IDENTITY over SERIAL (PG 10+). If already has a
+            // nextval default, respect it — otherwise emit IDENTITY.
             let has_nextval_default = c
                 .default
                 .as_deref()
@@ -726,7 +755,7 @@ fn build_create_table(
         parts.push(line);
     }
 
-    // 2. PRIMARY KEY (via index com is_primary).
+    // 2. PRIMARY KEY (via index with is_primary).
     for idx in indexes {
         if idx.is_primary {
             let pk_cols: Vec<String> =
@@ -736,7 +765,7 @@ fn build_create_table(
         }
     }
 
-    // 3. UNIQUE constraints (indexes únicos não-PK).
+    // 3. UNIQUE constraints (unique non-PK indexes).
     for idx in indexes {
         if idx.unique && !idx.is_primary {
             let ucols: Vec<String> =
@@ -779,7 +808,7 @@ fn build_create_table(
     out.push_str(&parts.join(",\n"));
     out.push_str("\n);\n");
 
-    // 5. Indexes não-únicos — ficam fora do CREATE TABLE.
+    // 5. Non-unique indexes — go outside the CREATE TABLE.
     for idx in indexes {
         if idx.is_primary || idx.unique {
             continue;
@@ -797,7 +826,7 @@ fn build_create_table(
     out
 }
 
-/// Converte o `ColumnType` de volta pra string SQL PG.
+/// Converts the `ColumnType` back to a PG SQL string.
 fn pg_type_for(ct: &ColumnType) -> String {
     match ct {
         ColumnType::Integer { bits, .. } => match bits {

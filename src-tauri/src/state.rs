@@ -13,18 +13,18 @@ use crate::data_transfer::TransferControl;
 use crate::mcp_server::McpServer;
 use crate::ssh_tunnel::SshTunnel;
 
-/// Estado global mantido pelo Tauri.
+/// Global state held by Tauri.
 pub struct AppState {
     pub store: Store,
     pub active: RwLock<HashMap<Uuid, Arc<dyn Driver>>>,
-    /// Túneis SSH abertos por conexão. São mantidos vivos enquanto o
-    /// driver respectivo tá conectado; fechados junto com o close.
+    /// SSH tunnels open per connection. Kept alive while the
+    /// respective driver is connected; closed together with the close.
     pub tunnels: RwLock<HashMap<Uuid, SshTunnel>>,
-    /// Controle da transferência em execução (pause/stop). Um único por
-    /// vez — se o usuário disparar outra com uma rodando, a antiga perde
-    /// o controle ao reset().
+    /// Control for the running transfer (pause/stop). Only one at a
+    /// time — if the user starts another while one is running, the old
+    /// one loses control on reset().
     pub transfer_control: Arc<TransferControl>,
-    /// Servidor MCP local. Gerenciado via commands `mcp_*`.
+    /// Local MCP server. Managed via `mcp_*` commands.
     pub mcp: McpServer,
 }
 
@@ -40,10 +40,10 @@ impl AppState {
     }
 }
 
-/// Fábrica do driver de acordo com o nome guardado no perfil.
+/// Driver factory based on the name saved in the profile.
 pub fn make_driver(driver: &str) -> Option<Arc<dyn Driver>> {
     match driver {
-        // MariaDB reutiliza o driver MySQL — protocolo compatível.
+        // MariaDB reuses the MySQL driver — compatible protocol.
         "mysql" | "mariadb" => Some(Arc::new(MysqlDriver::new())),
         "postgres" => Some(Arc::new(PostgresDriver::new())),
         "sqlite" => Some(Arc::new(SqliteDriver::new())),

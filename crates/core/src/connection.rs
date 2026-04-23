@@ -28,7 +28,7 @@ pub struct ConnectionConfig {
     #[serde(default = "Uuid::new_v4")]
     pub id: Uuid,
     pub name: String,
-    /// Cor hex (#RRGGBB) para identificação visual da conexão.
+    /// Hex color (#RRGGBB) for the connection's visual identification.
     #[serde(default)]
     pub color: Option<String>,
     pub host: String,

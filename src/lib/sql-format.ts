@@ -1,6 +1,6 @@
 import { format as formatSql, type SqlLanguage } from "sql-formatter";
 
-/** Mapeia nosso driver name pro dialect do sql-formatter. */
+/** Map our driver name to the sql-formatter dialect. */
 function dialectFor(driver: string | undefined): SqlLanguage {
   switch (driver) {
     case "postgres":
@@ -25,7 +25,7 @@ export function formatSqlText(text: string, driver?: string): string {
       useTabs: false,
     });
   } catch (e) {
-    // sql-formatter lança em sintaxe muito quebrada — devolve original.
+    // sql-formatter throws on very broken syntax — return original.
     console.warn("sql format:", e);
     return text;
   }

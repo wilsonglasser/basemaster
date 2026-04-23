@@ -3,7 +3,7 @@ import { streamTableToFile } from "@/lib/export-table";
 import { writeInMemory } from "@/lib/export";
 import { useExport } from "@/state/export-state";
 
-/** Montado uma vez no root — roteia pra memory ou stream conforme request. */
+/** Mounted once at the root — routes to memory or stream based on the request. */
 export function GlobalExportDialog() {
   const request = useExport((s) => s.request);
   const close = useExport((s) => s.close);
@@ -18,7 +18,7 @@ export function GlobalExportDialog() {
         defaultName={request.defaultName}
         rowCount={request.rows.length}
         onExport={async ({ format, columns, path }) => {
-          // Filtra colunas e linhas em memória.
+          // Filter columns and rows in memory.
           const keep: number[] = [];
           for (let i = 0; i < request.columns.length; i++) {
             if (columns.includes(request.columns[i])) keep.push(i);

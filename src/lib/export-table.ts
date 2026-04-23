@@ -16,9 +16,9 @@ import {
 const quote = (id: string) => `\`${id.replace(/`/g, "``")}\``;
 
 /**
- * Streaming export de uma tabela: busca em chunks e escreve direto no
- * arquivo em append, sem carregar tudo em memória. Suporta CSV e JSON.
- * XLSX usa o fallback in-memory (formato não é append-friendly).
+ * Streaming export of a table: fetches in chunks and appends straight
+ * to the file, without loading everything into memory. Supports CSV and JSON.
+ * XLSX falls back to in-memory (format is not append-friendly).
  */
 export async function streamTableToFile(
   connectionId: Uuid,
@@ -29,7 +29,7 @@ export async function streamTableToFile(
   path: string,
   setProgress: (p: ExportProgress | null) => void,
 ): Promise<void> {
-  // Total (pra barra de progresso) — COUNT(*) uma vez.
+  // Total (for progress bar) — COUNT(*) once.
   setProgress({ done: 0, total: null, message: "Contando linhas…" });
   let total: number | null = null;
   try {
@@ -48,11 +48,11 @@ export async function streamTableToFile(
       }
     }
   } catch {
-    // sem contagem — roda sem total.
+    // no count — run without total.
   }
 
-  // XLSX: roda tudo em memória via SELECT sem chunks. Aceita colunas
-  // filtradas. Memória proporcional ao tamanho da tabela.
+  // XLSX: run everything in memory via SELECT without chunks. Accepts
+  // filtered columns. Memory proportional to table size.
   if (format === "xlsx") {
     setProgress({ done: 0, total, message: "Carregando linhas…" });
     const cols = selectedColumns.map((c) => quote(c)).join(", ");
@@ -68,7 +68,7 @@ export async function streamTableToFile(
     return;
   }
 
-  // CSV / JSON: streaming chunked.
+  // CSV / JSON: chunked streaming.
   const CHUNK = 5000;
   const colsSql = selectedColumns.map((c) => quote(c)).join(", ");
   let offset = 0;
@@ -84,7 +84,7 @@ export async function streamTableToFile(
     if (!r || r.kind !== "select") break;
     if (r.rows.length === 0) {
       if (isFirst) {
-        // tabela vazia — grava só header (CSV) ou array vazio (JSON)
+        // empty table — write only header (CSV) or empty array (JSON)
         await writeFirstChunk(path, format, r.columns, []);
       }
       break;
@@ -102,7 +102,7 @@ export async function streamTableToFile(
     offset += r.rows.length;
   }
 
-  // JSON: fechar o array.
+  // JSON: close the array.
   if (format === "json") {
     await writeFile(path, new TextEncoder().encode("\n]\n"), true);
   }
@@ -122,7 +122,7 @@ async function writeFirstChunk(
     await writeFile(path, new TextEncoder().encode(body));
     return;
   }
-  // CSV com BOM UTF-8 + header + rows
+  // CSV with UTF-8 BOM + header + rows
   const sep = csvSeparator(format);
   const lines: string[] = [csvHeaderLine(columns, sep)];
   for (const r of rows) lines.push(csvDataLine(r, sep));
@@ -137,7 +137,7 @@ async function writeNextChunk(
   rows: readonly (readonly import("./types").Value[])[],
 ): Promise<void> {
   if (format === "json") {
-    // Continua o array com ",\n  obj,\n  obj,..."
+    // Continue the array with ",\n  obj,\n  obj,..."
     const body =
       ",\n" +
       rows
@@ -146,7 +146,7 @@ async function writeNextChunk(
     await writeFile(path, new TextEncoder().encode(body), true);
     return;
   }
-  // CSV: "\r\n" + linhas
+  // CSV: "\r\n" + lines
   const sep = csvSeparator(format);
   const body =
     "\r\n" + rows.map((r) => csvDataLine(r, sep)).join("\r\n");
@@ -154,9 +154,9 @@ async function writeNextChunk(
 }
 
 /**
- * Entry point do right-click "Exportar" na tree/tables-list. Busca só a
- * lista de colunas (via describe_table) e abre o dialog global com um
- * callback de streaming.
+ * Entry point for right-click "Export" on the tree/tables-list. Fetches
+ * only the column list (via describe_table) and opens the global dialog
+ * with a streaming callback.
  */
 export async function startTableExport(
   connectionId: Uuid,

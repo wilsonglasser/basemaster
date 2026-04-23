@@ -32,53 +32,53 @@ interface ResultGridProps {
   columns: string[];
   rows: Value[][];
   theme?: "dark" | "light";
-  /** Texto para o highlight amarelo (todas as ocorrências). */
+  /** Text for the yellow highlight (all occurrences). */
   searchValue?: string;
-  /** Lista de matches (col, row) — pintados em amarelo. */
+  /** List of matches (col, row) — painted yellow. */
   searchResults?: ReadonlyArray<readonly [number, number]>;
-  /** Célula com borda accent (match focado, modo Dado). */
+  /** Cell with accent border (focused match, Data mode). */
   focusedCell?: readonly [number, number] | null;
-  /** Coluna com borda accent (modo Campo). */
+  /** Column with accent border (Field mode). */
   focusedColumn?: number | null;
-  /** Cor da borda do match focado (CSS color string). Default azul. */
+  /** Focused match's border color (CSS color string). Default blue. */
   accentColor?: string | null;
-  /** Map "row:col" → novo texto pendente. has() = dirty; get() = display value. */
+  /** Map "row:col" → pending new text. has() = dirty; get() = display value. */
   dirtyValues?: ReadonlyMap<string, string>;
-  /** Map "row:col" → intent: "null" vermelho, "edit" amarelo, "new" verde. */
+  /** Map "row:col" → intent: "null" red, "edit" yellow, "new" green. */
   dirtyIntents?: ReadonlyMap<string, "edit" | "null" | "new">;
-  /** Metadados das colunas — usado pra escolher editors tipados
-   *  (Number, DatePicker, Dropdown, etc.). Sem isso, tudo vira Text. */
+  /** Column metadata — used to pick typed editors (Number, DatePicker,
+   *  Dropdown, etc.). Without it, everything becomes Text. */
   columnMeta?: readonly Column[];
-  /** Habilita edição inline (overlay editor + onCellEdit). */
+  /** Enables inline editing (overlay editor + onCellEdit). */
   editable?: boolean;
-  /** Callback quando uma célula é editada (single or batched). */
+  /** Callback when a cell is edited (single or batched). */
   onCellEdit?: (col: number, row: number, newValue: string) => void;
-  /** Disparado quando o usuário aperta Delete em N células — marca como NULL. */
+  /** Fired when the user presses Delete on N cells — marks them NULL. */
   onDeleteCells?: (cells: Array<readonly [number, number]>) => void;
-  /** Disparado pelo botão lixeira — marca linhas pra DELETE. */
+  /** Fired by the trash button — marks rows for DELETE. */
   onDeleteRows?: (rows: number[]) => void;
-  /** Disparado em batch (paste multi-cell). Parent lida com spillover. */
+  /** Fired in batch (multi-cell paste). Parent handles spillover. */
   onBatchEdit?: (
     edits: Array<{ col: number; row: number; text: string }>,
   ) => void;
-  /** Seta ao pressionar ArrowDown na última linha — `focusCol` é a coluna
-   *  atual, pra parent selecionar a cell correspondente na linha nova. */
+  /** Arrow ArrowDown on the last row — `focusCol` is the current column,
+   *  so the parent can select the matching cell on the new row. */
   onAppendRow?: (focusCol?: number) => void;
-  /** Right-click numa cell — parent abre seu próprio menu (copy, null, etc.). */
+  /** Right-click on a cell — parent opens its own menu (copy, null, etc.). */
   onCellContextMenu?: (
     col: number,
     row: number,
     clientX: number,
     clientY: number,
   ) => void;
-  /** Linhas marcadas pra exclusão (pinta row inteira de vermelho). */
+  /** Rows marked for deletion (paints the entire row red). */
   rowsPendingDelete?: ReadonlySet<number>;
-  /** Notifica se há qualquer seleção (cell range ou row). Usado pra
-   *  habilitar/ocultar o botão de lixeira na toolbar. */
+  /** Notifies whether there's any selection (cell range or row). Used to
+   *  enable/hide the trash button on the toolbar. */
   onSelectionStateChange?: (hasSelection: boolean) => void;
-  /** [col, row] quando o cursor manual muda — para a status bar. */
+  /** [col, row] when the manual cursor changes — for the status bar. */
   onCellSelect?: (cell: readonly [number, number] | undefined) => void;
-  /** Click no header de uma coluna (índice 0-based). */
+  /** Click on a column header (0-based index). */
   onHeaderClick?: (col: number) => void;
   /** Right-click no header (ordenar, ocultar, etc.). */
   onHeaderContextMenu?: (col: number, clientX: number, clientY: number) => void;
@@ -94,9 +94,9 @@ export interface ResultGridHandle {
     row: number,
     align?: "start" | "center" | "end",
   ) => void;
-  /** Move a seleção para [col, row] e scrolla pra manter visível. */
+  /** Moves the selection to [col, row] and scrolls to keep it visible. */
   selectCell: (col: number, row: number) => void;
-  /** Expande a seleção atual e chama onDeleteCells (usado pelo botão lixeira). */
+  /** Expands the current selection and calls onDeleteCells (used by the trash button). */
   deleteSelected: () => void;
 }
 
@@ -107,8 +107,8 @@ const EMPTY_SELECTION: GridSelection = {
 };
 
 // rowMarkers="checkbox" → Glide reserva col 0 para o handler.
-// `searchResults` é coord interna (precisa do +1).
-// `highlightRegions` é coord de dados (Glide aplica o shift sozinho — NÃO somar).
+// `searchResults` is internal coord (needs the +1).
+// `highlightRegions` is data coord (Glide applies the shift itself — do NOT add).
 const ROW_MARKER_OFFSET = 1;
 
 interface HighlightRegion {
@@ -116,7 +116,7 @@ interface HighlightRegion {
   range: Rectangle;
   /**
    * "solid" PINTA o cell todo. "solid-outline" desenha BORDA.
-   * "dashed" / "no-outline" são variantes adicionais do Glide.
+   * "dashed" / "no-outline" are additional Glide variants.
    */
   style?: "solid" | "solid-outline" | "dashed" | "no-outline";
 }
@@ -152,8 +152,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
     ref,
   ) {
     const editorRef = useRef<DataEditorRef>(null);
-    // Capturamos clientX/Y do native contextmenu pra posicionar o menu —
-    // Glide só dá bounds relativos ao canvas, não viewport.
+    // Capture clientX/Y from the native contextmenu to position the menu —
+    // Glide only gives bounds relative to the canvas, not the viewport.
     const ctxPosRef = useRef<{ x: number; y: number } | null>(null);
     const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
     const [selection, setSelection] = useState<GridSelection>(EMPTY_SELECTION);
@@ -170,7 +170,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           }
         }
       }
-      // Linhas selecionadas inteiras (via marker click) — TODAS as colunas.
+      // Whole rows selected (via marker click) — ALL columns.
       sel.rows.toArray().forEach((row) => {
         for (let c = 0; c < columns.length; c++) {
           out.push([c, row]);
@@ -187,8 +187,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         editorRef.current?.scrollTo(col, 0, "horizontal", 0, 0);
       },
       scrollToCell(col, row, align) {
-        // `align` controla o vAlign/hAlign — "end" deixa a cell no fundo
-        // do viewport (útil pra "manter no fim" quando footer aparece).
+        // `align` controls vAlign/hAlign — "end" keeps the cell at the
+        // bottom of the viewport (useful to "stay at end" when footer appears).
         editorRef.current?.scrollTo(col, row, "both", 0, 0, {
           vAlign: align,
           hAlign: align,
@@ -209,8 +209,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         });
       },
       deleteSelected() {
-        // Prioridade: linhas selecionadas inteiras → onDeleteRows.
-        // Senão, usa a linha do cursor atual.
+        // Priority: whole-row selection → onDeleteRows.
+        // Otherwise, uses the current cursor row.
         const rowSel = selection.rows.toArray();
         if (rowSel.length > 0) {
           onDeleteRows?.(rowSel);
@@ -222,7 +222,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       },
     }));
 
-    // Reset apenas quando os dados mudam (não em cada re-render do parent).
+    // Reset only when data changes (not on every parent re-render).
     useEffect(() => {
       setSelection(EMPTY_SELECTION);
     }, [rows]);
@@ -237,16 +237,16 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       [columns, columnSizes],
     );
 
-    // searchResults usa coords INTERNAS (Glide passa direto pro canvas
-    // sem shift), por isso somamos +1 do row marker.
+    // searchResults uses INTERNAL coords (Glide passes straight to the
+    // canvas without shifting), so we add +1 for the row marker.
     const shiftedSearchResults = useMemo<readonly Item[] | undefined>(
       () =>
         searchResults?.map(([c, r]) => [c + ROW_MARKER_OFFSET, r] as Item),
       [searchResults],
     );
 
-    // highlightRegions usa coords de DADOS — Glide aplica o shift do
-    // row marker internamente. NÃO somar +1 aqui.
+    // highlightRegions uses DATA coords — Glide applies the row-marker
+    // shift internally. Do NOT add +1 here.
     const effectiveAccent = accentColor || "#3b82f6";
 
     const selectedRow = selection.current?.cell[1];
@@ -257,9 +257,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           : { bgCell: "#f1f5f9", bgCellMedium: "#e9eff5" },
       [theme],
     );
-    // Linhas marcadas pra DELETE: vermelho translúcido em toda linha.
-    // Não sobrescrevemos textDark/textLight — se o fizermos, o row marker
-    // (que usa textDark: "transparent" no próprio theme) mostra o número.
+    // Rows marked for DELETE: translucent red across the whole row.
+    // Don't override textDark/textLight — doing so would make the row marker
+    // (which uses textDark: "transparent" in its own theme) show the number.
     const deleteRowTheme: Partial<Theme> = useMemo(
       () => ({
         bgCell: "rgba(239, 68, 68, 0.18)",
@@ -334,7 +334,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       const readonly = !editable;
       const editor = pickEditorKind(columnMeta?.[col]);
 
-      // ENUM → dropdown com os valores válidos.
+      // ENUM → dropdown with the valid values.
       if (editor.kind === "enum") {
         return {
           kind: GridCellKind.Custom,
@@ -350,7 +350,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         } as GridCell;
       }
 
-      // DATE / DATETIME / TIME → picker nativo do HTML.
+      // DATE / DATETIME / TIME → native HTML picker.
       if (editor.kind === "date") {
         const rawText = isDirty
           ? dirtyText ?? ""
@@ -373,7 +373,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         } as GridCell;
       }
 
-      // NUMERIC → Number built-in (validação automática).
+      // NUMERIC → Number built-in (automatic validation).
       if (editor.kind === "number") {
         const num = isDirty ? textToNumber(dirtyText ?? "") : valueToNumber(value);
         return {
@@ -385,13 +385,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           themeOverride,
           allowNegative: editor.allowNegative,
           fixedDecimals: editor.fixedDecimals,
-          // Sem separador de milhar; decimal sempre ponto.
+          // No thousands separator; decimal is always a dot.
           thousandSeparator: false,
           decimalSeparator: ".",
         };
       }
 
-      // BOOLEAN → checkbox built-in.
+      // BOOLEAN → built-in checkbox.
       if (editor.kind === "boolean") {
         const b = isDirty
           ? dirtyText === "1" || dirtyText?.toLowerCase() === "true"
@@ -434,9 +434,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           smoothScrollX
           smoothScrollY
           rowMarkers={{
-            // "clickable-number" é o que ATIVA seleção da linha no click
-            // (com "number" puro, Glide retorna cedo no handler de seleção).
-            // Texto transparente esconde o número e o cursor vira pointer.
+            // "clickable-number" is what ACTIVATES row selection on click
+            // (with plain "number", Glide returns early in the selection handler).
+            // Transparent text hides the number and the cursor becomes pointer.
             kind: "clickable-number",
             width: 22,
             theme: {
@@ -474,8 +474,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
             onCellEdit
               ? ([col, row], newCell) => {
                   const text = extractCellText(newCell);
-                  // Multi-cell fill: se há N cells selecionados, replica o
-                  // valor em todos — comportamento estilo Navicat.
+                  // Multi-cell fill: if there are N selected cells, replicate
+                  // the value to all of them — Navicat-style behavior.
                   const cells = expandSelectionToCells(selection);
                   if (cells.length > 1) {
                     for (const [c, r] of cells) onCellEdit(c, r, text);
@@ -562,8 +562,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           onPaste={
             onBatchEdit
               ? (target, values) => {
-                  // Gera edits mesmo pra posições ALÉM de rows.length
-                  // (Glide truncaria se deixássemos ele processar).
+                  // Generate edits even for positions BEYOND rows.length
+                  // (Glide would truncate if we let it process).
                   const edits: Array<{
                     col: number;
                     row: number;
@@ -618,7 +618,7 @@ const BASE: Partial<Theme> = {
 };
 
 // Cores em hex/rgba — evita esquisitices do parser do Glide com `oklch`
-// (causa do "fundo branco" na célula selecionada).
+// (cause of the "white background" on the selected cell).
 const DARK_THEME: Partial<Theme> = {
   ...BASE,
   bgCell: "#0b0d12",

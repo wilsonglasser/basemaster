@@ -1,8 +1,8 @@
 /**
- * Gera o SQL de manutenção conforme o driver. Cada SGBD tem suas
- * próprias palavras: MySQL usa `OPTIMIZE/REPAIR/ANALYZE/CHECK TABLE`,
- * Postgres usa `VACUUM/ANALYZE/REINDEX`. Ações sem análogo retornam
- * null — o chamador deve esconder da UI nesses casos.
+ * Generate maintenance SQL per driver. Each DBMS has its own
+ * keywords: MySQL uses `OPTIMIZE/REPAIR/ANALYZE/CHECK TABLE`,
+ * Postgres uses `VACUUM/ANALYZE/REINDEX`. Actions without an analog
+ * return null — the caller should hide them in the UI.
  */
 export type MaintenanceAction =
   | "OPTIMIZE"
@@ -27,19 +27,19 @@ export function buildMaintenanceSql(
   if (tables.length === 0) return null;
 
   if (driver === "postgres") {
-    // Postgres não aceita lista — roda uma por vez, separa por `;`.
+    // Postgres doesn't accept a list — run one at a time, separated by `;`.
     const q = (t: string) => `${quotePg(schema)}.${quotePg(t)}`;
     switch (action) {
       case "OPTIMIZE":
-        // VACUUM é o análogo mais próximo (reclaim space + re-tune).
+        // VACUUM is the closest analog (reclaim space + re-tune).
         return tables.map((t) => `VACUUM ${q(t)};`).join("\n");
       case "ANALYZE":
         return tables.map((t) => `ANALYZE ${q(t)};`).join("\n");
       case "REPAIR":
-        // REINDEX é o mais próximo — reconstrói índices corrompidos.
+        // REINDEX is the closest — rebuilds corrupted indexes.
         return tables.map((t) => `REINDEX TABLE ${q(t)};`).join("\n");
       case "CHECK":
-        // PG não tem CHECK TABLE; usa VACUUM VERBOSE como diagnóstico.
+        // PG has no CHECK TABLE; use VACUUM VERBOSE as diagnostic.
         return tables.map((t) => `VACUUM (VERBOSE) ${q(t)};`).join("\n");
     }
   }
@@ -55,7 +55,7 @@ export function availableMaintenanceActions(
   driver: string,
 ): MaintenanceAction[] {
   if (driver === "postgres") {
-    // Todos têm análogo — mas VACUUM FULL e outros requerem lock.
+    // All have analogs — but VACUUM FULL and others require locks.
     return ["OPTIMIZE", "ANALYZE", "REPAIR", "CHECK"];
   }
   return ["OPTIMIZE", "ANALYZE", "CHECK", "REPAIR"];

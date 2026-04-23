@@ -1,7 +1,7 @@
 import type { ShortcutAction } from "./types";
 
-/** Catálogo estático. IDs são chaves estáveis — NÃO renomear sem migração.
- *  Labels/descriptions são pro UI (Settings). */
+/** Static catalog. IDs are stable keys — DO NOT rename without a migration.
+ *  Labels/descriptions are for the UI (Settings). */
 export const SHORTCUTS: ShortcutAction[] = [
   // --- Query editor ---
   {

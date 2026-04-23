@@ -17,9 +17,9 @@ export interface ProviderMeta {
   name: string;
   keyPlaceholder: string;
   keysUrl: string;
-  /** Base URL pra providers OpenAI-compatible. null = nativo. */
+  /** Base URL for OpenAI-compatible providers. null = native. */
   baseUrl?: string;
-  /** Kind interno: "native" (tem @ai-sdk dedicado) ou "openai-compat". */
+  /** Internal kind: "native" (has dedicated @ai-sdk) or "openai-compat". */
   kind: "native" | "openai-compat";
 }
 
@@ -145,7 +145,7 @@ export function parseModelKey(
   return { provider, modelId };
 }
 
-/** Modelos sugeridos (autocomplete). Usuário pode digitar qualquer coisa. */
+/** Suggested models (autocomplete). The user can type anything. */
 export const MODEL_CATALOG: ModelRef[] = [
   // Anthropic
   { provider: "anthropic", modelId: "claude-sonnet-4-6", label: "Sonnet 4.6", hint: "recomendado" },

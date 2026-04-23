@@ -9,12 +9,12 @@ import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
-/** Coordenador global: só um context menu aberto por vez. Quando um
- *  pede pra abrir, fecha o anterior. */
+/** Global coordinator: only one context menu open at a time. When one
+ *  asks to open, closes the previous one. */
 type CloseFn = () => void;
 const openMenus = new Set<CloseFn>();
 function registerOpen(close: CloseFn) {
-  // Fecha todos os outros já abertos ANTES de entrar no set.
+  // Close all others already open BEFORE joining the set.
   for (const other of [...openMenus]) {
     if (other !== close) other();
   }
@@ -53,9 +53,9 @@ interface OpenState {
 }
 
 /**
- * Hook minimalista para context menu (right-click).
+ * Minimalist hook for a context menu (right-click).
  *
- *   const menu = useContextMenu([{ label: 'Editar', onClick: ... }, ...]);
+ *   const menu = useContextMenu([{ label: 'Edit', onClick: ... }, ...]);
  *   <div onContextMenu={menu.openAt}>...</div>
  *   {menu.element}
  */
@@ -71,7 +71,7 @@ export function useContextMenu(items: ContextEntry[]) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
     };
-    // Aguarda o próximo tick para não fechar com o próprio evento que abriu.
+    // Wait for the next tick so we don't close on the same event that opened.
     const t = setTimeout(() => {
       document.addEventListener("click", close);
       document.addEventListener("contextmenu", close);
@@ -100,10 +100,10 @@ export function useContextMenu(items: ContextEntry[]) {
 
   const close = () => setOpen(null);
 
-  // Portal pra document.body — essencial pra escapar stacking contexts
-  // de pais (ex: CodeMirror, painéis com overflow, etc). Sem portal, o
-  // menu pode ficar clicável mas os cliques passam pro conteúdo abaixo
-  // quando o pai cria seu próprio stacking context.
+  // Portal to document.body — essential to escape parent stacking
+  // contexts (e.g., CodeMirror, panels with overflow, etc). Without the
+  // portal, the menu can look clickable but clicks fall through to the
+  // content underneath when the parent creates its own stacking context.
   const menuInner = open ? (
     <MenuPanel x={open.x} y={open.y} items={items} onClose={close} />
   ) : null;
@@ -116,8 +116,8 @@ export function useContextMenu(items: ContextEntry[]) {
   return { openAt, openAtPos, element, close };
 }
 
-/** Render de um painel de menu. Recursivo pra submenus — cada submenu
- *  abre ao hover do item "submenu" e posiciona à direita do painel pai. */
+/** Renders a menu panel. Recursive for submenus — each submenu opens
+ *  on hover of the "submenu" item and positions to the right of the parent. */
 function MenuPanel({
   x,
   y,
@@ -135,10 +135,11 @@ function MenuPanel({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [adjusted, setAdjusted] = useState<{ x: number; y: number }>({ x, y });
 
-  // Mede o painel pós-render e flipa/shifta pra dentro da viewport.
-  // Handles both: (a) menu aberto num botão perto da borda direita —
-  // right-edge passa da viewport, então alinha right-edge no X do clique
-  // (abre pra esquerda); (b) submenu que não cabe à direita, idem.
+  // Measures the panel post-render and flips/shifts it into the viewport.
+  // Handles both: (a) menu opened on a button near the right edge — the
+  // right edge overflows the viewport, so we align the right edge with
+  // the click's X (opens to the left); (b) submenu that doesn't fit to
+  // the right, same handling.
   useLayoutEffect(() => {
     const el = panelRef.current;
     if (!el) return;

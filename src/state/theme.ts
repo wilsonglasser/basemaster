@@ -16,19 +16,19 @@ import {
 export type ThemeToggle = "system" | "light" | "dark";
 
 interface ThemeState {
-  /** Seleção do user — "system" respeita prefers-color-scheme. */
+  /** User's choice — "system" honors prefers-color-scheme. */
   toggle: ThemeToggle;
-  /** Qual preset usar quando em modo dark. */
+  /** Which preset to use in dark mode. */
   darkPreset: DarkPresetId;
-  /** Qual preset usar quando em modo light. */
+  /** Which preset to use in light mode. */
   lightPreset: LightPresetId;
-  /** Cor base (#rrggbb) pros presets "custom-*". */
+  /** Base color (#rrggbb) for the "custom-*" presets. */
   customDarkBg: string;
   customLightBg: string;
 
-  /** Modo efetivo — "system" resolvido em runtime. */
+  /** Effective mode — "system" resolved at runtime. */
   effectiveMode: () => ThemeMode;
-  /** Preset efetivo considerando modo + ids + custom bases. */
+  /** Effective preset accounting for mode + ids + custom bases. */
   effectivePreset: () => Preset;
 
   setToggle: (t: ThemeToggle) => void;
@@ -83,8 +83,8 @@ export const useTheme = create<ThemeState>()(
   ),
 );
 
-/** Subscriber global: aplica tokens ao :root sempre que a seleção muda,
- *  e ouve mudanças de prefers-color-scheme quando toggle=system. */
+/** Global subscriber: applies tokens to :root whenever the selection changes,
+ *  and listens for prefers-color-scheme changes when toggle=system. */
 export function installThemeEffect() {
   const apply = () => {
     const preset = useTheme.getState().effectivePreset();
@@ -109,6 +109,6 @@ export function installThemeEffect() {
   };
 }
 
-// Re-export presets pro settings view listar opções.
+// Re-export presets so the settings view can list options.
 export { DARK_PRESETS, LIGHT_PRESETS };
 export type { DarkPresetId, LightPresetId, ThemeMode };

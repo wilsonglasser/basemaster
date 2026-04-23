@@ -48,6 +48,7 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useActiveInfo } from "@/state/active-info";
+import { appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useI18n, useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
@@ -148,7 +149,7 @@ export function TableView({
   const [orderBy, setOrderBy] = useState<OrderBy | null>(
     initialTabState?.orderBy ?? null,
   );
-  // V2: filtros como árvore. Migra o V1 flat automaticamente.
+  // V2: filters as a tree. Migrates the V1 flat format automatically.
   const [filterTree, setFilterTree] = useState<FilterNode>(
     initialTabState?.filterTree ??
       (initialTabState?.filters
@@ -166,13 +167,13 @@ export function TableView({
   const [search, setSearch] = useState<SearchState>(EMPTY_SEARCH);
 
   // Edits pendentes — chave "row:col" → snapshot (linha original + texto novo).
-  // Limpado ao trocar página/limit/sort/refresh.
+  // Cleared when page/limit/sort/refresh changes.
   const [dirty, setDirty] = useState<Map<string, PendingEdit>>(new Map());
-  // Linhas marcadas pra DELETE (índice da linha na página atual).
+  // Rows marked for DELETE (row index on the current page).
   const [rowsToDelete, setRowsToDelete] = useState<Set<number>>(new Set());
   // Novas linhas pendentes de INSERT — array de maps (colName → texto).
   const [newRows, setNewRows] = useState<Array<Map<string, string>>>([]);
-  // Quantas delas têm pelo menos 1 cell preenchida (= prontas pra INSERT).
+  // How many of them have at least 1 filled cell (= ready to INSERT).
   const filledNewRowsCount = useMemo(
     () => newRows.filter((m) => m.size > 0).length,
     [newRows],
@@ -181,7 +182,7 @@ export function TableView({
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
-  // Colunas escondidas (nomes) — filtro visual. Não afeta SELECT nem dirty.
+  // Hidden columns (names) — visual filter. Doesn't affect SELECT or dirty.
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(
     new Set(initialTabState?.hiddenColumns ?? []),
   );
@@ -200,13 +201,13 @@ export function TableView({
         .map((c) => c.name),
     [cachedColumns],
   );
-  // Sem PK: editável, mas o WHERE de UPDATE/DELETE usa todas as colunas
-  // "comparáveis" (skip BLOB/JSON por segurança). LIMIT 1 do backend
-  // garante escopo de 1 linha mesmo com duplicatas. Usuário recebe um
-  // confirm explícito no Apply pra saber que está operando sem PK.
+  // No PK: editable, but the UPDATE/DELETE WHERE uses all "comparable"
+  // columns (skip BLOB/JSON for safety). The backend's LIMIT 1 keeps
+  // the scope to 1 row even with duplicates. The user gets an explicit
+  // confirm on Apply to know they're operating without a PK.
   const editable = true;
   const noPk = pkColumns.length === 0;
-  /** Colunas usáveis no WHERE quando não há PK — evita comparar BLOB/JSON. */
+  /** Columns usable in WHERE when there's no PK — avoids comparing BLOB/JSON. */
   const matchableColumns = useMemo(() => {
     if (!noPk || !cachedColumns) return null;
     return cachedColumns
@@ -224,8 +225,8 @@ export function TableView({
     });
   }, [tabId, table, conn?.color, patchTab]);
 
-  // Marca a aba como dirty sempre que há edits não aplicados — dispara
-  // confirm ao fechar. Abrange cell edits, deleções e linhas novas.
+  // Mark the tab as dirty whenever there are unapplied edits — triggers
+  // confirm on close. Covers cell edits, deletions, and new rows.
   const hasPendingChanges =
     dirty.size > 0 || rowsToDelete.size > 0 || filledNewRowsCount > 0;
   useEffect(() => {
@@ -239,8 +240,8 @@ export function TableView({
     );
   }, [connectionId, schema, ensureSnapshot, connActive]);
 
-  // Auto-tenta abrir a conexão se essa aba foi restaurada mas a conn
-  // ainda não está active. Surface erro pro placeholder.
+  // Auto-try to open the connection if this tab was restored but the
+  // conn isn't active yet. Surface the error to the placeholder.
   const tryOpenConn = () => {
     if (connActive || connOpening || !conn) return;
     setConnOpening(true);
@@ -304,10 +305,10 @@ export function TableView({
     row: number,
     align: "start" | "center" | "end" = "end",
   ) => {
-    // setTimeout com delay suficiente pro ResizeObserver do Glide já
-    // ter refletido a nova altura (causada pelo footer aparecer).
-    // RAFs isolados rodavam antes do resize e Glide scrollava usando
-    // dimensões antigas.
+    // setTimeout with enough delay for Glide's ResizeObserver to have
+    // already reflected the new height (caused by the footer appearing).
+    // Isolated RAFs were running before the resize and Glide was scrolling
+    // using stale dimensions.
     window.setTimeout(() => {
       gridRef.current?.scrollToCell(col, row, align);
     }, 80);
@@ -351,8 +352,8 @@ export function TableView({
   const handleAppendRow = (focusCol = 0) => {
     const newRowIdx = (data?.rows.length ?? 0) + newRows.length;
     setNewRows((prev) => [...prev, new Map()]);
-    // Seleciona a célula na coluna que o usuário já estava (arrow-down)
-    // em vez de pular pra col 0.
+    // Select the cell in the column the user was already on (arrow-down)
+    // instead of jumping to col 0.
     window.setTimeout(() => {
       gridRef.current?.selectCell(focusCol, newRowIdx);
     }, 80);
@@ -422,7 +423,7 @@ export function TableView({
       });
     }
 
-    // Scroll pra última linha tocada.
+    // Scroll to the last row touched.
     const lastRow = Math.max(...edits.map((e) => e.row));
     scrollAfterLayout(0, lastRow);
   };
@@ -505,14 +506,15 @@ export function TableView({
     setApplyError(null);
   };
 
-  /** Reorder físico de colunas (drag no header). Reorganiza data.columns +
-   *  cada row em data.rows e remapeia as chaves do dirty (row:colIdx). */
+  /** Physical reorder of columns (drag on the header). Reorganizes
+   *  data.columns + each row in data.rows and remaps the dirty keys
+   *  (row:colIdx). */
   const handleColumnMoved = (from: number, to: number) => {
     if (!data) return;
     if (from === to) return;
     const permutation = reorderPermutation(data.columns.length, from, to);
-    // old→new: após a permutação, a coluna que estava em old index i
-    // fica em permutation.indexOf(i).
+    // old→new: after the permutation, the column that was at old index i
+    // ends up at permutation.indexOf(i).
     const oldToNew: number[] = new Array(data.columns.length);
     for (let newIdx = 0; newIdx < permutation.length; newIdx++) {
       oldToNew[permutation[newIdx]] = newIdx;
@@ -544,7 +546,7 @@ export function TableView({
     });
   };
 
-  /** Set literal empty string ("") — distinto de NULL. Só faz sentido em
+  /** Set literal empty string ("") — distinct from NULL. Only makes sense on
    *  linhas existentes (em novas, ausente = NULL). */
   const handleSetEmpty = (col: number, row: number) => {
     if (!data) return;
@@ -623,7 +625,7 @@ export function TableView({
     items.push({
       icon: <EyeOff className="h-3.5 w-3.5" />,
       label: t("table.headerMenu.hide"),
-      // Nunca deixa esconder a última coluna visível — senão o grid vira NaN.
+      // Never allow hiding the last visible column — otherwise the grid becomes NaN.
       disabled: hiddenColumns.size >= data.columns.length - 1,
       onClick: () => {
         setHiddenColumns((prev) => {
@@ -701,7 +703,7 @@ export function TableView({
       },
     ];
     if (editable) {
-      // Para linhas existentes: detectar se já é string vazia pra desabilitar.
+      // For existing rows: detect whether it's already an empty string to disable.
       const alreadyEmpty = (() => {
         if (isNewRow) return false;
         const key = `${row}:${col}`;
@@ -731,8 +733,8 @@ export function TableView({
     cellMenu.openAtPos(x, y);
   };
 
-  /** Constrói o "row key" que vai no WHERE de UPDATE/DELETE: PK se houver,
-   *  senão todas as colunas "comparáveis" da linha original. */
+  /** Builds the "row key" that goes in the UPDATE/DELETE WHERE: PK if
+   *  any, otherwise all "comparable" columns of the original row. */
   const buildRowKey = (originalRow: Value[]): PkEntry[] => {
     if (!data) return [];
     if (pkColumns.length > 0) {
@@ -760,8 +762,8 @@ export function TableView({
       (dirty.size === 0 && rowsToDelete.size === 0 && newRows.length === 0)
     )
       return;
-    // Sem PK: confirma antes de aplicar. O usuário precisa saber que
-    // UPDATE/DELETE vão casar a linha pelo valor completo + LIMIT 1.
+    // No PK: confirm before applying. The user needs to know that
+    // UPDATE/DELETE will match the row by full value + LIMIT 1.
     if (noPk && (dirty.size > 0 || rowsToDelete.size > 0)) {
       const matchableCount =
         matchableColumns?.length ?? data.columns.length;
@@ -779,15 +781,16 @@ export function TableView({
         "",
         t("table.noPk.continueQ"),
       ].join("\n");
-      if (!window.confirm(warn)) return;
+      const ok = await appConfirm(warn);
+      if (!ok) return;
     }
     setApplying(true);
     setApplyError(null);
     try {
       const errs: string[] = [];
-      // Coletamos os sucessos pra aplicar localmente (sem refetch) —
-      // INSERTs promovem o newRow com o last_insert_id, UPDATEs patcham
-      // a célula no índice, DELETEs removem.
+      // Collect the successes to apply locally (no refetch) —
+      // INSERTs promote the newRow with last_insert_id, UPDATEs patch
+      // the cell at the index, DELETEs remove it.
       const deletedRowSet = new Set<number>();
       const updatedCells = new Map<string, Value>(); // "row:col" → newValue
       const insertedRows: Array<{ values: Value[] }> = [];
@@ -840,7 +843,7 @@ export function TableView({
         });
       }
 
-      // 3. INSERT INTO ... VALUES — só linhas com pelo menos um valor.
+      // 3. INSERT INTO ... VALUES — only rows with at least one value.
       const nonEmptyNewRows = newRows.filter((m) => m.size > 0);
       if (nonEmptyNewRows.length > 0) {
         const rowsPayload: PkEntry[][] = nonEmptyNewRows.map((m) =>
@@ -860,8 +863,8 @@ export function TableView({
             errs.push(`insert #${i + 1}: ${r.message}`);
             return;
           }
-          // Constrói a linha "persistida" localmente: usa os valores
-          // digitados + preenche PK auto_increment com o last_insert_id.
+          // Builds the "persisted" row locally: uses the typed values +
+          // fills the auto_increment PK with last_insert_id.
           const m = nonEmptyNewRows[i];
           const values: Value[] = data.columns.map((colName) => {
             const typed = m.get(colName);
@@ -880,8 +883,8 @@ export function TableView({
         });
       }
 
-      // Aplica as mudanças LOCALMENTE — não refetch. Isso preserva
-      // scroll + deixa as novas linhas na posição atual (estilo Navicat).
+      // Apply changes LOCALLY — no refetch. Preserves scroll and keeps
+      // new rows at their current position (Navicat-style).
       if (
         deletedRowSet.size > 0 ||
         updatedCells.size > 0 ||
@@ -901,7 +904,7 @@ export function TableView({
             }
             return mutated ?? row;
           });
-          // DELETEs (remove descendente pra manter índices).
+          // DELETEs (descending remove to keep indices valid).
           if (deletedRowSet.size > 0) {
             const sorted = Array.from(deletedRowSet).sort((a, b) => b - a);
             rows = rows.slice();
@@ -922,9 +925,9 @@ export function TableView({
         }
       }
 
-      // Limpa state pendente. Os erros ficam no footer pro usuário ver,
-      // mas o dirty/newRows/delete são resetados — assumimos que o que
-      // falhou é raro; se precisar, usuário refresh ou re-edita.
+      // Clear pending state. Errors stay in the footer for the user to
+      // see, but dirty/newRows/delete are reset — we assume failures
+      // are rare; if needed, the user can refresh or re-edit.
       if (errs.length > 0) {
         setApplyError(errs.join("\n"));
       }
@@ -962,20 +965,20 @@ export function TableView({
       hiddenColumns: Array.from(hiddenColumns),
       columnOrder: data?.columns,
       filterTree,
-      // V1 legacy — zera pra não confundir na próxima leitura.
+      // V1 legacy — zeroed to avoid confusion on next read.
       filters: undefined,
     });
   }, [tabId, page, limit, orderBy, hiddenColumns, data?.columns, filterTree, patchTableState]);
 
   const handleFilterTreeChange = (next: FilterNode) => {
     setFilterTree(next);
-    setPage(0); // reset paginação ao filtrar
+    setPage(0); // reset pagination on filter change
   };
   useEffect(() => {
     return () => clearLive(tabId);
   }, [tabId, clearLive]);
 
-  // Atalhos: Ctrl+F (busca), F5 (refresh).
+  // Shortcuts: Ctrl+F (search), F5 (refresh).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
@@ -994,19 +997,19 @@ export function TableView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Maps derivados pro grid (display value + intent → cor).
-  // Edits normais → amarelo. Nova linha inteira → verde via dirtyIntents="new".
+  // Derived maps for the grid (display value + intent → color).
+  // Normal edits → yellow. Entirely new row → green via dirtyIntents="new".
   const dirtyValues = useMemo(() => {
     const m = new Map<string, string>();
     for (const [k, e] of dirty) {
-      // empty → exibe a célula vazia mesmo (a cor amarela do dirty já
-      // diferencia do null, que fica "NULL" em vermelho).
+      // empty → show the cell empty (the dirty yellow color already
+      // distinguishes it from null, which shows "NULL" in red).
       m.set(
         k,
         e.intent === "null" ? "NULL" : e.intent === "empty" ? "" : e.newText,
       );
     }
-    // Valores das linhas novas (cada cell preenchida).
+    // Values for new rows (each filled cell).
     if (data) {
       newRows.forEach((rowMap, newIdx) => {
         const row = data.rows.length + newIdx;
@@ -1023,10 +1026,10 @@ export function TableView({
   const dirtyIntents = useMemo(() => {
     const m = new Map<string, "edit" | "null" | "new">();
     for (const [k, e] of dirty) {
-      // "empty" reusa a cor de "edit" (amarelo) — visualmente não quebra.
+      // "empty" reuses "edit" color (yellow) — visually it doesn't break.
       m.set(k, e.intent === "empty" ? "edit" : e.intent);
     }
-    // Linhas novas: marca TODAS as cells como "new" (verde).
+    // New rows: mark ALL cells as "new" (green).
     if (data) {
       newRows.forEach((_, newIdx) => {
         const row = data.rows.length + newIdx;
@@ -1038,7 +1041,7 @@ export function TableView({
     return m;
   }, [dirty, newRows, data]);
 
-  // Linhas augmentadas: existentes + novas (preenchidas com Null).
+  // Augmented rows: existing + new ones (filled with Null).
   const augmentedRows = useMemo(() => {
     if (!data) return [];
     const placeholder: Value[] = data.columns.map(() => ({ type: "null" }));
@@ -1046,9 +1049,9 @@ export function TableView({
     return [...data.rows, ...extras];
   }, [data, newRows]);
 
-  // columnMeta alinhado com a ordem atual de data.columns (que pode ter
-  // sido permutada por drag & drop). Sem isso, editors tipados pegavam
-  // a coluna errada depois de um reorder.
+  // columnMeta aligned with the current order of data.columns (which
+  // may have been permuted by drag & drop). Without this, typed editors
+  // would pick the wrong column after a reorder.
   const orderedColumnMeta = useMemo(() => {
     if (!cachedColumns || !data) return cachedColumns;
     const byName = new Map(cachedColumns.map((c) => [c.name, c]));
@@ -1058,8 +1061,8 @@ export function TableView({
     return result.length === data.columns.length ? result : cachedColumns;
   }, [cachedColumns, data]);
 
-  // Mapeamento visual (index passado ao Glide) → full (index em data.columns).
-  // Quando não há colunas escondidas, vira identity.
+  // Visual mapping (index passed to Glide) → full (index in data.columns).
+  // When there are no hidden columns, becomes identity.
   const visualToFull = useMemo(() => {
     if (!data) return [] as number[];
     if (hiddenColumns.size === 0)
@@ -1069,7 +1072,7 @@ export function TableView({
       .filter((i) => i >= 0);
   }, [data, hiddenColumns]);
 
-  // Tudo que é passado ao ResultGrid usa ordem VISUAL.
+  // Everything passed to ResultGrid uses VISUAL order.
   const displayColumns = useMemo(
     () => (data ? visualToFull.map((i) => data.columns[i]) : []),
     [data, visualToFull],
@@ -1083,15 +1086,15 @@ export function TableView({
     return visualToFull.map((i) => orderedColumnMeta[i]);
   }, [orderedColumnMeta, visualToFull]);
 
-  /** Mapeia full col idx → visual col idx. Retorna -1 se está escondido. */
+  /** Maps full col idx → visual col idx. Returns -1 if hidden. */
   const fullToVisual = useMemo(() => {
     const m = new Map<number, number>();
     visualToFull.forEach((full, visual) => m.set(full, visual));
     return m;
   }, [visualToFull]);
 
-  // Dirty maps em coords VISUAIS (pra ResultGrid). Entradas em cols
-  // escondidas são filtradas do display (mas permanecem no state).
+  // Dirty maps in VISUAL coords (for ResultGrid). Entries in hidden
+  // cols are filtered from the display (but remain in state).
   const displayDirtyValues = useMemo(() => {
     if (hiddenColumns.size === 0) return dirtyValues;
     const out = new Map<string, string>();
@@ -1115,9 +1118,9 @@ export function TableView({
     return out;
   }, [dirtyIntents, hiddenColumns, fullToVisual]);
 
-  // Wrappers que traduzem visual→full antes de chamar os handlers. Só usados
-  // quando há algo escondido — senão reuso os originais direto pra evitar
-  // alocações.
+  // Wrappers that translate visual→full before calling handlers. Only
+  // used when something is hidden — otherwise reuse the originals
+  // directly to avoid allocations.
   const v2f = (v: number) => visualToFull[v] ?? v;
   const visualCellEdit = (col: number, row: number, text: string) =>
     handleCellEdit(v2f(col), row, text);
@@ -1138,11 +1141,11 @@ export function TableView({
   const visualHeaderContextMenu = (col: number, x: number, y: number) =>
     handleHeaderContextMenu(v2f(col), x, y);
 
-  // Calcula matches + navegação.
+  // Compute matches + navigation.
   const { matches, index: matchIndex, prev: matchPrev, next: matchNext } =
     useGridSearch(search, data?.columns ?? [], data?.rows ?? []);
 
-  // Match focado (passa via prop pro ResultGrid → highlightRegions).
+  // Focused match (passed as prop to ResultGrid → highlightRegions).
   const focused = matches.length > 0 ? matches[matchIndex] : null;
   const focusedCell =
     searchOpen && focused && search.mode === "dado" ? focused : null;
@@ -1810,10 +1813,10 @@ function DataPane({
 
   const decoratedColumns = useDecoratedColumns(displayColumns, orderBy);
 
-  // Empty state quando NÃO há linhas nem novas — Glide com rows=0 não
-  // renderiza um visual útil, então trocamos por um "vazio" explicativo.
-  // Ao clicar em adicionar, o state atualiza, displayRows cresce pra 1,
-  // e o grid assume o comando normalmente.
+  // Empty state when there are NO rows (existing or new) — Glide with
+  // rows=0 doesn't render a useful visual, so we swap it for an
+  // explanatory "empty" state. Clicking add updates state, displayRows
+  // grows to 1, and the grid takes over normally.
   if (displayRows.length === 0) {
     return (
       <div className="relative h-full w-full">
@@ -2086,7 +2089,7 @@ interface PendingEdit {
   intent: "edit" | "null" | "empty";
 }
 
-/** Texto que aparece no overlay de edição para um Value (round-tripável). */
+/** Text shown in the edit overlay for a Value (round-trippable). */
 function formatValueForEdit(v: Value): string {
   if (v.type === "null") return "";
   if (
@@ -2106,16 +2109,16 @@ function formatValueForEdit(v: Value): string {
   return "";
 }
 
-/** Converte texto digitado pelo usuário em Value pra mandar ao backend.
- *  v0: string vazia → NULL; resto → string (MySQL coerce).
- *  v1+: usar tipo da coluna pra escolher variant correto. */
+/** Converts user-typed text into a Value to send to the backend.
+ *  v0: empty string → NULL; else → string (MySQL coerces).
+ *  v1+: use the column type to pick the correct variant. */
 function textToValue(text: string): Value {
   if (text === "") return { type: "null" };
   return { type: "string", value: text };
 }
 
-/** Resolve o Value a partir do intent da edição pendente. "empty" força
- *  string vazia literal; "null" força NULL; "edit" cai no textToValue. */
+/** Resolves the Value from the pending edit's intent. "empty" forces
+ *  literal empty string; "null" forces NULL; "edit" falls into textToValue. */
 function intentToValue(
   intent: "edit" | "null" | "empty",
   text: string,
@@ -2125,18 +2128,18 @@ function intentToValue(
   return textToValue(text);
 }
 
-/** Aplica a ordem de colunas salva no tab-state (se existe e bate com
- *  o schema atual) permutando data.columns + cada row. Fallback: retorna
- *  r inalterado — a ordem salva vira "suave", não quebra se colunas
- *  mudaram na tabela (ex: ALTER TABLE). */
+/** Applies the column order saved in tab-state (if it exists and matches
+ *  the current schema) by permuting data.columns + each row. Fallback:
+ *  returns r unchanged — the saved order is "soft", it doesn't break if
+ *  columns changed on the table (e.g. ALTER TABLE). */
 function applySavedColumnOrder(
   r: QueryResult,
   saved: readonly string[] | undefined,
 ): QueryResult {
   if (!saved || saved.length === 0) return r;
   if (saved.length !== r.columns.length) return r;
-  // Permutação new_visual_idx → old_idx_em_r. Se alguma col saved não
-  // existe em r.columns, aborta (schema mudou).
+  // Permutation new_visual_idx → old_idx_in_r. If any saved col doesn't
+  // exist in r.columns, abort (schema changed).
   const perm: number[] = [];
   for (const name of saved) {
     const idx = r.columns.indexOf(name);
@@ -2150,8 +2153,9 @@ function applySavedColumnOrder(
   };
 }
 
-/** Gera a permutação resultado de "mover o item no índice `from` pra
- *  posição `to`" em um array de `len` posições. Retorna novoIdx→oldIdx. */
+/** Produces the permutation resulting from "move the item at index
+ *  `from` to position `to`" in an array of `len` positions. Returns
+ *  newIdx→oldIdx. */
 function reorderPermutation(len: number, from: number, to: number): number[] {
   const idx = Array.from({ length: len }, (_, i) => i);
   const [moved] = idx.splice(from, 1);

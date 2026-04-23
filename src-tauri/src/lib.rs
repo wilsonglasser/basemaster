@@ -23,8 +23,8 @@ pub fn run() {
         )
         .init();
 
-    // Sentry: só ativa se SENTRY_DSN setado e NÃO vazio. String vazia
-    // (secret sem valor no CI) cai no mesmo caminho que "não setado".
+    // Sentry: only activates if SENTRY_DSN is set and NOT empty. Empty string
+    // (secret without value in CI) falls into the same path as "not set".
     let _sentry_guard = std::env::var("SENTRY_DSN")
         .ok()
         .filter(|s| !s.is_empty())
@@ -38,9 +38,9 @@ pub fn run() {
             })
         });
 
-    // prevent-default: desabilita shortcuts nativos do WebView2 (zoom,
-    // reload, find, etc) pra chegarem no JS. `browser_accelerator_keys =
-    // false` só existe no Windows — API da crate é gated por target_os.
+    // prevent-default: disables native WebView2 shortcuts (zoom,
+    // reload, find, etc) so they reach JS. `browser_accelerator_keys =
+    // false` only exists on Windows — the crate's API is gated by target_os.
     let prevent_default_builder = tauri_plugin_prevent_default::Builder::new();
     #[cfg(target_os = "windows")]
     let prevent_default_builder = prevent_default_builder.platform(
@@ -76,10 +76,10 @@ pub fn run() {
             };
             app.manage(state::AppState::new(store));
 
-            // Safety net: a janela inicia invisível (visible:false em
-            // tauri.conf.json) e o main.tsx chama show() assim que monta.
-            // Se por algum motivo o bundle não carregar em 5s, força
-            // show() aqui pra não deixar a janela invisível pra sempre.
+            // Safety net: the window starts invisible (visible:false in
+            // tauri.conf.json) and main.tsx calls show() as soon as it mounts.
+            // If for some reason the bundle doesn't load within 5s, force
+            // show() here so we don't leave the window invisible forever.
             if let Some(window) = app.get_webview_window("main") {
                 let w = window.clone();
                 tauri::async_runtime::spawn(async move {
@@ -163,9 +163,9 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            // Em vez de panicar (que vira 0xc0000409 no Windows sem
-            // stderr visível), grava mensagem no log de erro e sai
-            // com código diferente de zero.
+            // Instead of panicking (which becomes 0xc0000409 on Windows
+            // with no visible stderr), write the message to the error log
+            // and exit with a non-zero code.
             let msg = format!("Falha ao iniciar o BaseMaster: {e}");
             write_setup_error(&msg);
             eprintln!("{msg}");
@@ -173,9 +173,9 @@ pub fn run() {
         });
 }
 
-/// Grava mensagem de erro de setup em `panic.log` (mesmo local usado
-/// pelo panic hook). Útil pra erros que a gente prefere NÃO transformar
-/// em panic (ex.: migration mismatch, que tem solução conhecida).
+/// Writes a setup error message to `panic.log` (same location used
+/// by the panic hook). Useful for errors we'd rather NOT turn into
+/// a panic (e.g., migration mismatch, which has a known solution).
 fn write_setup_error(msg: &str) {
     let dir = std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
@@ -198,13 +198,13 @@ fn write_setup_error(msg: &str) {
     }
 }
 
-/// Captura panics em release pra arquivo em `%LOCALAPPDATA%\BaseMaster\panic.log`
-/// (ou `$TEMP/basemaster-panic.log` como fallback). Necessário porque o
-/// release build roda com windows_subsystem="windows" e `panic=abort`, então
-/// stderr fica desanexado e o crash vira só `0xc0000409` no Event Viewer
-/// sem contexto.
+/// Captures panics in release to a file at `%LOCALAPPDATA%\BaseMaster\panic.log`
+/// (or `$TEMP/basemaster-panic.log` as fallback). Necessary because the
+/// release build runs with windows_subsystem="windows" and `panic=abort`, so
+/// stderr is detached and the crash shows up as just `0xc0000409` in Event Viewer
+/// with no context.
 fn install_panic_hook() {
-    // Backtrace só sai se essa env for setada; força ligado antes de qualquer panic.
+    // Backtrace only prints if this env is set; force it on before any panic.
     if std::env::var_os("RUST_BACKTRACE").is_none() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
@@ -241,7 +241,7 @@ fn install_panic_hook() {
             let _ = f.write_all(log.as_bytes());
         }
 
-        // Em dev (stderr anexado) também queremos ver no terminal.
+        // In dev (stderr attached) we also want to see it in the terminal.
         default_hook(info);
     }));
 }

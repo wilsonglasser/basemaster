@@ -45,7 +45,7 @@ export function AiSidebar() {
     const onMove = (e: MouseEvent) => {
       const d = dragStartRef.current;
       if (!d) return;
-      // Sidebar direita: arrastar pra esquerda aumenta.
+      // Right sidebar: dragging left increases width.
       const delta = d.startX - e.clientX;
       setPanelWidth(d.startWidth + delta);
     };
@@ -204,8 +204,8 @@ function NoApiKey() {
   );
 }
 
-/** Agrupa mensagens visualmente: tool_results vêm em mensagens user
- *  sintéticas mas visualmente pertencem à resposta anterior do assistant. */
+/** Groups messages visually: tool_results arrive as synthetic user
+ *  messages but visually belong to the previous assistant response. */
 interface VisualMessage {
   role: "user" | "assistant";
   id: string;
@@ -239,7 +239,7 @@ function groupMessages(messages: AiMessage[]): VisualMessage[] {
         b.type === "tool_use",
     );
 
-    // User com apenas tool_results → grud no last assistant.
+    // User with only tool_results → attach to the last assistant.
     if (m.role === "user" && toolResults.length > 0 && texts.length === 0) {
       const last = out[out.length - 1];
       if (last && last.role === "assistant") {

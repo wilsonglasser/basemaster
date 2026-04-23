@@ -4,15 +4,15 @@ import { persist } from "zustand/middleware";
 const MIN = 0.5;
 const MAX = 2.5;
 const STEP = 0.1;
-/** Boost aplicado quando entra em fullscreen (modo apresentação). */
+/** Boost applied when entering fullscreen (presentation mode). */
 const PRESENTATION_BOOST = 1.35;
 
 interface UiZoomState {
-  /** Zoom "normal" do usuário. */
+  /** User's "normal" zoom. */
   zoom: number;
-  /** True quando a janela está em fullscreen. */
+  /** True when the window is fullscreen. */
   fullscreen: boolean;
-  /** Salvo antes do boost de apresentação. */
+  /** Saved before the presentation boost. */
   zoomBeforeFullscreen: number | null;
 
   zoomIn: () => void;
@@ -20,7 +20,7 @@ interface UiZoomState {
   zoomReset: () => void;
   setZoom: (z: number) => void;
   setFullscreen: (on: boolean) => void;
-  /** Zoom efetivo considerando o boost de apresentação. */
+  /** Effective zoom accounting for the presentation boost. */
   effectiveZoom: () => number;
 }
 

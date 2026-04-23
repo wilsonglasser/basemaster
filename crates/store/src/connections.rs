@@ -7,7 +7,7 @@ use basemaster_core::{ConnectionConfig, SshTunnelConfig, TlsMode};
 
 use crate::{StoreError, StoreResult};
 
-/// Perfil de conexão como armazenado no SQLite (nunca contém senha).
+/// Connection profile as stored in SQLite (never contains the password).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     pub id: Uuid,
@@ -28,8 +28,8 @@ pub struct ConnectionProfile {
 }
 
 impl ConnectionProfile {
-    /// Combina o perfil com a senha vinda do keyring para gerar o
-    /// `ConnectionConfig` que o driver consome.
+    /// Combines the profile with the password from the keyring to build the
+    /// `ConnectionConfig` the driver consumes.
     pub fn into_config(self, password: Option<String>) -> ConnectionConfig {
         ConnectionConfig {
             id: self.id,
@@ -88,8 +88,8 @@ impl<'a> ConnectionRepo<'a> {
         rows.into_iter().map(ConnectionRow::into_profile).collect()
     }
 
-    /// Atualiza sort_order em batch. Passa (id, order) — a UI gera a
-    /// sequência final depois do drop.
+    /// Updates sort_order in a batch. Pass (id, order) — the UI generates
+    /// the final sequence after the drop.
     pub async fn reorder(&self, items: &[(Uuid, i64)]) -> StoreResult<()> {
         let mut tx = self.pool.begin().await?;
         for (id, order) in items {
@@ -236,8 +236,8 @@ fn parse_tls(raw: &str) -> TlsMode {
     }
 }
 
-/// Remove senha e passphrase do SshTunnelConfig antes de serializar pro
-/// SQLite — esses segredos vão pro keyring em entries separados.
+/// Removes password and passphrase from SshTunnelConfig before serializing
+/// to SQLite — those secrets go to the keyring in separate entries.
 fn strip_ssh_secrets(s: &SshTunnelConfig) -> SshTunnelConfig {
     SshTunnelConfig {
         host: s.host.clone(),

@@ -12,9 +12,9 @@ type Status =
 
 interface UpdaterState {
   status: Status;
-  /** Versões que o user mandou "ignorar esta atualização". */
+  /** Versions the user has told to "ignore this update". */
   ignoredVersions: string[];
-  /** Último timestamp em que checamos (epoch ms). */
+  /** Last timestamp we checked (epoch ms). */
   lastCheckedAt: number | null;
 
   checkNow: (opts?: { silent?: boolean }) => Promise<void>;
@@ -41,7 +41,7 @@ export const useUpdater = create<UpdaterState>()(
             set({ status: { kind: "idle" } });
             return;
           }
-          // "silent" = chamada do boot: respeita lista de ignorados.
+          // "silent" = boot call: respects the ignored list.
           if (opts?.silent && get().ignoredVersions.includes(update.version)) {
             set({ status: { kind: "idle" } });
             return;
@@ -90,9 +90,9 @@ export const useUpdater = create<UpdaterState>()(
               set({ status: { kind: "ready", update } });
             }
           });
-          // O installer no Windows (NSIS) relança o app sozinho após instalar;
-          // no macOS/Linux precisamos pedir relaunch explícito. O plugin
-          // process cobre os três.
+          // The installer on Windows (NSIS) relaunches the app on its own after
+          // installing; on macOS/Linux we need an explicit relaunch. The
+          // process plugin covers all three.
           const { relaunch } = await import("@tauri-apps/plugin-process");
           await relaunch();
         } catch (e) {

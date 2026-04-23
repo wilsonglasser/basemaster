@@ -1,23 +1,23 @@
 import { create } from "zustand";
 
 /**
- * Confirmação de ações destrutivas (DROP, TRUNCATE, DELETE em massa).
- * Mesmo padrão do `useApproval` do agente: um pendente por vez,
+ * Destructive action confirmation (DROP, TRUNCATE, bulk DELETE).
+ * Same pattern as the agent's `useApproval`: one pending at a time,
  * resolve(true|false) via Promise.
  *
- * O dialog força o usuário a marcar um checkbox antes do botão
- * confirmar habilitar — evita "muscle memory" matando dados.
+ * The dialog forces the user to tick a checkbox before the confirm
+ * button enables — avoids "muscle memory" destroying data.
  */
 export interface PendingDestructive {
   id: string;
   title: string;
-  /** Linha de descrição (ex: "Esta ação não pode ser desfeita."). */
+  /** Description line (e.g., "This action cannot be undone."). */
   description: string;
-  /** Lista de itens afetados (nomes de tabela, colunas, etc.). */
+  /** List of affected items (table names, columns, etc.). */
   items: string[];
-  /** Texto do botão de confirmação (ex: "Drop 3 tables"). */
+  /** Confirmation button label (e.g., "Drop 3 tables"). */
   confirmLabel: string;
-  /** Texto da checkbox que precisa ser marcada. */
+  /** Text of the checkbox that must be checked. */
   checkboxLabel: string;
   resolve: (confirmed: boolean) => void;
 }

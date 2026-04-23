@@ -14,7 +14,7 @@ export function ShortcutsPanel() {
   const resetBinding = useShortcuts((s) => s.resetBinding);
   const resetAll = useShortcuts((s) => s.resetAll);
 
-  // Re-render quando overrides mudar.
+  // Re-render when overrides change.
   useShortcuts((s) => s.overrides);
 
   const grouped = useMemo(() => {
@@ -26,8 +26,8 @@ export function ShortcutsPanel() {
   }, []);
 
   const conflicts = useMemo(() => {
-    // Agrupa por (binding, scope) — scopes diferentes NÃO conflitam
-    // (editor keymap não intercepta global shortcut e vice-versa).
+    // Group by (binding, scope) — different scopes do NOT conflict
+    // (editor keymap doesn't intercept global shortcuts and vice-versa).
     const map = new Map<string, string[]>();
     for (const a of SHORTCUTS) {
       const b = resolve(a.id);
@@ -101,7 +101,7 @@ function ShortcutRow({
   const onCaptureKey = (e: React.KeyboardEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Esc cancela, Backspace limpa.
+    // Esc cancels, Backspace clears.
     if (e.key === "Escape") {
       setCapturing(false);
       return;
@@ -113,7 +113,7 @@ function ShortcutRow({
     }
     const b = eventToBinding(e.nativeEvent);
     if (!b) return;
-    // Precisa de pelo menos um modificador (evita gravar só uma letra).
+    // Must have at least one modifier (avoids binding just a letter).
     const hasMod = /(Mod|Ctrl|Alt|Meta)\+/.test(b);
     const isFKey = /^F\d+$/.test(b);
     if (!hasMod && !isFKey) return;

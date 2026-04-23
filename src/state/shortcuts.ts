@@ -5,14 +5,14 @@ import { actionById, SHORTCUTS } from "@/lib/shortcuts/registry";
 import { normalizeBinding } from "@/lib/shortcuts/match";
 
 interface ShortcutsState {
-  /** actionId → binding canônico. null = desabilitado (sem atalho). */
+  /** actionId → canonical binding. null = disabled (no shortcut). */
   overrides: Record<string, string | null>;
   setBinding: (actionId: string, binding: string | null) => void;
   resetBinding: (actionId: string) => void;
   resetAll: () => void;
-  /** Resolve binding efetivo (override || default). */
+  /** Resolve effective binding (override || default). */
   resolve: (actionId: string) => string | null;
-  /** Mapa reverso: binding → actionId (só actions com binding ativo). */
+  /** Reverse map: binding → actionId (only actions with an active binding). */
   indexByBinding: () => Map<string, string[]>;
 }
 
@@ -44,7 +44,7 @@ export const useShortcuts = create<ShortcutsState>()(
         const action = actionById(actionId);
         if (!action) return null;
         const o = get().overrides[actionId];
-        if (o !== undefined) return o; // null explícito = desabilitado
+        if (o !== undefined) return o; // explicit null = disabled
         return action.defaultBinding;
       },
 

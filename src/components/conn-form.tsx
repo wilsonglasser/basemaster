@@ -38,7 +38,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
   const [defaultDb, setDefaultDb] = useState("");
   const [tls, setTls] = useState<TlsMode>("preferred");
 
-  // Quando troca de driver, ajusta defaults sensíveis (porta + user).
+  // When the driver changes, adjust sensible defaults (port + user).
   const handleDriverChange = (
     next: "mysql" | "mariadb" | "postgres" | "sqlite",
   ) => {
@@ -50,12 +50,12 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
       if (port === 5432) setPort(3306);
       if (user === "postgres") setUser("root");
     } else {
-      // sqlite: zera campos que não se aplicam; host vira file path.
+      // sqlite: clear fields that don't apply; host becomes file path.
       setSshEnabled(false);
     }
   };
 
-  // SSH tunnel V2: password + private key. Secrets persistem no keyring.
+  // SSH tunnel V2: password + private key. Secrets persist in the keyring.
   type SshAuthMethod = "password" | "key";
   const [sshEnabled, setSshEnabled] = useState(false);
   const [sshHost, setSshHost] = useState("");
@@ -102,8 +102,8 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
         const keyPath = p.ssh_tunnel.private_key_path ?? "";
         setSshKeyPath(keyPath);
         setSshAuth(keyPath ? "key" : "password");
-        // Senhas/passphrases ficam no keyring — placeholder em branco
-        // indica "manter valor atual". Usuário digita pra sobrescrever.
+        // Passwords/passphrases live in the keyring — empty placeholder
+        // means "keep current value". User types to overwrite.
         setSshPassword("");
         setSshKeyPassphrase("");
       }
@@ -132,7 +132,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
             host: sshHost.trim(),
             port: sshPort,
             user: sshUser.trim(),
-            // O backend re-injeta do keyring no open se vier null.
+            // The backend re-injects from the keyring on open if null.
             password: null,
             private_key_path:
               sshAuth === "key" && sshKeyPath.trim()
@@ -148,9 +148,9 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
     host.trim().length > 0 &&
     (driver === "sqlite" || user.trim().length > 0);
 
-  // Convenção pros secrets SSH:
-  // - create: manda valor digitado (ou null)
-  // - update: null = não mexe no keyring; "" = apaga; "valor" = sobrescreve
+  // Convention for SSH secrets:
+  // - create: send typed value (or null)
+  // - update: null = leave keyring alone; "" = delete; "value" = overwrite
   const sshPwdPayload = sshEnabled && sshAuth === "password"
     ? (sshPassword || (editingId ? null : null))
     : (editingId ? "" : null);
@@ -162,7 +162,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
     setTest("loading");
     setTestMsg(t("connForm.testing"));
     try {
-      // Teste usa o valor digitado direto (não passa pelo keyring).
+      // Test uses the typed value directly (doesn't go through the keyring).
       await ipc.connections.test(
         draft,
         password || null,
@@ -704,8 +704,8 @@ function ColorPicker({
 }) {
   const t = useT();
   const colorInputRef = useRef<HTMLInputElement>(null);
-  // Value que não bate com nenhum preset é uma cor custom — mostra
-  // como swatch ativo com o ícone "custom".
+  // A value that doesn't match any preset is a custom color — shown
+  // as an active swatch with the "custom" icon.
   const isPreset =
     value != null && CONN_COLORS.some((c) => c.hex === value);
   const customValue = !isPreset && value != null ? value : null;
@@ -727,7 +727,7 @@ function ColorPicker({
           title={c.name}
         />
       ))}
-      {/* Preview da cor custom — só aparece quando tem uma ativa. */}
+      {/* Custom color preview — only shown when one is active. */}
       {customValue && (
         <button
           type="button"
@@ -737,7 +737,7 @@ function ColorPicker({
           title={t("connForm.customColorTitle", { hex: customValue })}
         />
       )}
-      {/* Botão "outra cor" — abre o picker nativo do SO. */}
+      {/* "Other color" button — opens the OS-native picker. */}
       <button
         type="button"
         onClick={() => colorInputRef.current?.click()}

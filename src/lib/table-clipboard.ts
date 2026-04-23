@@ -6,19 +6,19 @@ import {
 import type { Uuid } from "@/lib/types";
 
 /**
- * Formato "copy tables" pro clipboard.
- * - Texto: nomes separados por \n (user vê a lista se colar em outro lugar)
- * - Metadados: JSON no início em comentário-like, ou em storage separado
+ * "copy tables" clipboard format.
+ * - Text: names separated by \n (user sees the list if pasted elsewhere)
+ * - Metadata: comment-like JSON at the start, or in separate storage
  *
- * Usamos o seguinte formato híbrido no texto:
+ * We use this hybrid text format:
  *   #basemaster:tables {"connectionId":"...","schema":"..."}
  *   table1
  *   table2
  *   table3
  *
- * A primeira linha permite o paste em qualquer editor mostrar a lista
- * "natural" (nomes soltos) enquanto nosso parser reconhece o header
- * e reconstrói o contexto de origem.
+ * The first line lets pasting into any editor show a "natural" list
+ * (bare names) while our parser recognizes the header and reconstructs
+ * the original context.
  */
 export interface TableClipboardPayload {
   connectionId: Uuid;
@@ -63,7 +63,7 @@ export async function writeTableClipboard(
   p: TableClipboardPayload,
 ): Promise<void> {
   const text = serializeTableClipboard(p);
-  // Plugin Tauri — sem permission prompt do browser.
+  // Tauri plugin — no browser permission prompt.
   await tauriWriteText(text);
 }
 

@@ -26,7 +26,7 @@ export function Markdown({ text, className }: Props) {
         components={{
           code({ className, children, ...rest }) {
             const lang = /language-(\w+)/.exec(className ?? "")?.[1] ?? "";
-            // Inline code: sem className (não veio de fenced block).
+            // Inline code: no className (didn't come from fenced block).
             const inline = !className;
             if (inline) {
               return (
@@ -116,8 +116,8 @@ export function Markdown({ text, className }: Props) {
   );
 }
 
-/** Extrai texto puro de uma árvore React — necessário pra `copy` e `run`
- *  depois que o rehype-highlight envelopa o conteúdo em spans de token. */
+/** Extracts plain text from a React tree — needed for `copy` and `run`
+ *  after rehype-highlight wraps content in token spans. */
 function extractText(node: ReactNode): string {
   if (node == null || node === false || node === true) return "";
   if (typeof node === "string") return node;
@@ -140,7 +140,7 @@ function CodeBlock({
   text: string;
   language: string;
   rawClass?: string;
-  /** Children JSX já highlighted (spans coloridos) — renderiza direto. */
+  /** Children JSX already highlighted (colored spans) — rendered directly. */
   highlighted: ReactNode;
 }) {
   const t = useT();
@@ -154,14 +154,14 @@ function CodeBlock({
   const isSql = /^sql$/i.test(language);
 
   const runInActiveOrNewTab = () => {
-    // Prioridade: se a aba ativa é query, append no editor.
+    // Priority: if the active tab is a query, append to its editor.
     const tabs = useTabs.getState();
     const active = tabs.tabs.find((t) => t.id === tabs.activeId);
     if (active?.kind.kind === "query") {
       const bridge = useQueryTabBridge.getState();
       const setter = bridge.setters[active.id];
       if (setter) {
-        // Precisa do sql atual pra append; lemos de tab-state.
+        // Needs the current sql to append; read from tab-state.
         void import("@/state/tab-state").then(({ useTabState }) => {
           const cur = useTabState.getState().queryOf(active.id)?.sql ?? "";
           setter(cur ? `${cur}\n\n${text}` : text);
@@ -169,7 +169,7 @@ function CodeBlock({
         return;
       }
     }
-    // Senão, abre aba nova na conexão mais recente ativa.
+    // Otherwise, open a new tab on the most recently active connection.
     const firstActiveId = [...useConnections.getState().active][0] ?? null;
     const connId =
       firstActiveId ??

@@ -7,7 +7,7 @@ export type ImportFormat = "csv" | "json" | "xlsx";
 
 export interface ParsedData {
   columns: string[];
-  /** Linhas: strings brutas (CSV) ou valores JS (XLSX/JSON). */
+  /** Rows: raw strings (CSV) or JS values (XLSX/JSON). */
   rows: unknown[][];
 }
 
@@ -74,7 +74,7 @@ export async function parseFile(
   }
 }
 
-/** Coerce um valor qualquer pra shape Value. */
+/** Coerce an arbitrary value into Value shape. */
 export function toValue(v: unknown): Value {
   if (v == null || v === "") return { type: "null" };
   if (typeof v === "boolean") return { type: "bool", value: v };
@@ -89,7 +89,7 @@ export function toValue(v: unknown): Value {
   if (typeof v === "string") {
     const trimmed = v.trim();
     if (trimmed === "") return { type: "null" };
-    // Tenta número.
+    // Try number.
     if (/^-?\d+$/.test(trimmed)) {
       const n = Number(trimmed);
       if (Number.isSafeInteger(n)) return { type: "int", value: n };

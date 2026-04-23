@@ -1,8 +1,8 @@
-//! SQL Import V1 — executa um `.sql` (ou `.zip` com vários `.sql`) no
-//! destino. Respeita strings, comentários, e a diretiva `DELIMITER`
-//! comum em dumps com triggers/procedures.
+//! SQL Import V1 — runs a `.sql` (or `.zip` with multiple `.sql`s) on
+//! the target. Respects strings, comments, and the `DELIMITER` directive
+//! common in dumps with triggers/procedures.
 //!
-//! Eventos:
+//! Events:
 //!   `sql_import:progress` — { statements_done, errors, current_source }
 //!   `sql_import:stmt_error` — { index, sql, message }
 //!   `sql_import:done` — { statements_done, errors, elapsed_ms }
@@ -23,27 +23,27 @@ use crate::sql_translate::{detect_dialect, normalize_for, Dialect};
 pub struct ImportOptions {
     pub target_connection_id: Uuid,
     pub path: String,
-    /// Executa `USE schema;` antes de tudo, pra scripts que não
-    /// qualificam names (`CREATE TABLE t` em vez de `db.t`).
+    /// Runs `USE schema;` before everything, for scripts that don't
+    /// qualify names (`CREATE TABLE t` instead of `db.t`).
     #[serde(default)]
     pub schema: Option<String>,
-    /// Continua executando após erro — útil com dumps que têm statements
-    /// já aplicados (ex: CREATE TABLE existente com DROP omitido).
+    /// Keep running after an error — useful with dumps that have statements
+    /// already applied (e.g., existing CREATE TABLE with DROP omitted).
     #[serde(default)]
     pub continue_on_error: bool,
-    /// Emite `progress` a cada N statements (pra não afogar o event bus).
+    /// Emits `progress` every N statements (so we don't flood the event bus).
     #[serde(default = "default_emit_every")]
     pub emit_every: u32,
-    /// Prepend FK_CHECKS=0 em cada statement. Crítico pra dumps com FKs
-    /// porque sqlx pool pode devolver conns diferentes entre statements,
-    /// o que invalida o `SET SESSION` global do header.
+    /// Prepend FK_CHECKS=0 on each statement. Critical for dumps with FKs
+    /// because the sqlx pool may hand out different conns between statements,
+    /// which invalidates the global `SET SESSION` from the header.
     #[serde(default = "default_true")]
     pub disable_fk_checks: bool,
     /// Prepend UNIQUE_CHECKS=0.
     #[serde(default = "default_true")]
     pub disable_unique_checks: bool,
-    /// Prepend NO_AUTO_VALUE_ON_ZERO — preserva PK=0 em tabelas com
-    /// AUTO_INCREMENT (mesmo default do mysqldump).
+    /// Prepend NO_AUTO_VALUE_ON_ZERO — preserves PK=0 on tables with
+    /// AUTO_INCREMENT (same default as mysqldump).
     #[serde(default = "default_true")]
     pub preserve_zero_auto_increment: bool,
 }
@@ -60,7 +60,7 @@ fn default_emit_every() -> u32 {
 pub struct ImportProgress {
     pub statements_done: u64,
     pub errors: u32,
-    /// Nome do arquivo sendo processado (útil em ZIP multi-entry).
+    /// Name of the file being processed (useful for multi-entry ZIPs).
     pub current_source: String,
 }
 
@@ -88,8 +88,8 @@ pub async fn run_import(
     let mut total_stmts: u64 = 0;
     let mut total_errs: u32 = 0;
 
-    // Lê o arquivo — se é ZIP, processa cada entry em ordem alfabética;
-    // se é SQL, processa direto.
+    // Read the file — if it's a ZIP, process each entry in alphabetical order;
+    // if it's a SQL, process directly.
     let path = std::path::PathBuf::from(&opts.path);
     let is_zip = path
         .extension()
@@ -97,10 +97,10 @@ pub async fn run_import(
         .map(|s| s.eq_ignore_ascii_case("zip"))
         .unwrap_or(false);
 
-    // Session prelude — prepended a CADA statement pra garantir que os
-    // SETs valham na MESMA conexão que executa o DDL/DML. sqlx pool
-    // pode devolver conns diferentes entre execute()s, então um `SET
-    // FOREIGN_KEY_CHECKS=0` inicial sozinho não basta.
+    // Session prelude — prepended to EVERY statement to ensure the
+    // SETs apply on the SAME connection that runs the DDL/DML. The sqlx
+    // pool may hand out different conns between execute()s, so a lone
+    // initial `SET FOREIGN_KEY_CHECKS=0` isn't enough.
     let mut session_prelude = String::new();
     if opts.disable_fk_checks {
         session_prelude.push_str("SET FOREIGN_KEY_CHECKS=0; ");
@@ -114,7 +114,7 @@ pub async fn run_import(
         );
     }
 
-    // USE schema inicial, se dado — também prependa ao prelude.
+    // Initial USE schema, if given — also prepend to the prelude.
     if let Some(ref schema) = opts.schema {
         if !schema.is_empty() {
             session_prelude.push_str(&format!(
@@ -125,9 +125,9 @@ pub async fn run_import(
     }
 
     if is_zip {
-        // Extrai todas as entries .sql pra (name, content) ANTES de qualquer
-        // await — `ZipFile` não é `Send`. Isso carrega tudo em memória; pra
-        // dumps gigantes, V2 pode streamar por entry com temp-file.
+        // Extract all .sql entries into (name, content) BEFORE any await —
+        // `ZipFile` isn't `Send`. This loads everything in memory; for
+        // huge dumps, V2 can stream per-entry with a temp-file.
         let entries: Vec<(String, String)> = {
             let f = std::fs::File::open(&path)
                 .map_err(|e| format!("abrir zip: {}", e))?;
@@ -213,7 +213,7 @@ async fn process_sql(
 ) -> Result<(), String> {
     let stmts = split_statements(sql);
     let target_dialect = Dialect::from_driver_name(target.dialect());
-    // Detecta dialeto do arquivo de uma vez (mais barato que per-stmt).
+    // Detect the file's dialect once (cheaper than per-stmt).
     let source_dialect = detect_dialect(sql);
     let needs_translate = source_dialect != Dialect::Unknown
         && target_dialect != Dialect::Unknown
@@ -230,7 +230,7 @@ async fn process_sql(
         if is_duplicate_session_set(trimmed) {
             continue;
         }
-        // Traduz se source != target. Se dialect indetectável, pass-through.
+        // Translate if source != target. If the dialect is undetectable, pass-through.
         let translated: String = if needs_translate {
             normalize_for(trimmed, source_dialect, target_dialect)
         } else {
@@ -240,13 +240,13 @@ async fn process_sql(
         if final_sql.is_empty() {
             continue;
         }
-        // Skipa statements que são sabidamente incompatíveis com o target
-        // e não têm análogo (ex: LOCK TABLES em PG). Não conta como erro.
+        // Skip statements known to be incompatible with the target
+        // and that have no analog (e.g., LOCK TABLES on PG). Not counted as an error.
         if should_skip_for_target(final_sql, target_dialect) {
             continue;
         }
         *total_stmts += 1;
-        // Prepend prelude só se o target é MySQL — os SETs são MySQL-only.
+        // Prepend the prelude only if the target is MySQL — the SETs are MySQL-only.
         let wrapped = if target_is_pg {
             final_sql.to_string()
         } else {
@@ -280,7 +280,7 @@ async fn process_sql(
             );
         }
     }
-    // Emit final pra esse source.
+    // Final emit for this source.
     let _ = app.emit(
         "sql_import:progress",
         &ImportProgress {
@@ -292,9 +292,9 @@ async fn process_sql(
     Ok(())
 }
 
-/// Splitter naive mas razoável: respeita aspas simples/duplas,
-/// backticks, comentários de linha `-- ...` e bloco `/* ... */`, e a
-/// diretiva `DELIMITER xxx` que mysqldump usa em triggers/procedures.
+/// Naive but reasonable splitter: respects single/double quotes,
+/// backticks, line comments `-- ...` and block `/* ... */`, and the
+/// `DELIMITER xxx` directive that mysqldump uses on triggers/procedures.
 fn split_statements(src: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut buf = String::with_capacity(256);
@@ -306,18 +306,18 @@ fn split_statements(src: &str) -> Vec<String> {
     while i < len {
         let b = bytes[i];
 
-        // DELIMITER directive — case-insensitive, no início da linha
-        // (permitindo whitespace antes).
+        // DELIMITER directive — case-insensitive, at the start of the line
+        // (allowing whitespace before).
         if (buf.is_empty() || buf.ends_with('\n'))
             && at_word_ci(bytes, i, b"DELIMITER")
         {
-            // Avança pra depois de DELIMITER.
+            // Advance past DELIMITER.
             i += 9;
             // Skip whitespace.
             while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
                 i += 1;
             }
-            // Lê até EOL.
+            // Read until EOL.
             let mut new_delim = String::new();
             while i < len && bytes[i] != b'\n' && bytes[i] != b'\r' {
                 new_delim.push(bytes[i] as char);
@@ -327,14 +327,14 @@ fn split_statements(src: &str) -> Vec<String> {
             if !new_delim.is_empty() {
                 delim = new_delim;
             }
-            // Consome newline.
+            // Consume newline.
             while i < len && (bytes[i] == b'\n' || bytes[i] == b'\r') {
                 i += 1;
             }
             continue;
         }
 
-        // Comentário de linha.
+        // Line comment.
         if b == b'-' && i + 1 < len && bytes[i + 1] == b'-' {
             // Skip until EOL.
             while i < len && bytes[i] != b'\n' {
@@ -349,7 +349,7 @@ fn split_statements(src: &str) -> Vec<String> {
             continue;
         }
 
-        // Comentário de bloco.
+        // Block comment.
         if b == b'/' && i + 1 < len && bytes[i + 1] == b'*' {
             i += 2;
             while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
@@ -361,7 +361,7 @@ fn split_statements(src: &str) -> Vec<String> {
             continue;
         }
 
-        // String / identificador aspeado — consome até o fechamento.
+        // String / quoted identifier — consume until closing.
         if b == b'\'' || b == b'"' || b == b'`' {
             let quote = b;
             buf.push(b as char);
@@ -376,7 +376,7 @@ fn split_statements(src: &str) -> Vec<String> {
                     continue;
                 }
                 if c == quote {
-                    // Duplicado = escape (MySQL ANSI). Mantém.
+                    // Doubled = escape (MySQL ANSI). Keep.
                     if i + 1 < len && bytes[i + 1] == quote {
                         buf.push(c as char);
                         buf.push(c as char);
@@ -393,7 +393,7 @@ fn split_statements(src: &str) -> Vec<String> {
             continue;
         }
 
-        // Delimiter match — fim de statement.
+        // Delimiter match — end of statement.
         if at_str(bytes, i, delim.as_bytes()) {
             let stmt = buf.trim();
             if !stmt.is_empty() {
@@ -408,7 +408,7 @@ fn split_statements(src: &str) -> Vec<String> {
         i += 1;
     }
 
-    // Sobras.
+    // Leftovers.
     let tail = buf.trim();
     if !tail.is_empty() {
         out.push(tail.to_string());
@@ -416,14 +416,14 @@ fn split_statements(src: &str) -> Vec<String> {
     out
 }
 
-/// Skipa statements que são claramente incompatíveis com o target e não
-/// têm análogo trivial — silencioso, não conta como erro. Previne erro
-/// "Unknown command" que só polui a UI.
+/// Skips statements clearly incompatible with the target that have no
+/// trivial analog — silent, doesn't count as an error. Prevents
+/// "Unknown command" errors that only clutter the UI.
 fn should_skip_for_target(stmt: &str, target: Dialect) -> bool {
     let upper = stmt.trim_start().to_uppercase();
     match target {
         Dialect::Postgres => {
-            // Statements MySQL que sobraram sem análogo em PG.
+            // MySQL statements left over without a PG analog.
             upper.starts_with("DELIMITER ")
                 || upper.starts_with("LOCK TABLES")
                 || upper.starts_with("UNLOCK TABLES")
@@ -433,7 +433,7 @@ fn should_skip_for_target(stmt: &str, target: Dialect) -> bool {
                 || upper.starts_with("CHECK TABLE")
                 || upper.starts_with("REPAIR TABLE")
                 || upper.starts_with("FLUSH ")
-                || upper.starts_with("USE ") // USE não existe em PG (search_path já setado)
+                || upper.starts_with("USE ") // USE doesn't exist on PG (search_path already set)
                 || (upper.starts_with("SET ")
                     && (upper.contains("FOREIGN_KEY_CHECKS")
                         || upper.contains("UNIQUE_CHECKS")
@@ -443,7 +443,7 @@ fn should_skip_for_target(stmt: &str, target: Dialect) -> bool {
                         || upper.contains("SQL_NOTES")))
         }
         Dialect::Mysql => {
-            // Statements PG que não rodam em MySQL.
+            // PG statements that don't run on MySQL.
             upper.starts_with("SET SEARCH_PATH")
                 || upper.starts_with("CREATE EXTENSION")
                 || upper.starts_with("ALTER EXTENSION")
@@ -457,9 +457,9 @@ fn should_skip_for_target(stmt: &str, target: Dialect) -> bool {
     }
 }
 
-/// Detecta SETs globais que o nosso prelude já vai aplicar por-statement,
-/// pra evitar rodar 2x (inofensivo, mas ruído e lento). Match heurístico
-/// via contém.
+/// Detects global SETs that our prelude will already apply per-statement,
+/// to avoid running them twice (harmless, but noisy and slow). Heuristic
+/// match via substring.
 fn is_duplicate_session_set(stmt: &str) -> bool {
     let upper = stmt.to_uppercase();
     if !upper.starts_with("SET ") {
@@ -487,7 +487,7 @@ fn at_word_ci(bytes: &[u8], i: usize, needle: &[u8]) -> bool {
             return false;
         }
     }
-    // Delimitador após a palavra — próximo byte não pode ser alfanum.
+    // Delimiter after the word — next byte cannot be alphanumeric.
     if i + needle.len() < bytes.len() {
         let next = bytes[i + needle.len()];
         if next.is_ascii_alphanumeric() || next == b'_' {
@@ -550,8 +550,8 @@ mod tests {
     fn split_handles_delimiter_directive() {
         let src = "DELIMITER $$\nCREATE TRIGGER foo BEGIN SELECT 1; END$$\nDELIMITER ;\nSELECT 2;";
         let out = split_statements(src);
-        // Um trigger inteiro + um SELECT. A separação interna por `;` não
-        // fragmenta o bloco dentro do DELIMITER $$.
+        // One entire trigger + one SELECT. The internal split by `;` does not
+        // fragment the block inside the DELIMITER $$.
         assert_eq!(out.len(), 2);
         assert!(out[0].contains("CREATE TRIGGER"));
         assert!(out[0].contains("END"));
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn split_handles_escaped_quotes() {
-        // `\'` dentro de string MySQL — splitter não pode fechar ali.
+        // `\'` inside a MySQL string — splitter can't close there.
         let out = split_statements("INSERT INTO t VALUES ('it\\'s; a test'); SELECT 1;");
         assert_eq!(out.len(), 2);
         assert!(out[0].contains("it\\'s; a test"));

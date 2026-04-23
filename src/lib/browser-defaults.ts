@@ -1,6 +1,6 @@
-/** Desabilita comportamentos default do WebView (reload, devtools, context
- *  menu do browser, etc.) pra deixar a app se parecer com um app nativo.
- *  Em dev, DevTools (F12) continua habilitado pra debugging. */
+/** Disables default WebView behavior (reload, devtools, browser context
+ *  menu, etc.) to make the app feel native.
+ *  In dev, DevTools (F12) stays enabled for debugging. */
 export function installBrowserDefaultPrevention() {
   const isDev = import.meta.env.DEV;
 
@@ -13,7 +13,7 @@ export function installBrowserDefaultPrevention() {
     if (key === "F5") return block(e);
     if (mod && low === "r") return block(e);
 
-    // DevTools em produção.
+    // DevTools in production.
     if (!isDev) {
       if (key === "F12") return block(e);
       if (mod && e.shiftKey && (low === "i" || low === "j" || low === "c")) {
@@ -21,18 +21,18 @@ export function installBrowserDefaultPrevention() {
       }
     }
 
-    // Print, Save as, Open file (browser-native, inúteis num app).
+    // Print, Save as, Open file (browser-native, useless in an app).
     if (mod && !e.shiftKey && !e.altKey) {
       if (low === "p") return block(e); // print
       if (low === "o") return block(e); // browser open-file
-      // Ctrl+S intencionalmente NÃO bloqueado — é usado por query.save
+      // Ctrl+S intentionally NOT blocked — used by query.save
     }
   };
 
   const onContext = (e: MouseEvent) => {
     const t = e.target as HTMLElement | null;
-    // Permite o menu nativo só em inputs/textareas/contenteditable —
-    // útil pro corretor ortográfico, recortar/colar, etc.
+    // Allow the native menu only in inputs/textareas/contenteditable —
+    // useful for spellcheck, cut/paste, etc.
     if (t) {
       const tag = t.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -41,8 +41,8 @@ export function installBrowserDefaultPrevention() {
     e.preventDefault();
   };
 
-  // Bloqueia drag-drop de ARQUIVOS externos pra janela — deixa drags
-  // internos (conexão → pasta, etc) passarem normalmente.
+  // Block drag-drop of external FILES into the window — internal drags
+  // (connection → folder, etc) pass through normally.
   const isFileDrag = (e: DragEvent) =>
     Array.from(e.dataTransfer?.types ?? []).includes("Files");
   const onDrop = (e: DragEvent) => {

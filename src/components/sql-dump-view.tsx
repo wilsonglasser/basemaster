@@ -24,6 +24,7 @@ import type {
   Uuid,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
@@ -117,13 +118,13 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
     });
   }, [running, done, tabId, patchTab, t]);
 
-  // Ao mudar o formato, atualiza a extensão do path já escolhido
-  // (troca .sql <-> .zip). Se não havia path, nada acontece.
+  // On format change, update the extension of the already-chosen path
+  // (swap .sql <-> .zip). If there was no path, nothing happens.
   useEffect(() => {
     setPath((cur) => {
       if (!cur) return cur;
       const targetExt = format === "zip" ? "zip" : "sql";
-      // Substitui a última extensão, seja qual for.
+      // Replace the last extension, whatever it is.
       const noExt = cur.replace(/\.[^./\\]+$/, "");
       return `${noExt}.${targetExt}`;
     });
@@ -181,9 +182,8 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
   };
 
   const handleStop = async () => {
-    if (!window.confirm(t("sqlDump.stopConfirm"))) {
-      return;
-    }
+    const ok = await appConfirm(t("sqlDump.stopConfirm"));
+    if (!ok) return;
     try {
       await ipc.transfer.stop();
     } catch (e) {
@@ -191,9 +191,9 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
     }
   };
 
-  // Lista de tabelas pra render do checklist: pré-conhecidas (scope.tables)
-  // união com as que chegam via events (necessário pra schema-dump onde
-  // backend descobre a lista).
+  // Table list for the checklist: pre-known (scope.tables) union with
+  // those that arrive via events (needed for schema-dump where the
+  // backend discovers the list).
   const allTables = useMemo(() => {
     const seen = new Set<string>();
     const list: Array<{ schema: string; table: string }> = [];
@@ -279,7 +279,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
             )}
           </Card>
 
-          {/* Conteúdo */}
+          {/* Content */}
           <Card title={t("sqlDump.section.content")}>
             <div className="grid grid-cols-3 gap-2">
               <FormatCard
@@ -303,7 +303,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
             </div>
           </Card>
 
-          {/* Opções */}
+          {/* Options */}
           <Card title={t("sqlDump.section.options")}>
             <Toggle
               label={t("sqlDump.optDrop")}
@@ -358,7 +358,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
             </div>
           </Card>
 
-          {/* Execução */}
+          {/* Execution */}
           {startError && (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
               <pre className="whitespace-pre-wrap break-all font-mono">
