@@ -490,6 +490,10 @@ export const en: Dict = {
       tokenLabel: "Token",
       copyToken: "Copy token",
       configLabel: "Client config (Claude Desktop, etc.)",
+      configWindows: "Windows",
+      configWsl: "WSL / Linux",
+      configWslHint:
+        "Requires WSL2 with mirrored networking. Add {networkingMode} under {wsl2} in {file}. Otherwise the Windows loopback is not reachable from inside WSL.",
       copyInline: "copy",
     },
     portability: {

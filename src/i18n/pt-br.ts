@@ -492,6 +492,10 @@ export const ptBR = {
       tokenLabel: "Token",
       copyToken: "Copiar token",
       configLabel: "Config de cliente (Claude Desktop, etc.)",
+      configWindows: "Windows",
+      configWsl: "WSL / Linux",
+      configWslHint:
+        "Requer WSL2 com networking espelhado. Adicione {networkingMode} em {wsl2} no {file}. Caso contrário o loopback do Windows não é alcançável de dentro do WSL.",
       copyInline: "copiar",
     },
     portability: {

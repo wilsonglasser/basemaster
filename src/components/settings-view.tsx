@@ -592,7 +592,9 @@ function McpPanel() {
   const [port, setPort] = useState<number>(7424);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState<"token" | "config" | null>(null);
+  const [copied, setCopied] = useState<
+    "token" | "configWin" | "configWsl" | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -625,7 +627,10 @@ function McpPanel() {
     }
   }
 
-  function copy(value: string, kind: "token" | "config") {
+  function copy(
+    value: string,
+    kind: "token" | "configWin" | "configWsl",
+  ) {
     void navigator.clipboard.writeText(value);
     setCopied(kind);
     window.setTimeout(() => setCopied((c) => (c === kind ? null : c)), 1200);
@@ -635,20 +640,26 @@ function McpPanel() {
   const token = status?.token ?? null;
   const activePort = status?.port ?? port;
   const url = `http://127.0.0.1:${activePort}/mcp`;
-  const configJson = token
-    ? JSON.stringify(
-        {
-          mcpServers: {
-            basemaster: {
-              url,
-              headers: { Authorization: `Bearer ${token}` },
+  // WSL2 in mirrored networking mode shares the Windows loopback, so the
+  // same 127.0.0.1 URL reaches the server. In NAT mode the Windows loopback
+  // is unreachable from inside WSL — the user hint below spells this out.
+  const buildConfig = (serverUrl: string) =>
+    token
+      ? JSON.stringify(
+          {
+            mcpServers: {
+              basemaster: {
+                url: serverUrl,
+                headers: { Authorization: `Bearer ${token}` },
+              },
             },
           },
-        },
-        null,
-        2,
-      )
-    : "";
+          null,
+          2,
+        )
+      : "";
+  const configWindows = buildConfig(url);
+  const configWsl = buildConfig(url);
 
   return (
     <div className="space-y-3">
@@ -743,26 +754,62 @@ function McpPanel() {
           </div>
 
           <div className="grid gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                {t("settings.mcp.configLabel")}
-              </span>
-              <button
-                type="button"
-                onClick={() => copy(configJson, "config")}
-                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                {copied === "config" ? (
-                  <Check className="h-3 w-3 text-conn-accent" />
-                ) : (
-                  <Copy className="h-3 w-3" />
-                )}
-                {t("settings.mcp.copyInline")}
-              </button>
+            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {t("settings.mcp.configLabel")}
+            </span>
+
+            <div className="grid gap-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  {t("settings.mcp.configWindows")}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => copy(configWindows, "configWin")}
+                  className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  {copied === "configWin" ? (
+                    <Check className="h-3 w-3 text-conn-accent" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                  {t("settings.mcp.copyInline")}
+                </button>
+              </div>
+              <pre className="max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-2 text-[11px] leading-relaxed">
+                {configWindows}
+              </pre>
             </div>
-            <pre className="max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-2 text-[11px] leading-relaxed">
-              {configJson}
-            </pre>
+
+            <div className="grid gap-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  {t("settings.mcp.configWsl")}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => copy(configWsl, "configWsl")}
+                  className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  {copied === "configWsl" ? (
+                    <Check className="h-3 w-3 text-conn-accent" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                  {t("settings.mcp.copyInline")}
+                </button>
+              </div>
+              <pre className="max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-2 text-[11px] leading-relaxed">
+                {configWsl}
+              </pre>
+              <p className="text-[11px] text-muted-foreground">
+                {t("settings.mcp.configWslHint", {
+                  networkingMode: "networkingMode=mirrored",
+                  wsl2: "[wsl2]",
+                  file: "%USERPROFILE%\\.wslconfig",
+                })}
+              </p>
+            </div>
           </div>
         </>
       )}
