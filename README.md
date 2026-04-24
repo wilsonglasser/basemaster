@@ -219,8 +219,8 @@ Code signing details (SignPath Foundation for Windows, Apple Developer for macOS
 
 | Version | Status | Scope |
 |---------|--------|-------|
-| **v0.1** | **In Progress** | MySQL/MariaDB/Postgres/SQLite drivers, SQL editor, editable grid, schema editor, data transfer V1.2, import/export, AI chat, MCP server, Docker discovery |
-| **v0.2** | Planned | `EXPLAIN` visualizer, schema diff, biometric unlock, chained SSH jump hosts |
+| **v0.1** | Released | MySQL/MariaDB/Postgres/SQLite drivers, SQL editor, editable grid, schema editor, data transfer V1.2, import/export, AI chat, MCP server, Docker discovery, custom `EXPLAIN` visualizer |
+| **v0.2** | In Progress | Chained SSH jump hosts, HTTP CONNECT proxy tunnel |
 | **v0.3** | Planned | ER diagram, visual schema refactor, cross-install sync over QUIC |
 
 ## Contributing
