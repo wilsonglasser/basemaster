@@ -21,6 +21,8 @@ pub struct ConnectionProfile {
     pub tls: TlsMode,
     pub ssh_tunnel: Option<SshTunnelConfig>,
     #[serde(default)]
+    pub ssh_jump_hosts: Vec<SshTunnelConfig>,
+    #[serde(default)]
     pub http_proxy: Option<HttpProxyConfig>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -44,6 +46,7 @@ impl ConnectionProfile {
             default_database: self.default_database,
             tls: self.tls,
             ssh_tunnel: self.ssh_tunnel,
+            ssh_jump_hosts: self.ssh_jump_hosts,
             http_proxy: self.http_proxy,
         }
     }
@@ -64,6 +67,8 @@ pub struct ConnectionDraft {
     #[serde(default)]
     pub ssh_tunnel: Option<SshTunnelConfig>,
     #[serde(default)]
+    pub ssh_jump_hosts: Vec<SshTunnelConfig>,
+    #[serde(default)]
     pub http_proxy: Option<HttpProxyConfig>,
 }
 
@@ -83,7 +88,7 @@ impl<'a> ConnectionRepo<'a> {
     pub async fn list(&self) -> StoreResult<Vec<ConnectionProfile>> {
         let rows = sqlx::query_as::<_, ConnectionRow>(
             "SELECT id, name, color, driver, host, port, user, default_database,
-                    tls, ssh_tunnel, http_proxy, created_at, updated_at, last_used_at, folder_id
+                    tls, ssh_tunnel, ssh_jump_hosts, http_proxy, created_at, updated_at, last_used_at, folder_id
                FROM connection_profiles
               ORDER BY COALESCE(sort_order, 2147483647), name COLLATE NOCASE",
         )
@@ -111,7 +116,7 @@ impl<'a> ConnectionRepo<'a> {
     pub async fn get(&self, id: Uuid) -> StoreResult<ConnectionProfile> {
         let row = sqlx::query_as::<_, ConnectionRow>(
             "SELECT id, name, color, driver, host, port, user, default_database,
-                    tls, ssh_tunnel, http_proxy, created_at, updated_at, last_used_at, folder_id
+                    tls, ssh_tunnel, ssh_jump_hosts, http_proxy, created_at, updated_at, last_used_at, folder_id
                FROM connection_profiles WHERE id = ?1",
         )
         .bind(id.to_string())
@@ -132,6 +137,13 @@ impl<'a> ConnectionRepo<'a> {
             Some(s) => Some(serde_json::to_string(&strip_ssh_secrets(s))?),
             None => None,
         };
+        let jumps = if draft.ssh_jump_hosts.is_empty() {
+            None
+        } else {
+            let stripped: Vec<SshTunnelConfig> =
+                draft.ssh_jump_hosts.iter().map(strip_ssh_secrets).collect();
+            Some(serde_json::to_string(&stripped)?)
+        };
         let proxy = match &draft.http_proxy {
             Some(p) => Some(serde_json::to_string(&strip_proxy_secrets(p))?),
             None => None,
@@ -140,8 +152,8 @@ impl<'a> ConnectionRepo<'a> {
         sqlx::query(
             "INSERT INTO connection_profiles
                 (id, name, color, driver, host, port, user, default_database,
-                 tls, ssh_tunnel, http_proxy, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                 tls, ssh_tunnel, ssh_jump_hosts, http_proxy, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
         )
         .bind(id.to_string())
         .bind(&draft.name)
@@ -153,6 +165,7 @@ impl<'a> ConnectionRepo<'a> {
         .bind(draft.default_database.as_deref())
         .bind(tls)
         .bind(ssh.as_deref())
+        .bind(jumps.as_deref())
         .bind(proxy.as_deref())
         .bind(now)
         .execute(self.pool)
@@ -172,6 +185,13 @@ impl<'a> ConnectionRepo<'a> {
             Some(s) => Some(serde_json::to_string(&strip_ssh_secrets(s))?),
             None => None,
         };
+        let jumps = if draft.ssh_jump_hosts.is_empty() {
+            None
+        } else {
+            let stripped: Vec<SshTunnelConfig> =
+                draft.ssh_jump_hosts.iter().map(strip_ssh_secrets).collect();
+            Some(serde_json::to_string(&stripped)?)
+        };
         let proxy = match &draft.http_proxy {
             Some(p) => Some(serde_json::to_string(&strip_proxy_secrets(p))?),
             None => None,
@@ -188,8 +208,9 @@ impl<'a> ConnectionRepo<'a> {
                     default_database = ?8,
                     tls = ?9,
                     ssh_tunnel = ?10,
-                    http_proxy = ?11,
-                    updated_at = ?12
+                    ssh_jump_hosts = ?11,
+                    http_proxy = ?12,
+                    updated_at = ?13
               WHERE id = ?1",
         )
         .bind(id.to_string())
@@ -202,6 +223,7 @@ impl<'a> ConnectionRepo<'a> {
         .bind(draft.default_database.as_deref())
         .bind(tls)
         .bind(ssh.as_deref())
+        .bind(jumps.as_deref())
         .bind(proxy.as_deref())
         .bind(now)
         .execute(self.pool)
@@ -286,6 +308,7 @@ struct ConnectionRow {
     default_database: Option<String>,
     tls: String,
     ssh_tunnel: Option<String>,
+    ssh_jump_hosts: Option<String>,
     http_proxy: Option<String>,
     created_at: i64,
     updated_at: i64,
@@ -300,6 +323,10 @@ impl ConnectionRow {
         let ssh = match self.ssh_tunnel {
             Some(s) => Some(serde_json::from_str(&s)?),
             None => None,
+        };
+        let ssh_jump_hosts: Vec<SshTunnelConfig> = match self.ssh_jump_hosts {
+            Some(s) => serde_json::from_str(&s)?,
+            None => Vec::new(),
         };
         let http_proxy = match self.http_proxy {
             Some(s) => Some(serde_json::from_str(&s)?),
@@ -323,6 +350,7 @@ impl ConnectionRow {
             default_database: self.default_database,
             tls: parse_tls(&self.tls),
             ssh_tunnel: ssh,
+            ssh_jump_hosts,
             http_proxy,
             created_at: self.created_at,
             updated_at: self.updated_at,

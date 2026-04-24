@@ -1,10 +1,12 @@
-//! SSH tunnel (local forward) via russh. V1: supports password auth.
-//! Key auth comes in the next iteration.
+//! SSH tunnel (local forward) via russh. Supports:
+//!  - password or private-key auth at every hop
+//!  - N-hop jump chain: each hop routes direct-tcpip to the next hop's
+//!    SSH port, the next session runs over that channel's stream
+//!  - final hop opens direct-tcpip to the target DB
 //!
 //! Usage:
-//!   let tunnel = SshTunnel::open(&ssh_cfg, target_host, target_port).await?;
-//!   // connect MySQL to 127.0.0.1:tunnel.local_port
-//!   // ...
+//!   let tunnel = SshTunnel::open(&jumps, &final_cfg, target_host, target_port).await?;
+//!   // driver connects to 127.0.0.1:tunnel.local_port
 //!   tunnel.close().await;
 
 use std::net::SocketAddr;
@@ -37,100 +39,85 @@ pub struct SshTunnel {
     pub local_port: u16,
     stop_tx: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
-    session: Arc<Mutex<Handle<AcceptAllHostKeys>>>,
+    /// All sessions in the chain (jumps + final), in order. Held to keep
+    /// them alive; dropped together on close(). Final session is last.
+    sessions: Vec<Arc<Mutex<Handle<AcceptAllHostKeys>>>>,
 }
 
 impl SshTunnel {
-    /// Opens the tunnel on a free local port. Returns the allocated port.
-    /// `target_host:target_port` is the DESTINATION address (on the SSH server side).
+    /// Opens the tunnel on a free local port.
+    ///
+    /// `jumps` are traversed in order; each hop's SSH session opens a
+    /// direct-tcpip channel to the next hop's SSH port. The `final_cfg`
+    /// hop is where the local forward to `target_host:target_port`
+    /// originates.
     pub async fn open(
-        ssh: &SshTunnelConfig,
+        jumps: &[SshTunnelConfig],
+        final_cfg: &SshTunnelConfig,
         target_host: &str,
         target_port: u16,
     ) -> Result<Self, String> {
-        // 1. Connect SSH
         let config = Arc::new(Config {
             inactivity_timeout: Some(Duration::from_secs(300)),
             ..Config::default()
         });
-        let addr = format!("{}:{}", ssh.host, ssh.port);
-        let mut session = client::connect(config, addr, AcceptAllHostKeys)
+
+        // Walk the chain. Each iteration authenticates a session and, if
+        // there's a next hop, opens a direct-tcpip channel to it, turns
+        // it into a stream, and feeds it to the next `connect_stream`.
+        let mut sessions: Vec<Arc<Mutex<Handle<AcceptAllHostKeys>>>> =
+            Vec::with_capacity(jumps.len() + 1);
+
+        let all_hops: Vec<&SshTunnelConfig> =
+            jumps.iter().chain(std::iter::once(final_cfg)).collect();
+
+        // Hop 0: plain TcpStream.
+        let first = all_hops[0];
+        let addr = format!("{}:{}", first.host, first.port);
+        let mut session = client::connect(config.clone(), addr, AcceptAllHostKeys)
             .await
-            .map_err(|e| format!("ssh connect: {}", e))?;
+            .map_err(|e| format!("ssh connect {}: {e}", first.host))?;
+        authenticate(&mut session, first).await?;
+        let mut current: Arc<Mutex<Handle<AcceptAllHostKeys>>> =
+            Arc::new(Mutex::new(session));
+        sessions.push(current.clone());
 
-        // 2. Auth — tries private key first (if configured),
-        // fallback to password. At least one must be present.
-        let mut tried = false;
-        let mut last_err: Option<String> = None;
-
-        if let Some(key_path) = ssh.private_key_path.as_deref().filter(|s| !s.is_empty()) {
-            tried = true;
-            match load_secret_key(
-                key_path,
-                ssh.private_key_passphrase.as_deref(),
-            ) {
-                Ok(key) => {
-                    let hash = session
-                        .best_supported_rsa_hash()
-                        .await
-                        .map_err(|e| format!("best rsa hash: {}", e))?
-                        .flatten();
-                    let signer = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
-                    match session
-                        .authenticate_publickey(ssh.user.clone(), signer)
-                        .await
-                    {
-                        Ok(r) if r.success() => {
-                            // successfully authenticated
-                        }
-                        Ok(_) => {
-                            last_err = Some("chave privada rejeitada pelo servidor".into());
-                        }
-                        Err(e) => last_err = Some(format!("ssh key auth: {}", e)),
-                    }
-                }
-                Err(e) => {
-                    last_err = Some(format!("load key: {}", e));
-                }
-            }
+        // Subsequent hops: open direct-tcpip from the current session
+        // to the next hop's SSH port, and connect through the channel.
+        for next in &all_hops[1..] {
+            let channel = {
+                let sess = current.lock().await;
+                sess.channel_open_direct_tcpip(
+                    next.host.clone(),
+                    next.port as u32,
+                    "127.0.0.1".to_string(),
+                    0,
+                )
+                .await
+                .map_err(|e| format!("ssh jump open to {}: {e}", next.host))?
+            };
+            let stream = channel.into_stream();
+            let mut next_session =
+                client::connect_stream(config.clone(), stream, AcceptAllHostKeys)
+                    .await
+                    .map_err(|e| format!("ssh jump connect to {}: {e}", next.host))?;
+            authenticate(&mut next_session, next).await?;
+            current = Arc::new(Mutex::new(next_session));
+            sessions.push(current.clone());
         }
 
-        // If not authenticated yet and a password is set, try it.
-        let authed_via_key = tried && last_err.is_none();
-        if !authed_via_key {
-            if let Some(pwd) = ssh.password.as_deref().filter(|s| !s.is_empty()) {
-                tried = true;
-                match session.authenticate_password(ssh.user.clone(), pwd).await {
-                    Ok(r) if r.success() => {
-                        last_err = None;
-                    }
-                    Ok(_) => {
-                        last_err = Some("credenciais SSH inválidas".into());
-                    }
-                    Err(e) => last_err = Some(format!("ssh password auth: {}", e)),
-                }
-            }
-        }
-
-        if !tried {
-            return Err("ssh: nenhum método de auth fornecido (senha ou chave)".into());
-        }
-        if let Some(e) = last_err {
-            return Err(e);
-        }
-
-        // 3. Local listener on a free port (0 = system picks)
+        // Local listener on a free port.
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
-            .map_err(|e| format!("bind local tunnel: {}", e))?;
+            .map_err(|e| format!("bind local tunnel: {e}"))?;
         let local_port = listener
             .local_addr()
-            .map_err(|e| format!("local_addr: {}", e))?
+            .map_err(|e| format!("local_addr: {e}"))?
             .port();
 
-        // 4. Task that accepts local connections and forwards them
-        let session = Arc::new(Mutex::new(session));
-        let session_for_task = session.clone();
+        // Task that accepts local connections and forwards each one
+        // through the final session as direct-tcpip to the DB.
+        let final_session = current.clone();
         let target_host = target_host.to_string();
         let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
 
@@ -141,22 +128,18 @@ impl SshTunnel {
                     accept = listener.accept() => {
                         match accept {
                             Ok((stream, addr)) => {
-                                let session = session_for_task.clone();
+                                let session = final_session.clone();
                                 let host = target_host.clone();
                                 tokio::spawn(async move {
                                     if let Err(e) = forward_connection(
-                                        session,
-                                        stream,
-                                        addr,
-                                        &host,
-                                        target_port,
+                                        session, stream, addr, &host, target_port,
                                     ).await {
-                                        eprintln!("ssh forward error: {}", e);
+                                        eprintln!("ssh forward error: {e}");
                                     }
                                 });
                             }
                             Err(e) => {
-                                eprintln!("ssh listener accept error: {}", e);
+                                eprintln!("ssh listener accept error: {e}");
                                 break;
                             }
                         }
@@ -169,11 +152,12 @@ impl SshTunnel {
             local_port,
             stop_tx: Some(stop_tx),
             task: Some(task),
-            session,
+            sessions,
         })
     }
 
-    /// Stops the listener and closes the SSH session.
+    /// Stops the listener and closes every session in the chain, from
+    /// final back to first.
     pub async fn close(mut self) {
         if let Some(tx) = self.stop_tx.take() {
             let _ = tx.send(());
@@ -181,14 +165,81 @@ impl SshTunnel {
         if let Some(task) = self.task.take() {
             let _ = task.await;
         }
-        let session = self.session.lock().await;
-        let _ = session
-            .disconnect(russh::Disconnect::ByApplication, "", "en")
-            .await;
+        // Close from the end towards the first hop so inner sessions see
+        // EOF from outer sessions in the right order.
+        while let Some(sess) = self.sessions.pop() {
+            let sess = sess.lock().await;
+            let _ = sess
+                .disconnect(russh::Disconnect::ByApplication, "", "en")
+                .await;
+        }
     }
 }
 
-/// Bidirectional pipe between a local TCP connection and an SSH direct-tcpip channel.
+/// Attempts private-key auth first, then password. Mirrors the former
+/// single-hop logic. One of the two must succeed or we return Err.
+async fn authenticate(
+    session: &mut Handle<AcceptAllHostKeys>,
+    cfg: &SshTunnelConfig,
+) -> Result<(), String> {
+    let mut tried = false;
+    let mut last_err: Option<String> = None;
+
+    if let Some(key_path) = cfg.private_key_path.as_deref().filter(|s| !s.is_empty()) {
+        tried = true;
+        match load_secret_key(key_path, cfg.private_key_passphrase.as_deref()) {
+            Ok(key) => {
+                let hash = session
+                    .best_supported_rsa_hash()
+                    .await
+                    .map_err(|e| format!("best rsa hash: {e}"))?
+                    .flatten();
+                let signer = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
+                match session.authenticate_publickey(cfg.user.clone(), signer).await {
+                    Ok(r) if r.success() => {}
+                    Ok(_) => {
+                        last_err = Some(format!(
+                            "chave privada rejeitada pelo servidor ({})",
+                            cfg.host
+                        ));
+                    }
+                    Err(e) => last_err = Some(format!("ssh key auth ({}): {e}", cfg.host)),
+                }
+            }
+            Err(e) => last_err = Some(format!("load key: {e}")),
+        }
+    }
+
+    let authed_via_key = tried && last_err.is_none();
+    if !authed_via_key {
+        if let Some(pwd) = cfg.password.as_deref().filter(|s| !s.is_empty()) {
+            tried = true;
+            match session.authenticate_password(cfg.user.clone(), pwd).await {
+                Ok(r) if r.success() => {
+                    last_err = None;
+                }
+                Ok(_) => {
+                    last_err = Some(format!("credenciais SSH inválidas ({})", cfg.host));
+                }
+                Err(e) => last_err = Some(format!("ssh password auth ({}): {e}", cfg.host)),
+            }
+        }
+    }
+
+    if !tried {
+        return Err(format!(
+            "ssh: nenhum método de auth fornecido (hop {})",
+            cfg.host
+        ));
+    }
+    match last_err {
+        None => Ok(()),
+        Some(e) => Err(e),
+    }
+}
+
+/// Bidirectional pipe between a local TCP connection and an SSH
+/// direct-tcpip channel opened on `session`.
 async fn forward_connection(
     session: Arc<Mutex<Handle<AcceptAllHostKeys>>>,
     mut stream: TcpStream,
@@ -206,7 +257,7 @@ async fn forward_connection(
                 originator.port() as u32,
             )
             .await
-            .map_err(|e| format!("open direct-tcpip: {}", e))?
+            .map_err(|e| format!("open direct-tcpip: {e}"))?
     };
 
     let mut stream_closed = false;
@@ -223,9 +274,9 @@ async fn forward_connection(
                         channel
                             .data(&buf[..n])
                             .await
-                            .map_err(|e| format!("ch data: {}", e))?;
+                            .map_err(|e| format!("ch data: {e}"))?;
                     }
-                    Err(e) => return Err(format!("read local: {}", e)),
+                    Err(e) => return Err(format!("read local: {e}")),
                 }
             }
             Some(msg) = channel.wait() => {
@@ -234,7 +285,7 @@ async fn forward_connection(
                         stream
                             .write_all(data)
                             .await
-                            .map_err(|e| format!("write local: {}", e))?;
+                            .map_err(|e| format!("write local: {e}"))?;
                     }
                     ChannelMsg::Eof => {
                         if !stream_closed {
@@ -250,3 +301,4 @@ async fn forward_connection(
     }
     Ok(())
 }
+

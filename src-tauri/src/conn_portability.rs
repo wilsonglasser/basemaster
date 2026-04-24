@@ -41,6 +41,13 @@ pub struct ExportedConnection {
     #[serde(default)]
     pub ssh_key_passphrase: Option<String>,
     #[serde(default)]
+    pub ssh_jump_hosts: Vec<SshTunnelConfig>,
+    /// JSON-serialized Vec<{password,key_passphrase}> aligned to the
+    /// jump hosts above. Only written when the user chose to export
+    /// with passwords.
+    #[serde(default)]
+    pub ssh_jumps_secrets: Option<String>,
+    #[serde(default)]
     pub http_proxy: Option<HttpProxyConfig>,
     #[serde(default)]
     pub http_proxy_password: Option<String>,
@@ -177,6 +184,8 @@ pub fn parse_navicat_ncx(xml: &str) -> Result<ExportPayload, String> {
                     ssh_tunnel: None,
                     ssh_password: None,
                     ssh_key_passphrase: None,
+                    ssh_jump_hosts: Vec::new(),
+                    ssh_jumps_secrets: None,
                     http_proxy: None,
                     http_proxy_password: None,
                     folder_name: None,
@@ -226,6 +235,9 @@ pub fn load_secrets_into(
     }
     if let Ok(Some(pp)) = secrets::get_ssh_key_passphrase(connection_id) {
         conn.ssh_key_passphrase = Some(pp);
+    }
+    if let Ok(Some(blob)) = secrets::get_ssh_jumps_secrets(connection_id) {
+        conn.ssh_jumps_secrets = Some(blob);
     }
     if let Ok(Some(pp)) = secrets::get_http_proxy_password(connection_id) {
         conn.http_proxy_password = Some(pp);

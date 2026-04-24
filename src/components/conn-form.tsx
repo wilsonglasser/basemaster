@@ -11,7 +11,7 @@ import {
 
 import { CONN_COLORS, ipc } from "@/lib/ipc";
 import { parseDsn } from "@/lib/dsn";
-import type { ConnectionDraft, TlsMode, Uuid } from "@/lib/types";
+import type { ConnectionDraft, SshTunnelConfig, TlsMode, Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
@@ -65,6 +65,33 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
   const [sshPassword, setSshPassword] = useState("");
   const [sshKeyPath, setSshKeyPath] = useState("");
   const [sshKeyPassphrase, setSshKeyPassphrase] = useState("");
+
+  // Jump hosts — optional chain traversed before the final SSH gateway.
+  // Each hop mirrors SshTunnelConfig; secrets (password/passphrase) are
+  // typed locally and shipped as one JSON blob to the backend.
+  interface JumpHop {
+    host: string;
+    port: number;
+    user: string;
+    auth: SshAuthMethod;
+    password: string;
+    keyPath: string;
+    keyPassphrase: string;
+  }
+  const [sshJumps, setSshJumps] = useState<JumpHop[]>([]);
+  const newJump = (): JumpHop => ({
+    host: "",
+    port: 22,
+    user: "",
+    auth: "password",
+    password: "",
+    keyPath: "",
+    keyPassphrase: "",
+  });
+  const updateJump = (idx: number, patch: Partial<JumpHop>) =>
+    setSshJumps((xs) => xs.map((h, i) => (i === idx ? { ...h, ...patch } : h)));
+  const removeJump = (idx: number) =>
+    setSshJumps((xs) => xs.filter((_, i) => i !== idx));
 
   // HTTP CONNECT proxy — alternative transport for the DB socket.
   // Mutually exclusive with SSH on the backend.
@@ -122,6 +149,19 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
         setProxyUser(p.http_proxy.user ?? "");
         setProxyPassword("");
       }
+      if (p.ssh_jump_hosts && p.ssh_jump_hosts.length > 0) {
+        setSshJumps(
+          p.ssh_jump_hosts.map((h): JumpHop => ({
+            host: h.host,
+            port: h.port,
+            user: h.user,
+            auth: h.private_key_path ? "key" : "password",
+            password: "",
+            keyPath: h.private_key_path ?? "",
+            keyPassphrase: "",
+          })),
+        );
+      }
     });
   }, [editingId]);
 
@@ -131,6 +171,20 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
       (editingId ? t("connForm.editTitle") : t("sidebar.newConnection"));
     patchTab(tabId, { label, accentColor: color });
   }, [name, color, tabId, editingId, patchTab, t]);
+
+  const jumpHostsPayload: SshTunnelConfig[] = sshEnabled
+    ? sshJumps
+        .filter((j) => j.host.trim() && j.user.trim())
+        .map((j) => ({
+          host: j.host.trim(),
+          port: j.port,
+          user: j.user.trim(),
+          password: null,
+          private_key_path:
+            j.auth === "key" && j.keyPath.trim() ? j.keyPath.trim() : null,
+          private_key_passphrase: null,
+        }))
+    : [];
 
   const draft: ConnectionDraft = {
     name: name.trim(),
@@ -156,6 +210,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
             private_key_passphrase: null,
           }
         : null,
+    ssh_jump_hosts: jumpHostsPayload,
     http_proxy:
       proxyEnabled && proxyHost.trim()
         ? {
@@ -167,6 +222,30 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
           }
         : null,
   };
+
+  // Secrets blob for the jump chain, aligned to jumpHostsPayload. On
+  // create we always send (empty array if no jumps). On update: null =
+  // keep keyring, empty string = clear, JSON string = overwrite. We send
+  // JSON whenever the user typed anything; otherwise null (keep).
+  const sshJumpsSecretsPayload: string | null = (() => {
+    if (!sshEnabled || jumpHostsPayload.length === 0) {
+      return editingId ? "" : null;
+    }
+    const anyTyped = sshJumps.some(
+      (j) => j.password || j.keyPassphrase,
+    );
+    if (!editingId || anyTyped) {
+      return JSON.stringify(
+        sshJumps
+          .filter((j) => j.host.trim() && j.user.trim())
+          .map((j) => ({
+            password: j.auth === "password" ? j.password || null : null,
+            key_passphrase: j.auth === "key" ? j.keyPassphrase || null : null,
+          })),
+      );
+    }
+    return null;
+  })();
 
   const valid =
     name.trim().length > 0 &&
@@ -191,11 +270,22 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
     setTestMsg(t("connForm.testing"));
     try {
       // Test uses the typed value directly (doesn't go through the keyring).
+      const testJumpsBlob = sshEnabled && jumpHostsPayload.length > 0
+        ? JSON.stringify(
+            sshJumps
+              .filter((j) => j.host.trim() && j.user.trim())
+              .map((j) => ({
+                password: j.auth === "password" ? j.password || null : null,
+                key_passphrase: j.auth === "key" ? j.keyPassphrase || null : null,
+              })),
+          )
+        : null;
       await ipc.connections.test(
         draft,
         password || null,
         sshEnabled && sshAuth === "password" ? sshPassword || null : null,
         sshEnabled && sshAuth === "key" ? sshKeyPassphrase || null : null,
+        testJumpsBlob,
         proxyEnabled ? proxyPassword || null : null,
       );
       setTest("ok");
@@ -216,6 +306,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
             password || null,
             sshPwdPayload,
             sshKeyPassPayload,
+            sshJumpsSecretsPayload,
             proxyPwdPayload,
           )
         : await ipc.connections.create(
@@ -223,6 +314,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
             password || null,
             sshPwdPayload,
             sshKeyPassPayload,
+            sshJumpsSecretsPayload,
             proxyPwdPayload,
           );
       upsertLocal(profile);
@@ -494,6 +586,131 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
           </label>
           {sshEnabled && (
             <>
+              {/* Jump hosts (optional, ordered) ------------------------------ */}
+              {sshJumps.length > 0 && (
+                <div className="mb-2 grid gap-2 rounded-md border border-dashed border-border bg-muted/20 p-3">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {t("connForm.sshJumpsHeading")}
+                  </div>
+                  {sshJumps.map((hop, idx) => (
+                    <div
+                      key={idx}
+                      className="grid gap-2 rounded-md border border-border bg-card p-2.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-muted-foreground">
+                          {t("connForm.sshJumpIndex", { n: idx + 1 })}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeJump(idx)}
+                          className="text-[11px] text-muted-foreground hover:text-destructive"
+                        >
+                          {t("connForm.sshJumpRemove")}
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-[1fr_auto_1fr] gap-2">
+                        <input
+                          type="text"
+                          value={hop.host}
+                          onChange={(e) =>
+                            updateJump(idx, { host: e.target.value })
+                          }
+                          placeholder={t("connForm.sshHostPlaceholder")}
+                          className={INPUT}
+                        />
+                        <input
+                          type="number"
+                          value={hop.port}
+                          onChange={(e) =>
+                            updateJump(idx, {
+                              port: Number(e.target.value) || 22,
+                            })
+                          }
+                          className="w-20 rounded-md border border-border bg-background px-2 py-2 text-sm"
+                          min={1}
+                          max={65535}
+                        />
+                        <input
+                          type="text"
+                          value={hop.user}
+                          onChange={(e) =>
+                            updateJump(idx, { user: e.target.value })
+                          }
+                          placeholder={t("connForm.sshUserPlaceholder")}
+                          className={INPUT}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="inline-flex rounded-md border border-border p-0.5">
+                          {(["password", "key"] as SshAuthMethod[]).map((m) => (
+                            <button
+                              type="button"
+                              key={m}
+                              onClick={() => updateJump(idx, { auth: m })}
+                              className={cn(
+                                "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+                                hop.auth === m
+                                  ? "bg-conn-accent text-conn-accent-foreground"
+                                  : "text-muted-foreground hover:text-foreground",
+                              )}
+                            >
+                              {m === "password"
+                                ? t("connForm.sshAuthPassword")
+                                : t("connForm.sshAuthKey")}
+                            </button>
+                          ))}
+                        </div>
+                        {hop.auth === "password" ? (
+                          <input
+                            type="password"
+                            value={hop.password}
+                            onChange={(e) =>
+                              updateJump(idx, { password: e.target.value })
+                            }
+                            placeholder={
+                              editingId
+                                ? t("connForm.sshPasswordKeepPlaceholder")
+                                : "••••••••"
+                            }
+                            className="flex-1 rounded-md border border-border bg-background px-2 py-2 text-sm"
+                          />
+                        ) : (
+                          <>
+                            <input
+                              type="text"
+                              value={hop.keyPath}
+                              onChange={(e) =>
+                                updateJump(idx, { keyPath: e.target.value })
+                              }
+                              placeholder={t("connForm.sshKeyPlaceholder")}
+                              className="flex-1 rounded-md border border-border bg-background px-2 py-2 font-mono text-[11px]"
+                            />
+                            <input
+                              type="password"
+                              value={hop.keyPassphrase}
+                              onChange={(e) =>
+                                updateJump(idx, {
+                                  keyPassphrase: e.target.value,
+                                })
+                              }
+                              placeholder={t("connForm.passphrase")}
+                              className="w-40 rounded-md border border-border bg-background px-2 py-2 text-sm"
+                            />
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setSshJumps((xs) => [...xs, newJump()])}
+                className="mb-1 self-start rounded-md border border-dashed border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                {t("connForm.sshJumpAdd")}
+              </button>
               <div className="grid grid-cols-[1fr_auto] gap-3">
                 <Field label={t("connForm.sshHost")}>
                   <input

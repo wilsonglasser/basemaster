@@ -56,6 +56,11 @@ pub struct ConnectionConfig {
     pub tls: TlsMode,
     #[serde(default)]
     pub ssh_tunnel: Option<SshTunnelConfig>,
+    /// Jump hosts traversed in order *before* reaching `ssh_tunnel`.
+    /// Empty (default) = direct SSH to the final gateway. Only consulted
+    /// when `ssh_tunnel` is Some.
+    #[serde(default)]
+    pub ssh_jump_hosts: Vec<SshTunnelConfig>,
     #[serde(default)]
     pub http_proxy: Option<HttpProxyConfig>,
 }

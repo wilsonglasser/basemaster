@@ -59,6 +59,7 @@ pub async fn connection_create(
     password: Option<String>,
     ssh_password: Option<String>,
     ssh_key_passphrase: Option<String>,
+    ssh_jumps_secrets: Option<String>,
     http_proxy_password: Option<String>,
 ) -> R<ConnectionProfile> {
     let profile = state.store.connections().create(draft).await.map_err(err)?;
@@ -71,6 +72,9 @@ pub async fn connection_create(
     if let Some(p) = ssh_key_passphrase.filter(|s| !s.is_empty()) {
         secrets::set_ssh_key_passphrase(profile.id, &p).map_err(err)?;
     }
+    if let Some(blob) = ssh_jumps_secrets.filter(|s| !s.is_empty()) {
+        secrets::set_ssh_jumps_secrets(profile.id, &blob).map_err(err)?;
+    }
     if let Some(p) = http_proxy_password.filter(|s| !s.is_empty()) {
         secrets::set_http_proxy_password(profile.id, &p).map_err(err)?;
     }
@@ -78,6 +82,7 @@ pub async fn connection_create(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn connection_update(
     state: State<'_, AppState>,
     id: Uuid,
@@ -85,6 +90,7 @@ pub async fn connection_update(
     password: Option<String>,
     ssh_password: Option<String>,
     ssh_key_passphrase: Option<String>,
+    ssh_jumps_secrets: Option<String>,
     http_proxy_password: Option<String>,
 ) -> R<ConnectionProfile> {
     let profile = state
@@ -115,6 +121,13 @@ pub async fn connection_update(
             secrets::set_ssh_key_passphrase(id, &p).map_err(err)?;
         }
     }
+    if let Some(blob) = ssh_jumps_secrets {
+        if blob.is_empty() {
+            secrets::delete_ssh_jumps_secrets(id).map_err(err)?;
+        } else {
+            secrets::set_ssh_jumps_secrets(id, &blob).map_err(err)?;
+        }
+    }
     if let Some(p) = http_proxy_password {
         if p.is_empty() {
             secrets::delete_http_proxy_password(id).map_err(err)?;
@@ -136,6 +149,7 @@ pub async fn connection_delete(state: State<'_, AppState>, id: Uuid) -> R<()> {
     let _ = secrets::delete_password(id);
     let _ = secrets::delete_ssh_password(id);
     let _ = secrets::delete_ssh_key_passphrase(id);
+    let _ = secrets::delete_ssh_jumps_secrets(id);
     let _ = secrets::delete_http_proxy_password(id);
     state.store.connections().delete(id).await.map_err(err)?;
     Ok(())
@@ -147,6 +161,7 @@ pub async fn connection_test(
     password: Option<String>,
     ssh_password: Option<String>,
     ssh_key_passphrase: Option<String>,
+    ssh_jumps_secrets: Option<String>,
     http_proxy_password: Option<String>,
 ) -> R<()> {
     let driver = make_driver(&draft.driver)
@@ -161,6 +176,20 @@ pub async fn connection_test(
         }
         if t.private_key_passphrase.is_none() {
             t.private_key_passphrase = ssh_key_passphrase.filter(|s| !s.is_empty());
+        }
+    }
+    let mut ssh_jump_hosts = draft.ssh_jump_hosts;
+    if let Some(blob) = ssh_jumps_secrets.as_deref().filter(|s| !s.is_empty()) {
+        if let Ok(secrets) = serde_json::from_str::<Vec<JumpHopSecrets>>(blob) {
+            for (hop, sec) in ssh_jump_hosts.iter_mut().zip(secrets) {
+                if hop.password.is_none() {
+                    hop.password = sec.password.filter(|s| !s.is_empty());
+                }
+                if hop.private_key_passphrase.is_none() {
+                    hop.private_key_passphrase =
+                        sec.key_passphrase.filter(|s| !s.is_empty());
+                }
+            }
         }
     }
     let mut http_proxy = draft.http_proxy;
@@ -180,6 +209,7 @@ pub async fn connection_test(
         default_database: draft.default_database,
         tls: draft.tls,
         ssh_tunnel: ssh,
+        ssh_jump_hosts,
         http_proxy,
     };
 
@@ -202,10 +232,12 @@ pub async fn connection_test(
 
 /// Injects the SSH + HTTP proxy passwords (from the keyring) into the
 /// config, without overwriting values that already came populated.
+/// Jump-host secrets arrive as a JSON blob aligned to `ssh_jump_hosts`.
 fn inject_ssh_secrets(
     cfg: &mut basemaster_core::ConnectionConfig,
     ssh_password: Option<String>,
     ssh_key_passphrase: Option<String>,
+    ssh_jumps_blob: Option<String>,
     http_proxy_password: Option<String>,
 ) {
     if let Some(ssh) = cfg.ssh_tunnel.as_mut() {
@@ -216,11 +248,32 @@ fn inject_ssh_secrets(
             ssh.private_key_passphrase = ssh_key_passphrase.filter(|s| !s.is_empty());
         }
     }
+    if let Some(blob) = ssh_jumps_blob.filter(|s| !s.is_empty()) {
+        if let Ok(secrets) = serde_json::from_str::<Vec<JumpHopSecrets>>(&blob) {
+            for (hop, sec) in cfg.ssh_jump_hosts.iter_mut().zip(secrets) {
+                if hop.password.is_none() {
+                    hop.password = sec.password.filter(|s| !s.is_empty());
+                }
+                if hop.private_key_passphrase.is_none() {
+                    hop.private_key_passphrase =
+                        sec.key_passphrase.filter(|s| !s.is_empty());
+                }
+            }
+        }
+    }
     if let Some(p) = cfg.http_proxy.as_mut() {
         if p.password.is_none() {
             p.password = http_proxy_password.filter(|s| !s.is_empty());
         }
     }
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Default)]
+struct JumpHopSecrets {
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    key_passphrase: Option<String>,
 }
 
 /// Opens the configured tunnel (SSH has precedence over HTTP proxy if
@@ -231,9 +284,14 @@ async fn open_tunnel(
 ) -> R<Option<Tunnel>> {
     if let Some(ssh) = &cfg.ssh_tunnel {
         return Ok(Some(Tunnel::Ssh(
-            crate::ssh_tunnel::SshTunnel::open(ssh, &cfg.host, cfg.port)
-                .await
-                .map_err(err)?,
+            crate::ssh_tunnel::SshTunnel::open(
+                &cfg.ssh_jump_hosts,
+                ssh,
+                &cfg.host,
+                cfg.port,
+            )
+            .await
+            .map_err(err)?,
         )));
     }
     if let Some(proxy) = &cfg.http_proxy {
@@ -264,12 +322,13 @@ pub async fn connection_open(state: State<'_, AppState>, id: Uuid) -> R<()> {
     let password = secrets::get_password(id).map_err(err)?;
     let ssh_pwd = secrets::get_ssh_password(id).map_err(err)?;
     let ssh_key_pass = secrets::get_ssh_key_passphrase(id).map_err(err)?;
+    let ssh_jumps_blob = secrets::get_ssh_jumps_secrets(id).map_err(err)?;
     let proxy_pwd = secrets::get_http_proxy_password(id).map_err(err)?;
     let driver = make_driver(&profile.driver)
         .ok_or_else(|| format!("driver desconhecido: {}", profile.driver))?;
 
     let mut cfg = profile.clone().into_config(password);
-    inject_ssh_secrets(&mut cfg, ssh_pwd, ssh_key_pass, proxy_pwd);
+    inject_ssh_secrets(&mut cfg, ssh_pwd, ssh_key_pass, ssh_jumps_blob, proxy_pwd);
 
     let tunnel = open_tunnel(&cfg).await?;
     let effective = effective_config(cfg, tunnel.as_ref());
@@ -1256,6 +1315,8 @@ pub async fn connections_export(
             ssh_tunnel: p.ssh_tunnel,
             ssh_password: None,
             ssh_key_passphrase: None,
+            ssh_jump_hosts: p.ssh_jump_hosts,
+            ssh_jumps_secrets: None,
             http_proxy: p.http_proxy,
             http_proxy_password: None,
             folder_name: p.folder_id.and_then(|id| folder_name_by_id.get(&id).cloned()),
@@ -1328,6 +1389,7 @@ pub async fn connections_import_apply(
             default_database: c.default_database.clone(),
             tls: c.tls.clone(),
             ssh_tunnel: c.ssh_tunnel.clone(),
+            ssh_jump_hosts: c.ssh_jump_hosts.clone(),
             http_proxy: c.http_proxy.clone(),
         };
         let profile = state.store.connections().create(draft).await.map_err(err)?;
@@ -1350,6 +1412,9 @@ pub async fn connections_import_apply(
         }
         if let Some(pp) = c.ssh_key_passphrase.as_deref().filter(|s| !s.is_empty()) {
             let _ = secrets::set_ssh_key_passphrase(profile.id, pp);
+        }
+        if let Some(blob) = c.ssh_jumps_secrets.as_deref().filter(|s| !s.is_empty()) {
+            let _ = secrets::set_ssh_jumps_secrets(profile.id, blob);
         }
         if let Some(pp) = c.http_proxy_password.as_deref().filter(|s| !s.is_empty()) {
             let _ = secrets::set_http_proxy_password(profile.id, pp);

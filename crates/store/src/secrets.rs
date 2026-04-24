@@ -15,6 +15,7 @@ use crate::StoreResult;
 const SERVICE: &str = "basemaster";
 const SERVICE_SSH: &str = "basemaster-ssh";
 const SERVICE_SSH_KEY: &str = "basemaster-ssh-key-passphrase";
+const SERVICE_SSH_JUMPS: &str = "basemaster-ssh-jumps";
 const SERVICE_HTTP_PROXY: &str = "basemaster-http-proxy";
 
 fn entry(service: &str, connection_id: Uuid) -> Result<keyring::Entry, keyring::Error> {
@@ -80,6 +81,34 @@ pub fn get_ssh_key_passphrase(connection_id: Uuid) -> StoreResult<Option<String>
 
 pub fn delete_ssh_key_passphrase(connection_id: Uuid) -> StoreResult<()> {
     match entry(SERVICE_SSH_KEY, connection_id)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+// --- SSH jump hosts secrets (stored as one JSON blob per connection) ---
+//
+// The blob is a JSON array aligned to the order of `ssh_jump_hosts` in
+// the config. Each element has `password` and/or `key_passphrase` — both
+// optional. Absent indices (past the array length) mean "no secret
+// known, and the user didn't provide one". Stored as a single keyring
+// entry to keep cleanup trivial (one service/account per connection).
+
+pub fn set_ssh_jumps_secrets(connection_id: Uuid, blob: &str) -> StoreResult<()> {
+    entry(SERVICE_SSH_JUMPS, connection_id)?.set_password(blob)?;
+    Ok(())
+}
+
+pub fn get_ssh_jumps_secrets(connection_id: Uuid) -> StoreResult<Option<String>> {
+    match entry(SERVICE_SSH_JUMPS, connection_id)?.get_password() {
+        Ok(p) => Ok(Some(p)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn delete_ssh_jumps_secrets(connection_id: Uuid) -> StoreResult<()> {
+    match entry(SERVICE_SSH_JUMPS, connection_id)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.into()),
     }

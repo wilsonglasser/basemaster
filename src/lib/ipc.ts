@@ -55,6 +55,7 @@ export const ipc = {
       password: string | null,
       sshPassword: string | null = null,
       sshKeyPassphrase: string | null = null,
+      sshJumpsSecrets: string | null = null,
       httpProxyPassword: string | null = null,
     ) =>
       invoke<ConnectionProfile>("connection_create", {
@@ -62,6 +63,7 @@ export const ipc = {
         password,
         sshPassword,
         sshKeyPassphrase,
+        sshJumpsSecrets,
         httpProxyPassword,
       }),
 
@@ -71,6 +73,7 @@ export const ipc = {
       password: string | null,
       sshPassword: string | null = null,
       sshKeyPassphrase: string | null = null,
+      sshJumpsSecrets: string | null = null,
       httpProxyPassword: string | null = null,
     ) =>
       invoke<ConnectionProfile>("connection_update", {
@@ -79,6 +82,7 @@ export const ipc = {
         password,
         sshPassword,
         sshKeyPassphrase,
+        sshJumpsSecrets,
         httpProxyPassword,
       }),
 
@@ -89,6 +93,7 @@ export const ipc = {
       password: string | null,
       sshPassword: string | null = null,
       sshKeyPassphrase: string | null = null,
+      sshJumpsSecrets: string | null = null,
       httpProxyPassword: string | null = null,
     ) =>
       invoke<void>("connection_test", {
@@ -96,6 +101,7 @@ export const ipc = {
         password,
         sshPassword,
         sshKeyPassphrase,
+        sshJumpsSecrets,
         httpProxyPassword,
       }),
 

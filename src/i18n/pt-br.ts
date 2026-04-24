@@ -620,6 +620,10 @@ export const ptBR = {
     passphraseNewPlaceholder: "em branco se a chave não tiver",
     sshNote:
       "Secrets SSH vão pro keyring do SO (Credential Manager no Windows). Host key atualmente é aceito sem verificação (V3 adicionará known_hosts).",
+    sshJumpsHeading: "Jump hosts (atravessados em ordem antes do gateway acima)",
+    sshJumpAdd: "+ Adicionar jump host",
+    sshJumpRemove: "Remover",
+    sshJumpIndex: "Hop {n}",
     sectionProxy: "Proxy HTTP CONNECT",
     proxyToggle: "Conectar ao banco através de um proxy HTTP",
     proxyHost: "Host do proxy",

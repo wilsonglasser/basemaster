@@ -618,6 +618,10 @@ export const en: Dict = {
     passphraseNewPlaceholder: "blank if the key has none",
     sshNote:
       "SSH secrets go to the OS keyring (Credential Manager on Windows). Host key is currently accepted without verification (V3 will add known_hosts).",
+    sshJumpsHeading: "Jump hosts (traversed in order before reaching the gateway above)",
+    sshJumpAdd: "+ Add jump host",
+    sshJumpRemove: "Remove",
+    sshJumpIndex: "Hop {n}",
     sectionProxy: "HTTP CONNECT proxy",
     proxyToggle: "Tunnel DB connection through an HTTP proxy",
     proxyHost: "Proxy host",
