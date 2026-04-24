@@ -66,6 +66,14 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
   const [sshKeyPath, setSshKeyPath] = useState("");
   const [sshKeyPassphrase, setSshKeyPassphrase] = useState("");
 
+  // HTTP CONNECT proxy — alternative transport for the DB socket.
+  // Mutually exclusive with SSH on the backend.
+  const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [proxyHost, setProxyHost] = useState("");
+  const [proxyPort, setProxyPort] = useState(3128);
+  const [proxyUser, setProxyUser] = useState("");
+  const [proxyPassword, setProxyPassword] = useState("");
+
   const [test, setTest] = useState<TestState>(null);
   const [testMsg, setTestMsg] = useState("");
   const [saving, setSaving] = useState(false);
@@ -107,6 +115,13 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
         setSshPassword("");
         setSshKeyPassphrase("");
       }
+      if (p.http_proxy) {
+        setProxyEnabled(true);
+        setProxyHost(p.http_proxy.host);
+        setProxyPort(p.http_proxy.port);
+        setProxyUser(p.http_proxy.user ?? "");
+        setProxyPassword("");
+      }
     });
   }, [editingId]);
 
@@ -141,6 +156,16 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
             private_key_passphrase: null,
           }
         : null,
+    http_proxy:
+      proxyEnabled && proxyHost.trim()
+        ? {
+            host: proxyHost.trim(),
+            port: proxyPort,
+            user: proxyUser.trim() || null,
+            // Password: null = keep keyring, backend re-injects.
+            password: null,
+          }
+        : null,
   };
 
   const valid =
@@ -157,6 +182,9 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
   const sshKeyPassPayload = sshEnabled && sshAuth === "key"
     ? (sshKeyPassphrase || (editingId ? null : null))
     : (editingId ? "" : null);
+  const proxyPwdPayload = proxyEnabled
+    ? (proxyPassword || (editingId ? null : null))
+    : (editingId ? "" : null);
 
   const handleTest = async () => {
     setTest("loading");
@@ -168,6 +196,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
         password || null,
         sshEnabled && sshAuth === "password" ? sshPassword || null : null,
         sshEnabled && sshAuth === "key" ? sshKeyPassphrase || null : null,
+        proxyEnabled ? proxyPassword || null : null,
       );
       setTest("ok");
       setTestMsg(t("connForm.testOk"));
@@ -187,12 +216,14 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
             password || null,
             sshPwdPayload,
             sshKeyPassPayload,
+            proxyPwdPayload,
           )
         : await ipc.connections.create(
             draft,
             password || null,
             sshPwdPayload,
             sshKeyPassPayload,
+            proxyPwdPayload,
           );
       upsertLocal(profile);
       await refresh();
@@ -588,6 +619,78 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
               )}
               <div className="text-[11px] text-muted-foreground">
                 {t("connForm.sshNote")}
+              </div>
+            </>
+          )}
+        </Section>
+        )}
+
+        {driver !== "sqlite" && (
+        <Section
+          title={t("connForm.sectionProxy")}
+          subtitle={proxyEnabled ? undefined : t("connForm.optional")}
+        >
+          <label className="mb-3 inline-flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={proxyEnabled}
+              onChange={(e) => setProxyEnabled(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            <span>{t("connForm.proxyToggle")}</span>
+          </label>
+          {proxyEnabled && (
+            <>
+              {sshEnabled && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+                  {t("connForm.proxyAndSshConflict")}
+                </div>
+              )}
+              <div className="grid grid-cols-[1fr_auto] gap-3">
+                <Field label={t("connForm.proxyHost")}>
+                  <input
+                    type="text"
+                    value={proxyHost}
+                    onChange={(e) => setProxyHost(e.target.value)}
+                    placeholder={t("connForm.proxyHostPlaceholder")}
+                    className={INPUT}
+                  />
+                </Field>
+                <Field label={t("connForm.port")}>
+                  <input
+                    type="number"
+                    value={proxyPort}
+                    onChange={(e) =>
+                      setProxyPort(Number(e.target.value) || 3128)
+                    }
+                    className="w-24 rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
+                  />
+                </Field>
+              </div>
+              <Field label={t("connForm.proxyUser")}>
+                <input
+                  type="text"
+                  value={proxyUser}
+                  onChange={(e) => setProxyUser(e.target.value)}
+                  placeholder={t("connForm.proxyUserPlaceholder")}
+                  className={INPUT}
+                />
+              </Field>
+              <Field label={t("connForm.proxyPassword")}>
+                <input
+                  type="password"
+                  value={proxyPassword}
+                  onChange={(e) => setProxyPassword(e.target.value)}
+                  placeholder={
+                    editingId
+                      ? t("connForm.proxyPasswordKeepPlaceholder")
+                      : "••••••••"
+                  }
+                  className={INPUT}
+                />
+              </Field>
+              <div className="text-[11px] text-muted-foreground">
+                {t("connForm.proxyNote")}
               </div>
             </>
           )}

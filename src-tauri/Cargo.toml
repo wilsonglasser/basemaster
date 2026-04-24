@@ -27,6 +27,9 @@ tauri-plugin-process = "2"
 tauri-plugin-prevent-default = { version = "5", features = ["platform-windows"] }
 # Pra decriptar senhas em exports do Navicat (.ncx) — Blowfish ECB.
 blowfish = "0.9"
+# HTTP CONNECT proxy — base64 pra montar o header Proxy-Authorization
+# em basic-auth. Já é transitivo de outras libs; explicitando aqui.
+base64 = "0.22"
 cipher = "0.4"
 ecb = "0.1"
 hex = "0.4"

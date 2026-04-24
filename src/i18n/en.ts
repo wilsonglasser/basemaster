@@ -618,6 +618,18 @@ export const en: Dict = {
     passphraseNewPlaceholder: "blank if the key has none",
     sshNote:
       "SSH secrets go to the OS keyring (Credential Manager on Windows). Host key is currently accepted without verification (V3 will add known_hosts).",
+    sectionProxy: "HTTP CONNECT proxy",
+    proxyToggle: "Tunnel DB connection through an HTTP proxy",
+    proxyHost: "Proxy host",
+    proxyHostPlaceholder: "proxy.corp.local",
+    proxyUser: "Proxy user (optional)",
+    proxyUserPlaceholder: "alice",
+    proxyPassword: "Proxy password (optional)",
+    proxyPasswordKeepPlaceholder: "(keep current — type to change)",
+    proxyNote:
+      "Uses the HTTP CONNECT method (RFC 7231). Password goes to the OS keyring. Mutually exclusive with SSH — if both are enabled, SSH wins.",
+    proxyAndSshConflict:
+      "SSH tunnel is enabled. HTTP proxy will be ignored.",
     testing: "Testing…",
     testOk: "Connected and responded to ping.",
     cancel: "Cancel",

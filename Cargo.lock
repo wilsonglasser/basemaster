@@ -465,6 +465,7 @@ dependencies = [
  "async-channel",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "basemaster-core",
  "basemaster-driver-mysql",
  "basemaster-driver-postgres",

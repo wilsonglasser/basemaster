@@ -53,6 +53,13 @@ export interface SshTunnelConfig {
   private_key_passphrase?: string | null;
 }
 
+export interface HttpProxyConfig {
+  host: string;
+  port: number;
+  user?: string | null;
+  password?: string | null;
+}
+
 export interface McpStatus {
   running: boolean;
   port: number;
@@ -77,6 +84,8 @@ export interface ExportedConnection {
   ssh_tunnel: SshTunnelConfig | null;
   ssh_password: string | null;
   ssh_key_passphrase: string | null;
+  http_proxy: HttpProxyConfig | null;
+  http_proxy_password: string | null;
   folder_name: string | null;
 }
 
@@ -125,6 +134,7 @@ export interface ConnectionProfile {
   default_database: string | null;
   tls: TlsMode;
   ssh_tunnel: SshTunnelConfig | null;
+  http_proxy: HttpProxyConfig | null;
   created_at: number;
   updated_at: number;
   last_used_at: number | null;
@@ -141,6 +151,7 @@ export interface ConnectionDraft {
   default_database?: string | null;
   tls?: TlsMode;
   ssh_tunnel?: SshTunnelConfig | null;
+  http_proxy?: HttpProxyConfig | null;
 }
 
 export interface SchemaInfo {

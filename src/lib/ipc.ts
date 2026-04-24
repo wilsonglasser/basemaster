@@ -55,12 +55,14 @@ export const ipc = {
       password: string | null,
       sshPassword: string | null = null,
       sshKeyPassphrase: string | null = null,
+      httpProxyPassword: string | null = null,
     ) =>
       invoke<ConnectionProfile>("connection_create", {
         draft,
         password,
         sshPassword,
         sshKeyPassphrase,
+        httpProxyPassword,
       }),
 
     update: (
@@ -69,6 +71,7 @@ export const ipc = {
       password: string | null,
       sshPassword: string | null = null,
       sshKeyPassphrase: string | null = null,
+      httpProxyPassword: string | null = null,
     ) =>
       invoke<ConnectionProfile>("connection_update", {
         id,
@@ -76,6 +79,7 @@ export const ipc = {
         password,
         sshPassword,
         sshKeyPassphrase,
+        httpProxyPassword,
       }),
 
     delete: (id: Uuid) => invoke<void>("connection_delete", { id }),
@@ -85,12 +89,14 @@ export const ipc = {
       password: string | null,
       sshPassword: string | null = null,
       sshKeyPassphrase: string | null = null,
+      httpProxyPassword: string | null = null,
     ) =>
       invoke<void>("connection_test", {
         draft,
         password,
         sshPassword,
         sshKeyPassphrase,
+        httpProxyPassword,
       }),
 
     open: (id: Uuid) => invoke<void>("connection_open", { id }),

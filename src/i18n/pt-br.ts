@@ -620,6 +620,18 @@ export const ptBR = {
     passphraseNewPlaceholder: "em branco se a chave não tiver",
     sshNote:
       "Secrets SSH vão pro keyring do SO (Credential Manager no Windows). Host key atualmente é aceito sem verificação (V3 adicionará known_hosts).",
+    sectionProxy: "Proxy HTTP CONNECT",
+    proxyToggle: "Conectar ao banco através de um proxy HTTP",
+    proxyHost: "Host do proxy",
+    proxyHostPlaceholder: "proxy.corp.local",
+    proxyUser: "Usuário do proxy (opcional)",
+    proxyUserPlaceholder: "alice",
+    proxyPassword: "Senha do proxy (opcional)",
+    proxyPasswordKeepPlaceholder: "(manter atual — digite para trocar)",
+    proxyNote:
+      "Usa o método HTTP CONNECT (RFC 7231). Senha vai pro keyring do SO. Mutuamente exclusivo com SSH — se os dois estão ativos, SSH prevalece.",
+    proxyAndSshConflict:
+      "Túnel SSH ativo. O proxy HTTP será ignorado.",
     testing: "Testando…",
     testOk: "Conectou e respondeu ao ping.",
     cancel: "Cancelar",

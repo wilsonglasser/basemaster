@@ -6,7 +6,7 @@
 //! may use a derived key and fail (password comes empty; user
 //! re-types it).
 
-use basemaster_core::{SshTunnelConfig, TlsMode};
+use basemaster_core::{HttpProxyConfig, SshTunnelConfig, TlsMode};
 use basemaster_store::secrets;
 use cipher::{BlockDecryptMut, KeyInit};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,10 @@ pub struct ExportedConnection {
     pub ssh_password: Option<String>,
     #[serde(default)]
     pub ssh_key_passphrase: Option<String>,
+    #[serde(default)]
+    pub http_proxy: Option<HttpProxyConfig>,
+    #[serde(default)]
+    pub http_proxy_password: Option<String>,
     /// Folder name (not ID — so it's possible to import into another app).
     #[serde(default)]
     pub folder_name: Option<String>,
@@ -173,6 +177,8 @@ pub fn parse_navicat_ncx(xml: &str) -> Result<ExportPayload, String> {
                     ssh_tunnel: None,
                     ssh_password: None,
                     ssh_key_passphrase: None,
+                    http_proxy: None,
+                    http_proxy_password: None,
                     folder_name: None,
                 });
             }
@@ -220,6 +226,9 @@ pub fn load_secrets_into(
     }
     if let Ok(Some(pp)) = secrets::get_ssh_key_passphrase(connection_id) {
         conn.ssh_key_passphrase = Some(pp);
+    }
+    if let Ok(Some(pp)) = secrets::get_http_proxy_password(connection_id) {
+        conn.http_proxy_password = Some(pp);
     }
 }
 

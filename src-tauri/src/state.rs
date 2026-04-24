@@ -10,16 +10,41 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::data_transfer::TransferControl;
+use crate::http_proxy_tunnel::HttpProxyTunnel;
 use crate::mcp_server::McpServer;
 use crate::ssh_tunnel::SshTunnel;
+
+/// One active tunnel for a connection. SSH and HTTP CONNECT proxy are
+/// mutually exclusive; both expose a local TCP port that the driver
+/// connects to transparently.
+pub enum Tunnel {
+    Ssh(SshTunnel),
+    HttpProxy(HttpProxyTunnel),
+}
+
+impl Tunnel {
+    pub fn local_port(&self) -> u16 {
+        match self {
+            Self::Ssh(t) => t.local_port,
+            Self::HttpProxy(t) => t.local_port,
+        }
+    }
+
+    pub async fn close(self) {
+        match self {
+            Self::Ssh(t) => t.close().await,
+            Self::HttpProxy(t) => t.close().await,
+        }
+    }
+}
 
 /// Global state held by Tauri.
 pub struct AppState {
     pub store: Store,
     pub active: RwLock<HashMap<Uuid, Arc<dyn Driver>>>,
-    /// SSH tunnels open per connection. Kept alive while the
-    /// respective driver is connected; closed together with the close.
-    pub tunnels: RwLock<HashMap<Uuid, SshTunnel>>,
+    /// Tunnels (SSH or HTTP proxy) open per connection. Kept alive while
+    /// the respective driver is connected; closed together with it.
+    pub tunnels: RwLock<HashMap<Uuid, Tunnel>>,
     /// Control for the running transfer (pause/stop). Only one at a
     /// time — if the user starts another while one is running, the old
     /// one loses control on reset().

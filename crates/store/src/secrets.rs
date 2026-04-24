@@ -15,6 +15,7 @@ use crate::StoreResult;
 const SERVICE: &str = "basemaster";
 const SERVICE_SSH: &str = "basemaster-ssh";
 const SERVICE_SSH_KEY: &str = "basemaster-ssh-key-passphrase";
+const SERVICE_HTTP_PROXY: &str = "basemaster-http-proxy";
 
 fn entry(service: &str, connection_id: Uuid) -> Result<keyring::Entry, keyring::Error> {
     keyring::Entry::new(service, &connection_id.to_string())
@@ -79,6 +80,28 @@ pub fn get_ssh_key_passphrase(connection_id: Uuid) -> StoreResult<Option<String>
 
 pub fn delete_ssh_key_passphrase(connection_id: Uuid) -> StoreResult<()> {
     match entry(SERVICE_SSH_KEY, connection_id)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+// --- HTTP proxy password (basic auth on Proxy-Authorization) ---
+
+pub fn set_http_proxy_password(connection_id: Uuid, password: &str) -> StoreResult<()> {
+    entry(SERVICE_HTTP_PROXY, connection_id)?.set_password(password)?;
+    Ok(())
+}
+
+pub fn get_http_proxy_password(connection_id: Uuid) -> StoreResult<Option<String>> {
+    match entry(SERVICE_HTTP_PROXY, connection_id)?.get_password() {
+        Ok(p) => Ok(Some(p)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn delete_http_proxy_password(connection_id: Uuid) -> StoreResult<()> {
+    match entry(SERVICE_HTTP_PROXY, connection_id)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.into()),
     }

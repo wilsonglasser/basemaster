@@ -22,7 +22,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use uuid::Uuid;
 
-use crate::state::{make_driver, AppState};
+use crate::state::{make_driver, AppState, Tunnel};
 
 type R<T> = Result<T, String>;
 
@@ -59,6 +59,7 @@ pub async fn connection_create(
     password: Option<String>,
     ssh_password: Option<String>,
     ssh_key_passphrase: Option<String>,
+    http_proxy_password: Option<String>,
 ) -> R<ConnectionProfile> {
     let profile = state.store.connections().create(draft).await.map_err(err)?;
     if let Some(p) = password.filter(|s| !s.is_empty()) {
@@ -69,6 +70,9 @@ pub async fn connection_create(
     }
     if let Some(p) = ssh_key_passphrase.filter(|s| !s.is_empty()) {
         secrets::set_ssh_key_passphrase(profile.id, &p).map_err(err)?;
+    }
+    if let Some(p) = http_proxy_password.filter(|s| !s.is_empty()) {
+        secrets::set_http_proxy_password(profile.id, &p).map_err(err)?;
     }
     Ok(profile)
 }
@@ -81,6 +85,7 @@ pub async fn connection_update(
     password: Option<String>,
     ssh_password: Option<String>,
     ssh_key_passphrase: Option<String>,
+    http_proxy_password: Option<String>,
 ) -> R<ConnectionProfile> {
     let profile = state
         .store
@@ -110,6 +115,13 @@ pub async fn connection_update(
             secrets::set_ssh_key_passphrase(id, &p).map_err(err)?;
         }
     }
+    if let Some(p) = http_proxy_password {
+        if p.is_empty() {
+            secrets::delete_http_proxy_password(id).map_err(err)?;
+        } else {
+            secrets::set_http_proxy_password(id, &p).map_err(err)?;
+        }
+    }
     Ok(profile)
 }
 
@@ -124,6 +136,7 @@ pub async fn connection_delete(state: State<'_, AppState>, id: Uuid) -> R<()> {
     let _ = secrets::delete_password(id);
     let _ = secrets::delete_ssh_password(id);
     let _ = secrets::delete_ssh_key_passphrase(id);
+    let _ = secrets::delete_http_proxy_password(id);
     state.store.connections().delete(id).await.map_err(err)?;
     Ok(())
 }
@@ -134,12 +147,13 @@ pub async fn connection_test(
     password: Option<String>,
     ssh_password: Option<String>,
     ssh_key_passphrase: Option<String>,
+    http_proxy_password: Option<String>,
 ) -> R<()> {
     let driver = make_driver(&draft.driver)
         .ok_or_else(|| format!("driver desconhecido: {}", draft.driver))?;
 
     // Build an ephemeral ConnectionConfig — nil id, no persistence.
-    // SSH secrets come in directly here (not fetched from keyring during test).
+    // SSH/proxy secrets come in directly (not fetched from keyring).
     let mut ssh = draft.ssh_tunnel;
     if let Some(t) = ssh.as_mut() {
         if t.password.is_none() {
@@ -147,6 +161,12 @@ pub async fn connection_test(
         }
         if t.private_key_passphrase.is_none() {
             t.private_key_passphrase = ssh_key_passphrase.filter(|s| !s.is_empty());
+        }
+    }
+    let mut http_proxy = draft.http_proxy;
+    if let Some(p) = http_proxy.as_mut() {
+        if p.password.is_none() {
+            p.password = http_proxy_password.filter(|s| !s.is_empty());
         }
     }
     let cfg = basemaster_core::ConnectionConfig {
@@ -160,18 +180,10 @@ pub async fn connection_test(
         default_database: draft.default_database,
         tls: draft.tls,
         ssh_tunnel: ssh,
+        http_proxy,
     };
 
-    // If there's an SSH tunnel, open it before connecting the driver; close at the end.
-    let tunnel = if let Some(ssh) = &cfg.ssh_tunnel {
-        Some(
-            crate::ssh_tunnel::SshTunnel::open(ssh, &cfg.host, cfg.port)
-                .await
-                .map_err(err)?,
-        )
-    } else {
-        None
-    };
+    let tunnel = open_tunnel(&cfg).await?;
     let effective = effective_config(cfg, tunnel.as_ref());
 
     let result = driver.connect(&effective).await;
@@ -188,12 +200,13 @@ pub async fn connection_test(
     ping.map_err(err)
 }
 
-/// Injects the SSH passwords (from the keyring) into the tunnel config,
-/// without overwriting values that already came populated.
+/// Injects the SSH + HTTP proxy passwords (from the keyring) into the
+/// config, without overwriting values that already came populated.
 fn inject_ssh_secrets(
     cfg: &mut basemaster_core::ConnectionConfig,
     ssh_password: Option<String>,
     ssh_key_passphrase: Option<String>,
+    http_proxy_password: Option<String>,
 ) {
     if let Some(ssh) = cfg.ssh_tunnel.as_mut() {
         if ssh.password.is_none() {
@@ -203,16 +216,44 @@ fn inject_ssh_secrets(
             ssh.private_key_passphrase = ssh_key_passphrase.filter(|s| !s.is_empty());
         }
     }
+    if let Some(p) = cfg.http_proxy.as_mut() {
+        if p.password.is_none() {
+            p.password = http_proxy_password.filter(|s| !s.is_empty());
+        }
+    }
+}
+
+/// Opens the configured tunnel (SSH has precedence over HTTP proxy if
+/// both are set — the UI already prevents both, this is defense in
+/// depth). Returns None when neither is configured.
+async fn open_tunnel(
+    cfg: &basemaster_core::ConnectionConfig,
+) -> R<Option<Tunnel>> {
+    if let Some(ssh) = &cfg.ssh_tunnel {
+        return Ok(Some(Tunnel::Ssh(
+            crate::ssh_tunnel::SshTunnel::open(ssh, &cfg.host, cfg.port)
+                .await
+                .map_err(err)?,
+        )));
+    }
+    if let Some(proxy) = &cfg.http_proxy {
+        return Ok(Some(Tunnel::HttpProxy(
+            crate::http_proxy_tunnel::HttpProxyTunnel::open(proxy, &cfg.host, cfg.port)
+                .await
+                .map_err(err)?,
+        )));
+    }
+    Ok(None)
 }
 
 /// Adjusts the cfg's host/port to the local forward if a tunnel is active.
 fn effective_config(
     mut cfg: basemaster_core::ConnectionConfig,
-    tunnel: Option<&crate::ssh_tunnel::SshTunnel>,
+    tunnel: Option<&Tunnel>,
 ) -> basemaster_core::ConnectionConfig {
     if let Some(t) = tunnel {
         cfg.host = "127.0.0.1".into();
-        cfg.port = t.local_port;
+        cfg.port = t.local_port();
     }
     cfg
 }
@@ -223,22 +264,14 @@ pub async fn connection_open(state: State<'_, AppState>, id: Uuid) -> R<()> {
     let password = secrets::get_password(id).map_err(err)?;
     let ssh_pwd = secrets::get_ssh_password(id).map_err(err)?;
     let ssh_key_pass = secrets::get_ssh_key_passphrase(id).map_err(err)?;
+    let proxy_pwd = secrets::get_http_proxy_password(id).map_err(err)?;
     let driver = make_driver(&profile.driver)
         .ok_or_else(|| format!("driver desconhecido: {}", profile.driver))?;
 
     let mut cfg = profile.clone().into_config(password);
-    inject_ssh_secrets(&mut cfg, ssh_pwd, ssh_key_pass);
+    inject_ssh_secrets(&mut cfg, ssh_pwd, ssh_key_pass, proxy_pwd);
 
-    // Open SSH tunnel first (if configured) and redirect host/port.
-    let tunnel = if let Some(ssh) = &cfg.ssh_tunnel {
-        Some(
-            crate::ssh_tunnel::SshTunnel::open(ssh, &cfg.host, cfg.port)
-                .await
-                .map_err(err)?,
-        )
-    } else {
-        None
-    };
+    let tunnel = open_tunnel(&cfg).await?;
     let effective = effective_config(cfg, tunnel.as_ref());
 
     if let Err(e) = driver.connect(&effective).await {
@@ -1223,6 +1256,8 @@ pub async fn connections_export(
             ssh_tunnel: p.ssh_tunnel,
             ssh_password: None,
             ssh_key_passphrase: None,
+            http_proxy: p.http_proxy,
+            http_proxy_password: None,
             folder_name: p.folder_id.and_then(|id| folder_name_by_id.get(&id).cloned()),
         };
         if include_passwords {
@@ -1293,6 +1328,7 @@ pub async fn connections_import_apply(
             default_database: c.default_database.clone(),
             tls: c.tls.clone(),
             ssh_tunnel: c.ssh_tunnel.clone(),
+            http_proxy: c.http_proxy.clone(),
         };
         let profile = state.store.connections().create(draft).await.map_err(err)?;
 
@@ -1314,6 +1350,9 @@ pub async fn connections_import_apply(
         }
         if let Some(pp) = c.ssh_key_passphrase.as_deref().filter(|s| !s.is_empty()) {
             let _ = secrets::set_ssh_key_passphrase(profile.id, pp);
+        }
+        if let Some(pp) = c.http_proxy_password.as_deref().filter(|s| !s.is_empty()) {
+            let _ = secrets::set_http_proxy_password(profile.id, pp);
         }
 
         count += 1;

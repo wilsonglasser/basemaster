@@ -2,6 +2,7 @@ mod commands;
 mod conn_portability;
 mod data_transfer;
 mod docker_discovery;
+mod http_proxy_tunnel;
 mod mcp_server;
 mod sql_dump;
 mod sql_import;

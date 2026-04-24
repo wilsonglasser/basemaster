@@ -23,6 +23,20 @@ pub struct SshTunnelConfig {
     pub private_key_passphrase: Option<String>,
 }
 
+/// HTTP CONNECT proxy config. When set on a connection, the DB socket
+/// is tunneled through `proxy_host:proxy_port` via the HTTP CONNECT
+/// method (RFC 7231 §4.3.6). Mutually exclusive with SSH tunnel: if
+/// both are set, SSH wins and the proxy is ignored.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HttpProxyConfig {
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionConfig {
     #[serde(default = "Uuid::new_v4")]
@@ -42,4 +56,6 @@ pub struct ConnectionConfig {
     pub tls: TlsMode,
     #[serde(default)]
     pub ssh_tunnel: Option<SshTunnelConfig>,
+    #[serde(default)]
+    pub http_proxy: Option<HttpProxyConfig>,
 }
