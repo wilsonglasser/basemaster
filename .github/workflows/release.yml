@@ -144,9 +144,11 @@ jobs:
           BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
           # Artefatos do updater (gerados pelo createUpdaterArtifacts=true).
-          WIN_ZIP="BaseMaster_${VERSION}_x64-setup.nsis.zip"
-          MAC_TAR="BaseMaster.app.tar.gz"
-          LINUX_APPIMAGE="base-master_${VERSION}_amd64.AppImage"
+          # Tauri 2: Windows NSIS é o .exe direto (não mais .nsis.zip);
+          # macOS leva sufixo de arch no tar.gz.
+          WIN_NSIS="BaseMaster_${VERSION}_x64-setup.exe"
+          MAC_TAR="BaseMaster_aarch64.app.tar.gz"
+          LINUX_APPIMAGE="BaseMaster_${VERSION}_amd64.AppImage"
 
           mkdir -p sigs
           gh release download "${TAG}" --pattern "*.sig" --dir ./sigs
@@ -155,7 +157,7 @@ jobs:
             if [ -f "sigs/$1.sig" ]; then cat "sigs/$1.sig"; else echo ""; fi
           }
 
-          WIN_SIG=$(sig "${WIN_ZIP}")
+          WIN_SIG=$(sig "${WIN_NSIS}")
           MAC_SIG=$(sig "${MAC_TAR}")
           LINUX_SIG=$(sig "${LINUX_APPIMAGE}")
 
@@ -167,7 +169,7 @@ jobs:
             --arg notes "${NOTES}" \
             --arg pub_date "${PUB_DATE}" \
             --arg win_sig "${WIN_SIG}" \
-            --arg win_url "${BASE_URL}/${WIN_ZIP}" \
+            --arg win_url "${BASE_URL}/${WIN_NSIS}" \
             --arg mac_sig "${MAC_SIG}" \
             --arg mac_url "${BASE_URL}/${MAC_TAR}" \
             --arg linux_sig "${LINUX_SIG}" \
@@ -178,7 +180,10 @@ jobs:
               pub_date: $pub_date,
               platforms: (
                 ({} +
-                 (if $win_sig != "" then { "windows-x86_64": { signature: $win_sig, url: $win_url } } else {} end) +
+                 (if $win_sig != "" then {
+                    "windows-x86_64": { signature: $win_sig, url: $win_url },
+                    "windows-x86_64-nsis": { signature: $win_sig, url: $win_url }
+                  } else {} end) +
                  (if $mac_sig != "" then { "darwin-aarch64": { signature: $mac_sig, url: $mac_url } } else {} end) +
                  (if $linux_sig != "" then { "linux-x86_64": { signature: $linux_sig, url: $linux_url } } else {} end))
               )
