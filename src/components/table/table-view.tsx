@@ -188,7 +188,7 @@ export function TableView({
   );
   const [columnsPopoverOpen, setColumnsPopoverOpen] = useState(false);
 
-  const gridRef = useRef<ResultGridHandle>(null);
+  const gridRef = useRef<ResultGridHandle | null>(null);
 
   // Detecta PKs da tabela atual via schema-cache.
   const cachedColumns = useSchemaCache(
@@ -1786,7 +1786,7 @@ function DataPane({
   onHeaderContextMenu?: (col: number, clientX: number, clientY: number) => void;
   onAppendRow?: () => void;
   orderBy: OrderBy | null;
-  gridRef: React.RefObject<ResultGridHandle>;
+  gridRef: React.RefObject<ResultGridHandle | null>;
 }) {
   if (error) {
     return (

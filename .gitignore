@@ -67,3 +67,6 @@ CLAUDE.md
 tsconfig.tsbuildinfo
 *.tsbuildinfo
 
+# Vite config transpiled by tsc -b composite (Vite reads the .ts directly).
+vite.config.js
+

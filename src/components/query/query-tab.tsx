@@ -16,10 +16,10 @@ import {
   Wand2,
 } from "lucide-react";
 import {
+  Group,
   Panel,
-  PanelGroup,
-  PanelResizeHandle,
-  type ImperativePanelHandle,
+  Separator,
+  type PanelImperativeHandle,
 } from "react-resizable-panels";
 
 import type { SQLNamespace } from "@codemirror/lang-sql";
@@ -160,8 +160,8 @@ export function QueryTab({
   const [editorCollapsed, setEditorCollapsed] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
 
-  const editorPanelRef = useRef<ImperativePanelHandle>(null);
-  const gridRef = useRef<ResultGridHandle>(null);
+  const editorPanelRef = useRef<PanelImperativeHandle | null>(null);
+  const gridRef = useRef<ResultGridHandle | null>(null);
 
   // Expose setSql to the AI agent (via bridge) while this tab is
   // mounted. Unregisters on unmount.
@@ -619,15 +619,16 @@ export function QueryTab({
       )}
 
       <div className="min-h-0 flex-1">
-        <PanelGroup direction="vertical" autoSaveId="basemaster.query-split">
+        <Group orientation="vertical">
           <Panel
-            ref={editorPanelRef}
+            panelRef={editorPanelRef}
             defaultSize={45}
             minSize={10}
             collapsible
             collapsedSize={0}
-            onCollapse={() => setEditorCollapsed(true)}
-            onExpand={() => setEditorCollapsed(false)}
+            onResize={(size) =>
+              setEditorCollapsed(size.asPercentage === 0)
+            }
           >
             <div className="h-full bg-card/20">
               <QueryEditor
@@ -640,10 +641,10 @@ export function QueryTab({
               />
             </div>
           </Panel>
-          <PanelResizeHandle
+          <Separator
             className={cn(
               "h-1 cursor-row-resize bg-border transition-colors",
-              "hover:bg-conn-accent data-[resize-handle-active]:bg-conn-accent",
+              "hover:bg-conn-accent data-[active]:bg-conn-accent",
             )}
           />
           <Panel defaultSize={55} minSize={10}>
@@ -680,7 +681,7 @@ export function QueryTab({
               </div>
             </div>
           </Panel>
-        </PanelGroup>
+        </Group>
       </div>
     </div>
   );
@@ -860,7 +861,7 @@ function ResultArea({
   focusedCell?: readonly [number, number] | null;
   focusedColumn?: number | null;
   accentColor?: string | null;
-  gridRef: React.RefObject<ResultGridHandle>;
+  gridRef: React.RefObject<ResultGridHandle | null>;
   onSelectView: (view: ResultView) => void;
   onCellSelect: (cell: readonly [number, number] | undefined) => void;
 }) {
@@ -1071,7 +1072,7 @@ function ResultPane({
   focusedCell?: readonly [number, number] | null;
   focusedColumn?: number | null;
   accentColor?: string | null;
-  gridRef: React.RefObject<ResultGridHandle>;
+  gridRef: React.RefObject<ResultGridHandle | null>;
   onCellSelect: (cell: readonly [number, number] | undefined) => void;
 }) {
   const t = useT();
