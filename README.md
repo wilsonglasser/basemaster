@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  🌐 English · Português
+  🌐 English · Português · Español · 简体中文 · 日本語 · Deutsch · Français · Русский
 </p>
 
 ---

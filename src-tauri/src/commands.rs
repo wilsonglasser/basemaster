@@ -52,6 +52,7 @@ pub async fn connection_get(
     state.store.connections().get(id).await.map_err(err)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn connection_create(
     state: State<'_, AppState>,
@@ -155,6 +156,9 @@ pub async fn connection_delete(state: State<'_, AppState>, id: Uuid) -> R<()> {
     Ok(())
 }
 
+// Tauri command — params come from the frontend ipc.connections.test
+// signature; refactoring into a struct would change the IPC contract.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn connection_test(
     app: AppHandle,
