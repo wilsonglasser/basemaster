@@ -10,11 +10,13 @@ import {
   LayoutGrid,
   List,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
   Table as TableIcon,
   Trash2,
+  Upload,
   Wrench,
 } from "lucide-react";
 
@@ -35,10 +37,12 @@ import { appAlert, appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { confirmDestructive } from "@/state/destructive-confirm";
 import { useT } from "@/state/i18n";
+import { useActiveInfo } from "@/state/active-info";
 import { useSchemaCache } from "@/state/schema-cache";
 import { useTabs } from "@/state/tabs";
 
 interface Props {
+  tabId: string;
   connectionId: Uuid;
   schema: string;
   category?: "all" | "tables" | "views";
@@ -56,6 +60,7 @@ function formatBytes(b: number | null | undefined): string {
 }
 
 export function TablesListView({
+  tabId,
   connectionId,
   schema,
   category = "all",
@@ -103,8 +108,21 @@ export function TablesListView({
       setLastSelected(name);
       return;
     }
-    setSelected(new Set([name]));
+    // Plain click on the SOLE selected row → toggle off. Anything else
+    // → replace selection with just this row.
+    setSelected((prev) => {
+      if (prev.size === 1 && prev.has(name)) return new Set();
+      return new Set([name]);
+    });
     setLastSelected(name);
+  };
+
+  /** Clears selection when the click hits the container background (not
+   *  bubbled from a row/card). */
+  const handleBackgroundClick = (e: React.MouseEvent) => {
+    if (e.target !== e.currentTarget) return;
+    setSelected(new Set());
+    setLastSelected(null);
   };
 
   const sortedRef = useRef<string[] | null>(null);
@@ -141,21 +159,6 @@ export function TablesListView({
       }
     }, [onlySelectedName]),
   );
-  const renameTimerRef = useRef<number | null>(null);
-  const clearRenameTimer = () => {
-    if (renameTimerRef.current != null) {
-      window.clearTimeout(renameTimerRef.current);
-      renameTimerRef.current = null;
-    }
-  };
-  const scheduleRename = (name: string) => {
-    clearRenameTimer();
-    renameTimerRef.current = window.setTimeout(() => {
-      setEditingName(name);
-      setEditingDraft(name);
-      renameTimerRef.current = null;
-    }, 500);
-  };
   const commitRename = async () => {
     if (!editingName) return;
     const next = editingDraft.trim();
@@ -194,8 +197,6 @@ export function TablesListView({
     setEditingName(null);
     setEditingDraft("");
   };
-  useEffect(() => () => clearRenameTimer(), []);
-
   // Ensure the connection is open + snapshot is loaded.
   useEffect(() => {
     (async () => {
@@ -262,6 +263,35 @@ export function TablesListView({
     sortedRef.current = sorted.map((t) => t.name);
   }, [sorted]);
 
+  // Publish counts to the global StatusBar so this view doesn't need
+  // its own footer. Cleared on unmount so a closed tab doesn't leak.
+  useEffect(() => {
+    const noun =
+      category === "views"
+        ? sorted.length === 1
+          ? t("tablesList.viewWord")
+          : t("tablesList.viewWordPlural")
+        : sorted.length === 1
+          ? t("tablesList.tableWord")
+          : t("tablesList.tableWordPlural");
+    useActiveInfo.getState().patch(tabId, {
+      statusSchema: schema,
+      itemCount: sorted.length,
+      itemNoun: noun,
+      selectionCount: selected.size,
+    });
+  }, [tabId, schema, sorted.length, selected.size, category, t]);
+  useEffect(() => {
+    return () => {
+      useActiveInfo.getState().patch(tabId, {
+        statusSchema: undefined,
+        itemCount: undefined,
+        itemNoun: undefined,
+        selectionCount: undefined,
+      });
+    };
+  }, [tabId]);
+
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
     else {
@@ -270,12 +300,53 @@ export function TablesListView({
     }
   };
 
-  const openTable = (name: string) => {
+  const openTable = (name: string, view: "data" | "structure" = "data") => {
     newTab({
       label: name,
-      kind: { kind: "table", connectionId, schema, table: name },
+      kind: {
+        kind: "table",
+        connectionId,
+        schema,
+        table: name,
+        initialView: view,
+      },
       accentColor: conn?.color,
     });
+  };
+
+  /** Resolves the multi-target list. If `name` is in the selection, use
+   *  the whole selection; otherwise just the row that was acted on. */
+  const targetsFor = (name?: string): string[] => {
+    if (name && selected.has(name) && selected.size > 1) {
+      return Array.from(selected);
+    }
+    if (name) return [name];
+    return Array.from(selected);
+  };
+
+  const openSelected = (view: "data" | "structure", contextRow?: string) => {
+    for (const t of targetsFor(contextRow)) openTable(t, view);
+  };
+
+  const openImportData = () => {
+    const onlyTable = selected.size === 1 ? [...selected][0] : undefined;
+    newTab({
+      label: t("tabs.dataImportLabel"),
+      kind: {
+        kind: "data-import",
+        connectionId,
+        schema,
+        table: onlyTable,
+      },
+      accentColor: conn?.color,
+    });
+  };
+
+  const exportSelected = () => {
+    const targets = Array.from(selected);
+    for (const name of targets) {
+      startTableExport(connectionId, schema, name);
+    }
   };
 
   const duplicate = async (name: string) => {
@@ -514,6 +585,14 @@ export function TablesListView({
   const [ctxItems, setCtxItems] = useState<ContextEntry[]>([]);
   const ctxMenu = useContextMenu(ctxItems);
 
+  // Grid mode: wheel vertical -> scroll horizontal, já que a view é
+  // column-major e não tem overflow vertical.
+  const handleGridWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.currentTarget.scrollLeft += e.deltaY;
+    }
+  };
+
   const runMaintenanceMulti = (
     action: MaintenanceAction,
     singleName?: string,
@@ -550,11 +629,24 @@ export function TablesListView({
       setLastSelected(name);
     }
     const copyCount = bulkTargets(name).length;
+    const openLabel =
+      copyCount > 1
+        ? `${t("tablesList.open")} (${copyCount})`
+        : t("tree.openTable");
+    const designLabel =
+      copyCount > 1
+        ? `${t("tablesList.design")} (${copyCount})`
+        : t("tablesList.design");
     setCtxItems([
       {
         icon: <TableIcon className="h-3.5 w-3.5" />,
-        label: t("tree.openTable"),
-        onClick: () => openTable(name),
+        label: openLabel,
+        onClick: () => openSelected("data", name),
+      },
+      {
+        icon: <Pencil className="h-3.5 w-3.5" />,
+        label: designLabel,
+        onClick: () => openSelected("structure", name),
       },
       {
         icon: <Copy className="h-3.5 w-3.5" />,
@@ -644,24 +736,21 @@ export function TablesListView({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Toolbar */}
+      {/* Toolbar — open / design / new / delete · import / export */}
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-card/30 px-3 text-xs">
-        <span className="text-muted-foreground">{schema}</span>
-        <span className="text-muted-foreground/50">·</span>
-        <span className="font-medium">
-          {sorted.length}{" "}
-          {category === "views"
-            ? sorted.length === 1
-              ? t("tablesList.viewWord")
-              : t("tablesList.viewWordPlural")
-            : category === "tables"
-              ? sorted.length === 1
-                ? t("tablesList.tableWord")
-                : t("tablesList.tableWordPlural")
-              : t("tablesList.title", { count: tables?.length ?? 0 })}
-        </span>
-
-        <div className="ml-4 flex items-center gap-1">
+        <div className="flex items-center gap-1">
+          <ToolbarBtn
+            icon={<TableIcon className="h-3.5 w-3.5" />}
+            label={t("tablesList.open")}
+            disabled={selected.size === 0}
+            onClick={() => openSelected("data")}
+          />
+          <ToolbarBtn
+            icon={<Pencil className="h-3.5 w-3.5" />}
+            label={t("tablesList.design")}
+            disabled={selected.size === 0}
+            onClick={() => openSelected("structure")}
+          />
           <ToolbarBtn
             icon={<Plus className="h-3.5 w-3.5" />}
             label={t("tree.newTable")}
@@ -674,39 +763,26 @@ export function TablesListView({
             }
           />
           <ToolbarBtn
-            icon={<TableIcon className="h-3.5 w-3.5" />}
-            label={t("tablesList.open")}
-            disabled={!onlySelectedName}
-            onClick={() => onlySelectedName && openTable(onlySelectedName)}
-          />
-          <ToolbarBtn
-            icon={<Copy className="h-3.5 w-3.5" />}
-            label={
-              selected.size > 0
-                ? `${t("tablesList.copy")} (${selected.size})`
-                : t("tablesList.copy")
-            }
-            disabled={selected.size === 0}
-            onClick={handleCopy}
-          />
-          <ToolbarBtn
-            icon={<ClipboardPaste className="h-3.5 w-3.5" />}
-            label={t("tablesList.paste")}
-            onClick={handlePaste}
-          />
-          <ToolbarBtn
             icon={<Trash2 className="h-3.5 w-3.5" />}
-            label={
-              selected.size > 1
-                ? `${t("common.delete")} (${selected.size})`
-                : t("common.delete")
-            }
+            label={t("common.delete")}
             disabled={selected.size === 0}
             onClick={() => {
               const first = selected.values().next().value;
               if (first) deleteTables(first);
             }}
             destructive
+          />
+          <span className="mx-1 h-4 w-px bg-border" />
+          <ToolbarBtn
+            icon={<Upload className="h-3.5 w-3.5" />}
+            label={t("tablesList.importData")}
+            onClick={openImportData}
+          />
+          <ToolbarBtn
+            icon={<Download className="h-3.5 w-3.5" />}
+            label={t("tablesList.exportData")}
+            disabled={selected.size === 0}
+            onClick={exportSelected}
           />
         </div>
 
@@ -766,7 +842,13 @@ export function TablesListView({
       </div>
 
       {/* Grid */}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div
+        onClick={handleBackgroundClick}
+        className={cn(
+          "min-h-0 flex-1",
+          viewMode === "grid" ? "overflow-hidden" : "overflow-auto",
+        )}
+      >
         {!connActive && (
           <div className="grid h-full place-items-center p-6 text-xs text-muted-foreground">
             <div className="flex flex-col items-center gap-2">
@@ -784,7 +866,11 @@ export function TablesListView({
           </div>
         )}
         {connActive && tables && viewMode === "grid" && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-1 p-2">
+          <div
+            onWheel={handleGridWheel}
+            onClick={handleBackgroundClick}
+            className="grid h-full auto-cols-[180px] grid-flow-col grid-rows-[repeat(auto-fill,32px)] gap-1 overflow-x-auto overflow-y-hidden p-2"
+          >
             {sorted.map((tb) => {
               const isView =
                 tb.kind === "view" || tb.kind === "materialized_view";
@@ -793,23 +879,8 @@ export function TablesListView({
               return (
                 <div
                   key={tb.name}
-                  onClick={(e) => {
-                    if (
-                      !e.shiftKey &&
-                      !e.ctrlKey &&
-                      !e.metaKey &&
-                      isSel &&
-                      selected.size === 1
-                    ) {
-                      scheduleRename(tb.name);
-                      return;
-                    }
-                    handleRowSelect(tb.name, e);
-                  }}
-                  onDoubleClick={() => {
-                    clearRenameTimer();
-                    openTable(tb.name);
-                  }}
+                  onClick={(e) => handleRowSelect(tb.name, e)}
+                  onDoubleClick={() => openTable(tb.name)}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     if (!isSel) {
@@ -822,7 +893,7 @@ export function TablesListView({
                     "flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors select-none",
                     isSel
                       ? "border-conn-accent/50 bg-conn-accent/15"
-                      : "border-border hover:bg-accent/30",
+                      : "border-transparent hover:bg-accent/30",
                   )}
                   title={tb.comment ?? undefined}
                 >
@@ -888,23 +959,8 @@ export function TablesListView({
                 return (
                 <tr
                   key={tb.name}
-                  onClick={(e) => {
-                    if (
-                      !e.shiftKey &&
-                      !e.ctrlKey &&
-                      !e.metaKey &&
-                      isSel &&
-                      selected.size === 1
-                    ) {
-                      scheduleRename(tb.name);
-                      return;
-                    }
-                    handleRowSelect(tb.name, e);
-                  }}
-                  onDoubleClick={() => {
-                    clearRenameTimer();
-                    openTable(tb.name);
-                  }}
+                  onClick={(e) => handleRowSelect(tb.name, e)}
+                  onDoubleClick={() => openTable(tb.name)}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     if (!isSel) {

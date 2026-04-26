@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, Keyboard, Monitor, Moon, Palette, Plug, Server, Sparkles, Sun, Upload } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, Keyboard, KeyRound, Loader2, Monitor, Moon, Palette, Plug, Server, ShieldCheck, Sparkles, Sun, Trash2, Upload } from "lucide-react";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
@@ -10,21 +10,29 @@ import { appConfirm } from "@/state/app-dialog";
 import { useI18n, useT, type Lang, type TKey } from "@/state/i18n";
 import { DARK_PRESETS, LIGHT_PRESETS, useTheme } from "@/state/theme";
 import { ipc } from "@/lib/ipc";
-import type { McpStatus } from "@/lib/types";
+import { useDangerousQuery } from "@/state/dangerous-query";
+import type { KnownHostEntry, McpStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const LANGS: Array<{ value: Lang; label: string; flag: string }> = [
   { value: "pt-BR", label: "Português (Brasil)", flag: "🇧🇷" },
   { value: "en", label: "English", flag: "🇺🇸" },
+  { value: "es", label: "Español", flag: "🇪🇸" },
+  { value: "zh-CN", label: "简体中文", flag: "🇨🇳" },
+  { value: "ja", label: "日本語", flag: "🇯🇵" },
+  { value: "de", label: "Deutsch", flag: "🇩🇪" },
+  { value: "fr", label: "Français", flag: "🇫🇷" },
+  { value: "ru", label: "Русский", flag: "🇷🇺" },
 ];
 
-type TabId = "appearance" | "ai" | "mcp" | "connections" | "shortcuts";
+type TabId = "appearance" | "ai" | "mcp" | "connections" | "security" | "shortcuts";
 
 const TABS: Array<{ id: TabId; labelKey: TKey; icon: React.ReactNode }> = [
   { id: "appearance", labelKey: "settingsNav.appearance", icon: <Palette className="h-4 w-4" /> },
   { id: "ai", labelKey: "settingsNav.ai", icon: <Sparkles className="h-4 w-4" /> },
   { id: "mcp", labelKey: "settingsNav.mcp", icon: <Server className="h-4 w-4" /> },
   { id: "connections", labelKey: "settingsNav.connections", icon: <Plug className="h-4 w-4" /> },
+  { id: "security", labelKey: "settingsNav.security", icon: <ShieldCheck className="h-4 w-4" /> },
   { id: "shortcuts", labelKey: "settingsNav.shortcuts", icon: <Keyboard className="h-4 w-4" /> },
 ];
 
@@ -67,6 +75,7 @@ export function SettingsView() {
           {tab === "ai" && <AiAgentPanel />}
           {tab === "mcp" && <McpPanel />}
           {tab === "connections" && <ConnectionsPortabilityPanel />}
+          {tab === "security" && <SecurityPanel />}
           {tab === "shortcuts" && <ShortcutsPanel />}
         </div>
       </main>
@@ -861,7 +870,7 @@ function ConnectionsPortabilityPanel() {
         filters: [
           {
             name: t("settings.portability.filterName"),
-            extensions: ["bmconn", "json", "ncx", "xml"],
+            extensions: ["bmconn", "json", "ncx", "xml", "txt"],
           },
         ],
       });
@@ -973,5 +982,119 @@ function OptionRow({
       {children}
       {selected && <Check className="h-4 w-4 text-conn-accent" />}
     </button>
+  );
+}
+
+function SecurityPanel() {
+  const t = useT();
+  const skipGuard = useDangerousQuery((s) => s.skipGuard);
+  const setSkipGuard = useDangerousQuery((s) => s.setSkipGuard);
+  const [entries, setEntries] = useState<KnownHostEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const list = await ipc.ssh.knownHostsList();
+      setEntries(list);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const remove = async (e: KnownHostEntry) => {
+    const ok = await appConfirm(
+      t("security.knownHostsRemoveBody", { host: e.host, port: e.port }),
+      {
+        title: t("security.knownHostsRemoveTitle"),
+        okLabel: t("common.delete"),
+      },
+    );
+    if (!ok) return;
+    await ipc.ssh.knownHostsRemove(e.host, e.port, e.fingerprint_sha256);
+    await refresh();
+  };
+
+  return (
+    <div className="space-y-6">
+      <section>
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+          {t("security.dangerousQueryTitle")}
+        </h3>
+        <p className="mb-3 text-xs text-muted-foreground">
+          {t("security.dangerousQueryDesc")}
+        </p>
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-border bg-card/40 px-3 py-2">
+          <span className="text-xs">
+            {t("security.dangerousQueryToggle")}
+          </span>
+          <input
+            type="checkbox"
+            checked={!skipGuard}
+            onChange={(e) => setSkipGuard(!e.target.checked)}
+            className="h-4 w-4 cursor-pointer accent-conn-accent"
+          />
+        </label>
+      </section>
+
+      <section>
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+          <KeyRound className="h-4 w-4 text-muted-foreground" />
+          {t("security.knownHostsTitle")}
+        </h3>
+        <p className="mb-3 text-xs text-muted-foreground">
+          {t("security.knownHostsDesc")}
+        </p>
+
+        {loading && !entries && (
+          <div className="grid place-items-center rounded-md border border-border bg-card/40 p-6">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        )}
+
+        {entries && entries.length === 0 && (
+          <div className="rounded-md border border-dashed border-border bg-card/20 px-4 py-6 text-center text-xs text-muted-foreground">
+            {t("security.knownHostsEmpty")}
+          </div>
+        )}
+
+        {entries && entries.length > 0 && (
+          <div className="divide-y divide-border overflow-hidden rounded-md border border-border">
+            {entries.map((e) => (
+              <div
+                key={`${e.host}:${e.port}:${e.fingerprint_sha256}`}
+                className="flex items-start gap-3 px-3 py-2"
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-medium">
+                    <span className="font-mono">{e.host}:{e.port}</span>
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                      {e.algorithm}
+                    </span>
+                  </div>
+                  <div className="break-all font-mono text-[11px] text-muted-foreground">
+                    {e.fingerprint_sha256}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => remove(e)}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  title={t("common.delete")}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

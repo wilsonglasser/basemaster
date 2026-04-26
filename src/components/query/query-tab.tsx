@@ -25,6 +25,7 @@ import {
 import type { SQLNamespace } from "@codemirror/lang-sql";
 
 import { useTheme } from "@/state/theme";
+import { detectDangerousStatements } from "@/lib/dangerous-query";
 import { ipc } from "@/lib/ipc";
 import { ExportDialog } from "@/components/export-dialog";
 import { writeInMemory } from "@/lib/export";
@@ -32,6 +33,7 @@ import { formatSqlText } from "@/lib/sql-format";
 import type { QueryRunBatch, QueryRunResult, Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { appPrompt } from "@/state/app-dialog";
+import { useDangerousQuery } from "@/state/dangerous-query";
 import { useActiveInfo } from "@/state/active-info";
 import { useTabState } from "@/state/tab-state";
 import { useConnections } from "@/state/connections";
@@ -194,12 +196,28 @@ export function QueryTab({
   };
 
   /** Incremental token to invalidate old runs when the user clicks Stop
-   *  or triggers a new Run. The backend keeps executing (sqlx can't cancel
-   *  easily), but we ignore the late result. */
+   *  or triggers a new Run. The backend also gets a cancel signal via
+   *  `ipc.db.cancelQuery` — it drops the sqlx future so the pool slot
+   *  is freed immediately (server keeps running the statement until it
+   *  completes naturally, which we can't prevent without KILL). */
   const runTokenRef = useRef(0);
+  /** UUID of the in-flight run on the backend, for `cancelQuery`. */
+  const runRequestIdRef = useRef<string | null>(null);
 
   const runSql = async (sqlNow: string, schemaNow: string | null) => {
+    // Guard: UPDATE/DELETE without WHERE. Skippable per user preference.
+    const skipGuard = useDangerousQuery.getState().skipGuard;
+    if (!skipGuard) {
+      const risky = detectDangerousStatements(sqlNow);
+      if (risky.length > 0) {
+        const ok = await useDangerousQuery.getState().askConfirm(risky);
+        if (!ok) return;
+      }
+    }
+
     const token = ++runTokenRef.current;
+    const requestId = crypto.randomUUID();
+    runRequestIdRef.current = requestId;
     setRun({ kind: "running" });
     const started = performance.now();
     try {
@@ -210,7 +228,12 @@ export function QueryTab({
         await openConn(connectionId);
       }
       if (runTokenRef.current !== token) return;
-      const batch = await ipc.db.runQuery(connectionId, sqlNow, schemaNow);
+      const batch = await ipc.db.runQuery(
+        connectionId,
+        sqlNow,
+        schemaNow,
+        requestId,
+      );
       if (runTokenRef.current !== token) return; // abortado
       const elapsed = Math.round(performance.now() - started);
       const initialView: ResultView = batch.results.length > 0 ? 0 : "summary";
@@ -241,14 +264,26 @@ export function QueryTab({
           error_msg: String(e),
         })
         .catch((err) => console.warn("query_history insert:", err));
+    } finally {
+      if (runRequestIdRef.current === requestId) {
+        runRequestIdRef.current = null;
+      }
     }
   };
 
   const handleRun = () => runSql(sqlRef.current, schemaRef.current);
 
   const handleStop = () => {
-    // Invalidate the in-flight run — backend keeps going until it finishes, but we ignore it.
+    const rid = runRequestIdRef.current;
+    if (rid) {
+      ipc.db
+        .cancelQuery(rid)
+        .catch((err) => console.warn("cancel_query:", err));
+    }
+    // Invalidate the in-flight run — UI recovers immediately. The
+    // backend drops its side of the sqlx future so the pool is freed.
     runTokenRef.current++;
+    runRequestIdRef.current = null;
     setRun({ kind: "error", message: t("query.cancelledByUser") });
   };
 

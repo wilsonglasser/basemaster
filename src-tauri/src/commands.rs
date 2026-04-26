@@ -157,6 +157,8 @@ pub async fn connection_delete(state: State<'_, AppState>, id: Uuid) -> R<()> {
 
 #[tauri::command]
 pub async fn connection_test(
+    app: AppHandle,
+    state: State<'_, AppState>,
     draft: ConnectionDraft,
     password: Option<String>,
     ssh_password: Option<String>,
@@ -213,7 +215,12 @@ pub async fn connection_test(
         http_proxy,
     };
 
-    let tunnel = open_tunnel(&cfg).await?;
+    let ctx = crate::ssh_tunnel::HostKeyPromptCtx {
+        app: app.clone(),
+        known_hosts: state.known_hosts.clone(),
+        prompts: state.ssh_key_prompts.clone(),
+    };
+    let tunnel = open_tunnel(&cfg, ctx).await?;
     let effective = effective_config(cfg, tunnel.as_ref());
 
     let result = driver.connect(&effective).await;
@@ -281,6 +288,7 @@ struct JumpHopSecrets {
 /// depth). Returns None when neither is configured.
 async fn open_tunnel(
     cfg: &basemaster_core::ConnectionConfig,
+    ctx: crate::ssh_tunnel::HostKeyPromptCtx,
 ) -> R<Option<Tunnel>> {
     if let Some(ssh) = &cfg.ssh_tunnel {
         return Ok(Some(Tunnel::Ssh(
@@ -289,6 +297,7 @@ async fn open_tunnel(
                 ssh,
                 &cfg.host,
                 cfg.port,
+                ctx,
             )
             .await
             .map_err(err)?,
@@ -317,7 +326,11 @@ fn effective_config(
 }
 
 #[tauri::command]
-pub async fn connection_open(state: State<'_, AppState>, id: Uuid) -> R<()> {
+pub async fn connection_open(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<()> {
     let profile = state.store.connections().get(id).await.map_err(err)?;
     let password = secrets::get_password(id).map_err(err)?;
     let ssh_pwd = secrets::get_ssh_password(id).map_err(err)?;
@@ -330,7 +343,12 @@ pub async fn connection_open(state: State<'_, AppState>, id: Uuid) -> R<()> {
     let mut cfg = profile.clone().into_config(password);
     inject_ssh_secrets(&mut cfg, ssh_pwd, ssh_key_pass, ssh_jumps_blob, proxy_pwd);
 
-    let tunnel = open_tunnel(&cfg).await?;
+    let ctx = crate::ssh_tunnel::HostKeyPromptCtx {
+        app: app.clone(),
+        known_hosts: state.known_hosts.clone(),
+        prompts: state.ssh_key_prompts.clone(),
+    };
+    let tunnel = open_tunnel(&cfg, ctx).await?;
     let effective = effective_config(cfg, tunnel.as_ref());
 
     if let Err(e) = driver.connect(&effective).await {
@@ -346,6 +364,44 @@ pub async fn connection_open(state: State<'_, AppState>, id: Uuid) -> R<()> {
         state.tunnels.write().await.insert(id, t);
     }
     let _ = state.store.connections().touch(id).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ssh_host_key_respond(
+    state: State<'_, AppState>,
+    request_id: Uuid,
+    accept: bool,
+) -> R<bool> {
+    let tx = state.ssh_key_prompts.write().await.remove(&request_id);
+    match tx {
+        Some(sender) => {
+            let _ = sender.send(accept);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+#[tauri::command]
+pub async fn ssh_known_hosts_list(
+    state: State<'_, AppState>,
+) -> R<Vec<crate::ssh_known_hosts::KnownHostEntry>> {
+    Ok(state.known_hosts.list())
+}
+
+#[tauri::command]
+pub async fn ssh_known_hosts_remove(
+    state: State<'_, AppState>,
+    host: String,
+    port: u16,
+    fingerprint_sha256: String,
+) -> R<()> {
+    state
+        .known_hosts
+        .remove(&host, port, &fingerprint_sha256)
+        .await
+        .map_err(err)?;
     Ok(())
 }
 
@@ -999,45 +1055,140 @@ pub async fn query_run(
     connection_id: Uuid,
     schema: Option<String>,
     sql: String,
+    request_id: Option<Uuid>,
 ) -> R<QueryRunBatch> {
     let d = driver_for(&state, connection_id).await?;
     let stmts = split_statements(&sql);
     let started_at_ms = Utc::now().timestamp_millis();
     let total_inst = Instant::now();
 
+    // Register a cancel channel. When signaled, we'll fire KILL QUERY /
+    // pg_cancel_backend via a side connection — the statement's SQL
+    // carries a unique comment marker (`/* bm-cancel-<uuid> */`) that
+    // the driver matches against PROCESSLIST / pg_stat_activity.
+    let cancel_rx = if let Some(rid) = request_id {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        state.running_queries.write().await.insert(rid, tx);
+        Some(rx)
+    } else {
+        None
+    };
+
     let mut results = Vec::with_capacity(stmts.len());
     for stmt in stmts {
         let stmt_inst = Instant::now();
-        let result = if looks_like_select(&stmt) {
-            match d.query(schema.as_deref(), &stmt).await {
+        let is_select = looks_like_select(&stmt);
+
+        // Per-statement marker so cancel targets only THIS statement,
+        // not a previous one that's still in processlist for any reason.
+        let marker = request_id.map(|rid| {
+            format!("bm-cancel-{}-{}", rid, stmt_inst.elapsed().as_nanos())
+        });
+        let stmt_with_marker = match &marker {
+            Some(m) => format!("/* {} */ {}", m, stmt),
+            None => stmt.clone(),
+        };
+
+        // Spawn a watcher that issues KILL when cancel is signaled.
+        // Aborted when the query completes naturally.
+        let watcher_handle = match (cancel_rx.clone(), marker.clone()) {
+            (Some(mut rx), Some(m)) => {
+                let driver = d.clone();
+                Some(tokio::spawn(async move {
+                    loop {
+                        if *rx.borrow() {
+                            break;
+                        }
+                        if rx.changed().await.is_err() {
+                            return;
+                        }
+                    }
+                    // Small delay gives the server time to register the
+                    // query in PROCESSLIST before we look it up.
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    let _ = driver.cancel_by_marker(&m).await;
+                }))
+            }
+            _ => None,
+        };
+
+        // Strip the marker prefix from any error text the DB echoes.
+        let scrub = |msg: String| -> String {
+            match &marker {
+                Some(m) => msg
+                    .replace(&format!("/* {} */ ", m), "")
+                    .replace(&format!("/* {} */", m), ""),
+                None => msg,
+            }
+        };
+
+        let result = if is_select {
+            match d.query(schema.as_deref(), &stmt_with_marker).await {
                 Ok(q) => QueryRunResult::Select {
                     sql: stmt,
                     columns: q.columns,
                     rows: q.rows,
                     elapsed_ms: stmt_inst.elapsed().as_millis() as u64,
                 },
-                Err(e) => QueryRunResult::Error {
-                    sql: stmt,
-                    message: e.to_string(),
-                    elapsed_ms: stmt_inst.elapsed().as_millis() as u64,
-                },
+                Err(e) => {
+                    let was_cancelled = cancel_rx
+                        .as_ref()
+                        .map(|rx| *rx.borrow())
+                        .unwrap_or(false);
+                    QueryRunResult::Error {
+                        sql: stmt,
+                        message: if was_cancelled {
+                            "cancelled by user".into()
+                        } else {
+                            scrub(e.to_string())
+                        },
+                        elapsed_ms: stmt_inst.elapsed().as_millis() as u64,
+                    }
+                }
             }
         } else {
-            match d.execute(schema.as_deref(), &stmt).await {
+            match d.execute(schema.as_deref(), &stmt_with_marker).await {
                 Ok(e) => QueryRunResult::Modify {
                     sql: stmt,
                     rows_affected: e.rows_affected,
                     last_insert_id: e.last_insert_id,
                     elapsed_ms: stmt_inst.elapsed().as_millis() as u64,
                 },
-                Err(e) => QueryRunResult::Error {
-                    sql: stmt,
-                    message: e.to_string(),
-                    elapsed_ms: stmt_inst.elapsed().as_millis() as u64,
-                },
+                Err(e) => {
+                    let was_cancelled = cancel_rx
+                        .as_ref()
+                        .map(|rx| *rx.borrow())
+                        .unwrap_or(false);
+                    QueryRunResult::Error {
+                        sql: stmt,
+                        message: if was_cancelled {
+                            "cancelled by user".into()
+                        } else {
+                            scrub(e.to_string())
+                        },
+                        elapsed_ms: stmt_inst.elapsed().as_millis() as u64,
+                    }
+                }
             }
         };
+
+        // Query completed (success or error) — stop watching.
+        if let Some(h) = watcher_handle {
+            h.abort();
+        }
+
+        let was_cancelled = matches!(
+            &result,
+            QueryRunResult::Error { message, .. } if message == "cancelled by user"
+        );
         results.push(result);
+        if was_cancelled {
+            break;
+        }
+    }
+
+    if let Some(rid) = request_id {
+        state.running_queries.write().await.remove(&rid);
     }
 
     Ok(QueryRunBatch {
@@ -1046,6 +1197,20 @@ pub async fn query_run(
         finished_at_ms: Utc::now().timestamp_millis(),
         total_ms: total_inst.elapsed().as_millis() as u64,
     })
+}
+
+#[tauri::command]
+pub async fn query_cancel(
+    state: State<'_, AppState>,
+    request_id: Uuid,
+) -> R<bool> {
+    let reg = state.running_queries.read().await;
+    if let Some(tx) = reg.get(&request_id) {
+        let _ = tx.send(true);
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// Opens a tab in a separate Tauri window. `url_fragment` is appended to

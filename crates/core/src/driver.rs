@@ -184,6 +184,23 @@ pub trait Driver: Send + Sync {
     async fn query(&self, schema: Option<&str>, sql: &str) -> Result<QueryResult>;
     async fn execute(&self, schema: Option<&str>, sql: &str) -> Result<ExecuteResult>;
 
+    /// Aborts any currently-running query whose SQL contains `marker` —
+    /// a caller-provided tag that's been embedded as a SQL comment in
+    /// the target statement. Each driver queries its respective system
+    /// table (`information_schema.processlist` / `pg_stat_activity`),
+    /// finds the backend pid, and issues `KILL QUERY <pid>` /
+    /// `pg_cancel_backend(pid)` via the pool.
+    ///
+    /// Uses `&pool` only — avoids the `&mut Connection` HRT issue that
+    /// blocks us from holding a dedicated connection.
+    ///
+    /// Default: `Unsupported`.
+    async fn cancel_by_marker(&self, _marker: &str) -> Result<()> {
+        Err(crate::Error::Unsupported(
+            "cancel_by_marker not supported by this driver".into(),
+        ))
+    }
+
     /// Optimized prefetch: tables + columns for all of them. Default
     /// implementation is N+1 (list_tables + describe N); each driver
     /// can override with a single bulk query.

@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { ipc } from "@/lib/ipc";
@@ -32,6 +33,35 @@ function truncate(s: string, n: number): string {
   return flat.length > n ? flat.slice(0, n) + "…" : flat;
 }
 
+type StatusFilter = "all" | "success" | "error";
+
+/** Renders `text` with any substring matching `query` (case-insensitive)
+ *  wrapped in a highlight span. Falls back to plain text when no match. */
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>;
+  const q = query.toLowerCase();
+  const lower = text.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  let hit = lower.indexOf(q, i);
+  let key = 0;
+  while (hit >= 0) {
+    if (hit > i) parts.push(<span key={key++}>{text.slice(i, hit)}</span>);
+    parts.push(
+      <mark
+        key={key++}
+        className="rounded-sm bg-conn-accent/30 px-0.5 text-foreground"
+      >
+        {text.slice(hit, hit + q.length)}
+      </mark>,
+    );
+    i = hit + q.length;
+    hit = lower.indexOf(q, i);
+  }
+  if (i < text.length) parts.push(<span key={key++}>{text.slice(i)}</span>);
+  return <>{parts}</>;
+}
+
 export function QueryHistoryView({ connectionId }: Props) {
   const t = useT();
   const conn = useConnections((s) =>
@@ -41,6 +71,8 @@ export function QueryHistoryView({ connectionId }: Props) {
   const [entries, setEntries] = useState<QueryHistoryEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [schema, setSchema] = useState<string>("");
   const [selected, setSelected] = useState<string | null>(null);
 
   const load = async () => {
@@ -60,12 +92,34 @@ export function QueryHistoryView({ connectionId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId]);
 
+  /** Unique schemas seen in the history — for the schema dropdown. */
+  const availableSchemas = useMemo(() => {
+    if (!entries) return [] as string[];
+    const set = new Set<string>();
+    for (const e of entries) if (e.schema) set.add(e.schema);
+    return [...set].sort();
+  }, [entries]);
+
   const filtered = useMemo(() => {
     if (!entries) return [];
     const q = filter.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((e) => e.sql.toLowerCase().includes(q));
-  }, [entries, filter]);
+    return entries.filter((e) => {
+      if (status === "success" && !e.success) return false;
+      if (status === "error" && e.success) return false;
+      if (schema && e.schema !== schema) return false;
+      if (q && !e.sql.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [entries, filter, status, schema]);
+
+  const hasActiveFilters =
+    filter.trim().length > 0 || status !== "all" || schema !== "";
+
+  const clearFilters = () => {
+    setFilter("");
+    setStatus("all");
+    setSchema("");
+  };
 
   const current = filtered.find((e) => e.id === selected) ?? null;
 
@@ -115,9 +169,51 @@ export function QueryHistoryView({ connectionId }: Props) {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={t("queryHistory.filterPlaceholder")}
-            className="h-6 w-64 rounded border border-border bg-background pl-6 pr-2 text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
+            className="h-6 w-56 rounded border border-border bg-background pl-6 pr-2 text-xs focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
           />
         </div>
+        <div className="flex items-center rounded border border-border p-0.5">
+          {(["all", "success", "error"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatus(s)}
+              className={cn(
+                "h-5 rounded px-2 text-[11px] transition-colors",
+                status === s
+                  ? "bg-conn-accent/20 text-foreground"
+                  : "text-muted-foreground hover:bg-accent",
+              )}
+            >
+              {t(`queryHistory.status.${s}` as const)}
+            </button>
+          ))}
+        </div>
+        {availableSchemas.length > 0 && (
+          <select
+            value={schema}
+            onChange={(e) => setSchema(e.target.value)}
+            className="h-6 rounded border border-border bg-background px-1.5 text-xs focus:border-conn-accent focus:outline-none"
+          >
+            <option value="">{t("queryHistory.allSchemas")}</option>
+            {availableSchemas.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        )}
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+            title={t("queryHistory.clearFilters")}
+          >
+            <X className="h-3 w-3" />
+            {t("queryHistory.clearFilters")}
+          </button>
+        )}
         <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
@@ -174,7 +270,10 @@ export function QueryHistoryView({ connectionId }: Props) {
                       <AlertCircle className="h-3 w-3 shrink-0 text-destructive" />
                     )}
                     <span className="flex-1 truncate font-mono text-[11px]">
-                      {truncate(e.sql, 120)}
+                      <HighlightedText
+                        text={truncate(e.sql, 120)}
+                        query={filter.trim()}
+                      />
                     </span>
                   </div>
                   <div className="ml-5 mt-0.5 flex items-center gap-3 text-[10px] text-muted-foreground">

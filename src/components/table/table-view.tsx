@@ -21,6 +21,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Redo2,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -181,6 +182,116 @@ export function TableView({
   const [hasSelection, setHasSelection] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+
+  // Undo/redo of in-memory pending edits only. Snapshots `dirty +
+  // rowsToDelete + newRows` as one unit; a Ctrl+Z pops the stack and
+  // restores all three. Cleared whenever the backing rows reload
+  // (page change, refresh, apply) so we never "undo" past a commit.
+  type EditSnapshot = {
+    dirty: Map<string, PendingEdit>;
+    rowsToDelete: Set<number>;
+    newRows: Array<Map<string, string>>;
+  };
+  const historyRef = useRef<{ past: EditSnapshot[]; future: EditSnapshot[] }>(
+    { past: [], future: [] },
+  );
+  const lastSnapshotRef = useRef<EditSnapshot | null>(null);
+  const skipNextHistoryRef = useRef(false);
+  const [undoRedoTick, setUndoRedoTick] = useState(0);
+
+  const takeSnapshot = (): EditSnapshot => ({
+    dirty: new Map(dirty),
+    rowsToDelete: new Set(rowsToDelete),
+    newRows: newRows.map((m) => new Map(m)),
+  });
+
+  // Capture transitions between snapshots for undo. Runs after every
+  // change to the three edit-state atoms; the flag lets applySnapshot
+  // push state without polluting history with its own resets.
+  useEffect(() => {
+    const current: EditSnapshot = {
+      dirty: new Map(dirty),
+      rowsToDelete: new Set(rowsToDelete),
+      newRows: newRows.map((m) => new Map(m)),
+    };
+    if (skipNextHistoryRef.current) {
+      skipNextHistoryRef.current = false;
+      lastSnapshotRef.current = current;
+      return;
+    }
+    if (lastSnapshotRef.current !== null) {
+      historyRef.current.past.push(lastSnapshotRef.current);
+      historyRef.current.future = [];
+      setUndoRedoTick((x) => x + 1);
+    }
+    lastSnapshotRef.current = current;
+  }, [dirty, rowsToDelete, newRows]);
+
+  // Reset history when the backing rows change (page nav, refresh,
+  // successful apply). Stops "undo" from restoring already-committed
+  // pending edits.
+  useEffect(() => {
+    historyRef.current = { past: [], future: [] };
+    lastSnapshotRef.current = null;
+    skipNextHistoryRef.current = true;
+    setUndoRedoTick((x) => x + 1);
+  }, [data]);
+
+  const applySnapshot = (s: EditSnapshot) => {
+    skipNextHistoryRef.current = true;
+    setDirty(s.dirty);
+    setRowsToDelete(s.rowsToDelete);
+    setNewRows(s.newRows);
+  };
+
+  const undoEdit = () => {
+    const h = historyRef.current;
+    if (h.past.length === 0) return;
+    h.future.push(takeSnapshot());
+    applySnapshot(h.past.pop()!);
+    setUndoRedoTick((x) => x + 1);
+  };
+
+  const redoEdit = () => {
+    const h = historyRef.current;
+    if (h.future.length === 0) return;
+    h.past.push(takeSnapshot());
+    applySnapshot(h.future.pop()!);
+    setUndoRedoTick((x) => x + 1);
+  };
+
+  // Keyboard: Ctrl/Cmd+Z → undo; Ctrl/Cmd+Shift+Z or Ctrl+Y → redo.
+  // Skips when focus is inside a text input (CodeMirror etc. handle
+  // their own undo).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      const isEditable =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        (e.target as HTMLElement | null)?.isContentEditable;
+      if (isEditable) return;
+      const meta = e.ctrlKey || e.metaKey;
+      if (!meta) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoEdit();
+      } else if ((k === "z" && e.shiftKey) || k === "y") {
+        e.preventDefault();
+        redoEdit();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const canUndo = historyRef.current.past.length > 0;
+  const canRedo = historyRef.current.future.length > 0;
+  // `undoRedoTick` is intentionally read so react re-renders when
+  // canUndo/canRedo flip (the ref itself doesn't trigger re-render).
+  void undoRedoTick;
 
   // Hidden columns (names) — visual filter. Doesn't affect SELECT or dirty.
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(
@@ -1333,6 +1444,10 @@ export function TableView({
               error={applyError}
               onApply={handleApply}
               onDiscard={handleDiscard}
+              onUndo={undoEdit}
+              onRedo={redoEdit}
+              canUndo={canUndo}
+              canRedo={canRedo}
             />
           )}
         {view === "data" && noPk && data && (
@@ -2179,6 +2294,10 @@ function DirtyFooter({
   error,
   onApply,
   onDiscard,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
 }: {
   editCount: number;
   deleteCount: number;
@@ -2187,6 +2306,10 @@ function DirtyFooter({
   error: string | null;
   onApply: () => void;
   onDiscard: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }) {
   const t = useT();
   const parts: string[] = [];
@@ -2223,11 +2346,30 @@ function DirtyFooter({
         <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
+            onClick={onUndo}
+            disabled={applying || !canUndo}
+            className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+            title={t("table.footer.undo")}
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={applying || !canRedo}
+            className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+            title={t("table.footer.redo")}
+          >
+            <Redo2 className="h-3.5 w-3.5" />
+          </button>
+          <span className="mx-1 h-4 w-px bg-border" />
+          <button
+            type="button"
             onClick={onDiscard}
             disabled={applying}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Undo2 className="h-3 w-3" />
+            <Trash2 className="h-3 w-3" />
             {t("common.discard")}
           </button>
           <button

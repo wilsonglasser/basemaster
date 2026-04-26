@@ -5,7 +5,9 @@ import { ArrowLeftToLine } from "lucide-react";
 
 import { AiApprovalDialog } from "@/components/ai-approval-dialog";
 import { AppDialog } from "@/components/app-dialog";
+import { DangerousQueryDialog } from "@/components/dangerous-query-dialog";
 import { DestructiveConfirmDialog } from "@/components/destructive-confirm-dialog";
+import { SshHostKeyDialog } from "@/components/ssh-host-key-dialog";
 import { UpdateDialog } from "@/components/update-dialog";
 import { AiSidebar } from "@/components/layout/ai-sidebar";
 import { CommandPalette } from "@/components/command-palette";
@@ -224,6 +226,8 @@ function MainApp() {
       <AiApprovalDialog />
       <AppDialog />
       <DestructiveConfirmDialog />
+      <SshHostKeyDialog />
+      <DangerousQueryDialog />
       <ShortcutBindings />
       <ShortcutsCheatsheet />
       <CommandPalette />
@@ -356,6 +360,7 @@ function TabContent({ tab }: { tab: Tab }) {
     case "tables-list":
       return (
         <TablesListView
+          tabId={tab.id}
           connectionId={tab.kind.connectionId}
           schema={tab.kind.schema}
           category={tab.kind.category}

@@ -72,6 +72,10 @@ fn map_ssl(tls: &TlsMode) -> MySqlSslMode {
     }
 }
 
+/// Runs a SELECT on a dedicated pool connection, after first reporting
+/// the server-side connection id via `pid_tx`. Extracted to a free
+/// function so lifetimes stay concrete — inside `async_trait` the same
+/// body triggers sqlx's Executor HRT issue.
 #[async_trait]
 impl Driver for MysqlDriver {
     fn dialect(&self) -> &'static str {
@@ -501,6 +505,29 @@ impl Driver for MysqlDriver {
             last_insert_id: Some(res.last_insert_id()),
             elapsed_ms,
         })
+    }
+
+    async fn cancel_by_marker(&self, marker: &str) -> Result<()> {
+        let pool = self.pool().await?;
+        // Processlist.Info contains the SQL with our /* marker */ comment
+        // prefix. It may be truncated at 100 chars — put the marker at
+        // the very beginning of each statement so it's always visible.
+        let rows: Vec<(u64,)> = sqlx::query_as(
+            "SELECT ID FROM information_schema.PROCESSLIST WHERE INFO LIKE ?",
+        )
+        .bind(format!("%{}%", marker))
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| Error::Sql(e.to_string()))?;
+        for (id,) in rows {
+            // KILL QUERY aborts the current statement but keeps the
+            // connection alive. Ignore errors — the query may have
+            // finished between lookup and kill.
+            let _ = sqlx::query(&format!("KILL QUERY {}", id))
+                .execute(&pool)
+                .await;
+        }
+        Ok(())
     }
 
     async fn update_cell(

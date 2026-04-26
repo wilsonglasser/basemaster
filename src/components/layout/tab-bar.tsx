@@ -7,9 +7,11 @@ import {
   ExternalLink,
   FileText,
   History,
+  MoreHorizontal,
   Plug,
   Plus,
   Save,
+  Search as SearchIcon,
   Settings as SettingsIcon,
   Sparkles,
   Table as TableIcon,
@@ -109,7 +111,100 @@ export function TabBar({ className }: TabBarProps) {
         className,
       )}
     >
-      <div className="flex flex-1 items-stretch overflow-x-auto">
+      <TabsScroller
+        tabs={tabs}
+        activeId={activeId}
+        setActive={setActive}
+        safeClose={safeClose}
+        safeCloseMany={safeCloseMany}
+        close={close}
+        connectionIdOf={connectionIdOf}
+      />
+      <NewTabButton />
+      <AiToggleButton />
+    </div>
+  );
+}
+
+/** Scrollable container for the tabs + navigation chrome (`<` `>` `…`).
+ *  Native scrollbar is hidden — wheel and the arrow buttons drive
+ *  horizontal scroll. Tabs shrink to a small min-width when overflow,
+ *  so the user always sees *something* of every tab in view. */
+function TabsScroller({
+  tabs,
+  activeId,
+  setActive,
+  safeClose,
+  safeCloseMany,
+  close,
+  connectionIdOf,
+}: {
+  tabs: Tab[];
+  activeId: string | null;
+  setActive: (id: string) => void;
+  safeClose: (id: string) => Promise<void>;
+  safeCloseMany: (predicate: (t: Tab) => boolean) => Promise<void>;
+  close: (id: string) => void;
+  connectionIdOf: (tab: Tab) => string | null;
+}) {
+  const t = useT();
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [jumpOpen, setJumpOpen] = useState(false);
+
+  // Auto-scroll the active tab into view when it changes (e.g., user
+  // picked one from the Jump dialog or via Ctrl+J).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !activeId) return;
+    const target = el.querySelector<HTMLElement>(`[data-tab-id="${activeId}"]`);
+    if (target) {
+      target.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [activeId]);
+
+  // Ctrl+J / Cmd+J opens the jump dialog (Termius parity).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setJumpOpen(true);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Target scroll position accumulator — lets multiple wheel events in
+  // quick succession compose into a single smooth animation instead of
+  // each one fighting the previous.
+  const targetLeftRef = useRef<number | null>(null);
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (delta === 0) return;
+    // If the user paused (or scrolled some other way), reset the target
+    // anchor to where we actually are now.
+    if (
+      targetLeftRef.current == null ||
+      Math.abs(targetLeftRef.current - el.scrollLeft) > 80
+    ) {
+      targetLeftRef.current = el.scrollLeft;
+    }
+    const max = el.scrollWidth - el.clientWidth;
+    targetLeftRef.current = Math.max(
+      0,
+      Math.min(max, targetLeftRef.current + delta),
+    );
+    el.scrollTo({ left: targetLeftRef.current, behavior: "smooth" });
+  };
+
+  return (
+    <>
+      <div
+        ref={scrollRef}
+        onWheel={handleWheel}
+        className="no-scrollbar flex flex-1 items-stretch overflow-x-auto overflow-y-hidden"
+      >
         {tabs.map((tab) => {
           const connId = connectionIdOf(tab);
           return (
@@ -136,8 +231,154 @@ export function TabBar({ className }: TabBarProps) {
           );
         })}
       </div>
-      <NewTabButton />
-      <AiToggleButton />
+      <button
+        type="button"
+        onClick={() => setJumpOpen(true)}
+        title={t("tabs.jumpTitle")}
+        className="grid w-8 shrink-0 place-items-center border-l border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </button>
+      {jumpOpen && (
+        <JumpTabsDialog
+          tabs={tabs}
+          activeId={activeId}
+          onPick={(id) => {
+            setActive(id);
+            setJumpOpen(false);
+          }}
+          onClose={() => setJumpOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/** Searchable centered modal listing every open tab — equivalent to
+ *  Termius' "Jump to" panel. Filter by typing, navigate with arrows,
+ *  Enter activates, Esc closes. Also bound to Ctrl+J globally. */
+function JumpTabsDialog({
+  tabs,
+  activeId,
+  onPick,
+  onClose,
+}: {
+  tabs: Tab[];
+  activeId: string | null;
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const filtered = tabs.filter((tab) => {
+    if (!query.trim()) return true;
+    const label =
+      tab.kind.kind === "welcome" ? t("tabs.welcome") : tab.label;
+    return label.toLowerCase().includes(query.trim().toLowerCase());
+  });
+
+  // Default highlight: active tab's index in `filtered`, or 0.
+  const initialIndex = Math.max(
+    0,
+    filtered.findIndex((tab) => tab.id === activeId),
+  );
+  const [index, setIndex] = useState(initialIndex);
+
+  // Reset highlight when the filtered list changes (e.g., user typed).
+  useEffect(() => {
+    setIndex((prev) => Math.min(prev, Math.max(0, filtered.length - 1)));
+  }, [filtered.length]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onClose();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setIndex((i) => Math.min(filtered.length - 1, i + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setIndex((i) => Math.max(0, i - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const pick = filtered[index];
+      if (pick) onPick(pick.id);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-start justify-center bg-black/50 pt-24"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={onKey}
+        className="w-[480px] max-w-[92vw] overflow-hidden rounded-lg border border-border bg-popover shadow-2xl"
+      >
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="rounded-full bg-conn-accent/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-conn-accent">
+            {t("tabs.jumpToBadge")}
+          </span>
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("tabs.jumpPlaceholder")}
+            className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground focus:outline-none"
+          />
+          <kbd className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            Ctrl+J
+          </kbd>
+        </div>
+        <div className="px-3 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {t("tabs.jumpSection")}
+        </div>
+        <ul className="max-h-[60vh] overflow-y-auto p-1">
+          {filtered.length === 0 && (
+            <li className="px-3 py-4 text-center text-xs italic text-muted-foreground">
+              {t("tabs.jumpNoMatch", { query })}
+            </li>
+          )}
+          {filtered.map((tab, i) => {
+            const Icon = iconFor(tab.kind);
+            const label =
+              tab.kind.kind === "welcome" ? t("tabs.welcome") : tab.label;
+            const isActive = tab.id === activeId;
+            const isHighlighted = i === index;
+            return (
+              <li key={tab.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(tab.id)}
+                  onMouseEnter={() => setIndex(i)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                    isHighlighted
+                      ? "bg-conn-accent/15 text-foreground"
+                      : "text-muted-foreground hover:bg-accent/40",
+                    isActive && "font-medium text-conn-accent",
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  {tab.dirty && (
+                    <span className="text-[10px] text-conn-accent">●</span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -503,11 +744,14 @@ function TabItem({
       style={
         accent ? ({ "--conn-accent": accent } as React.CSSProperties) : undefined
       }
+      data-tab-id={tab.id}
       className={cn(
-        "group relative flex min-w-[140px] max-w-[220px] cursor-pointer items-center gap-2 border-r border-border px-3 text-sm transition-colors",
+        "group relative flex cursor-pointer items-center gap-2 border-r border-border px-3 text-sm transition-colors",
+        // Active tab keeps its natural size — never shrunk so the
+        // user always sees the full label of where they're at.
         active
-          ? "bg-conn-accent/15 text-foreground"
-          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+          ? "min-w-[160px] max-w-[260px] shrink-0 bg-conn-accent/15 text-foreground"
+          : "min-w-[120px] max-w-[220px] shrink text-muted-foreground hover:bg-accent/50 hover:text-foreground",
         dragging && "opacity-60",
       )}
     >
@@ -517,26 +761,37 @@ function TabItem({
           aria-hidden
         />
       )}
-      <Icon className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">
+      {/* Icon + close share the same slot. Close fades in on hover or
+       *  when the tab is active; icon fades out symmetrically. Saves
+       *  horizontal space and matches modern tab UX. */}
+      <span className="relative grid h-5 w-5 shrink-0 place-items-center">
+        <Icon
+          className={cn(
+            "absolute h-3.5 w-3.5 transition-opacity",
+            active
+              ? "opacity-0"
+              : "opacity-100 group-hover:opacity-0",
+          )}
+        />
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className={cn(
+            "absolute inset-0 grid place-items-center rounded text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground",
+            active ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
+          title={t("tabs.closeTab")}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </span>
+      <span className="min-w-0 flex-1 truncate">
         {tab.kind.kind === "welcome" ? t("tabs.welcome") : tab.label}
         {tab.dirty && <span className="ml-1 text-conn-accent">•</span>}
       </span>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        className={cn(
-          "ml-auto grid h-5 w-5 place-items-center rounded text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground",
-          active ? "opacity-60" : "opacity-0",
-          "group-hover:opacity-100",
-        )}
-        title={t("tabs.closeTab")}
-      >
-        <X className="h-3 w-3" />
-      </button>
       {menu.element}
       {ghost &&
         createPortal(

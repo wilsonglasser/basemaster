@@ -75,14 +75,17 @@ jobs:
           # não vai conseguir verificar.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Sentry e Apple signing: *não* passar envs aqui. Secrets não
-          # criados viram strings vazias, e tanto o tauri-action (Apple)
-          # quanto o binário (Sentry empty DSN) podem quebrar no release
-          # com LTO. Quando tiver as contas, re-adicione:
-          #   VITE_SENTRY_DSN, SENTRY_DSN,
+          # Sentry — duplo: VITE_SENTRY_DSN é build-time pro frontend (Vite
+          # injeta no bundle), SENTRY_DSN é runtime pro Rust. Mesmo valor.
+          # Se o secret não existir, viram strings vazias e o init vira
+          # no-op em ambos os lados (proteção em src/lib/sentry.ts e
+          # src-tauri/src/lib.rs). Apple signing fica para quando tivermos
+          # conta de developer:
           #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
           #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD,
           #   APPLE_TEAM_ID
+          VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "BaseMaster ${{ github.ref_name }}"

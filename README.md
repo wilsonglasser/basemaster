@@ -66,7 +66,9 @@ Existing alternatives are either paid and closed-source (Navicat, TablePlus), El
 
 ### Connectivity
 - **Multi-driver** — MySQL, MariaDB, PostgreSQL, SQLite (with optional SQLCipher).
-- **SSH tunnel** — Tunneling via [russh 0.60](https://github.com/warp-tech/russh), key + passphrase auth.
+- **SSH tunnel** — Tunneling via [russh 0.60](https://github.com/warp-tech/russh), key + passphrase auth, multi-hop jump host chains.
+- **Host-key verification** — Per-app `known_hosts` with TOFU prompt on first connect; mismatched keys block the connection (MITM-resistant).
+- **HTTP CONNECT proxy** — RFC 7231 tunnel as alternative to SSH.
 - **SSL/TLS** — Configurable per connection.
 - **Docker auto-discovery** — Detects MySQL/Postgres containers running on the host and suggests connections.
 
@@ -74,11 +76,15 @@ Existing alternatives are either paid and closed-source (Navicat, TablePlus), El
 - **CodeMirror 6** — Modern editor with schema-aware autocomplete.
 - **Format SQL** — `Ctrl+Shift+F` reformats the current query.
 - **Granular execution** — `Ctrl+Enter` runs the statement under the cursor, or the selection.
-- **History & saved queries** — Persisted locally in SQLite.
+- **Server-side cancel** — Stop button issues `KILL QUERY` (MySQL) / `pg_cancel_backend` (Postgres) so the server actually stops, not just the UI.
+- **UPDATE/DELETE without WHERE guard** — Confirms before running statements that would wipe a whole table; opt-out per user.
+- **Top slow queries shortcut** — Connection menu opens a pre-filled tab against `performance_schema.events_statements_summary_by_digest` (MySQL) or `pg_stat_statements` (Postgres).
+- **History & saved queries** — Persisted locally in SQLite, with status / schema filters and live highlight.
 
 ### Editable Grid
 - **[Glide Data Grid](https://github.com/glideapps/glide-data-grid)** — Canvas renderer, scales to 100k+ rows without lag.
 - **Navicat-style UX** — Multi-fill, paste multi-row/multi-col, edits stay in pending and only commit on explicit apply.
+- **Undo / redo** — `Ctrl+Z` / `Ctrl+Shift+Z` over the in-memory pending edits (cell edits, row deletes, new rows).
 - **Strong types** — Bytes (hex / utf-8 preview), formatted JSON, dates, enums, arrays, UUID.
 
 ### Schema Editor
@@ -106,8 +112,8 @@ Existing alternatives are either paid and closed-source (Navicat, TablePlus), El
 - **Resizable sidebar** — Drag to adjust, state persisted.
 - **Command palette** — `Ctrl+K` for any action.
 - **Full cheat-sheet** — `Ctrl+/` lists every shortcut.
-- **Themes** — Dark / Light.
-- **i18n** — English and Portuguese (Brazil).
+- **Themes** — Dark / Light, with multiple presets (Slate, Darcula, One Dark, Tokyo Night, GitHub Dimmed, IntelliJ Light, GitHub Light, Solarized Light) plus custom base color.
+- **i18n** — 8 languages: English, Português (BR), Español, 简体中文, 日本語, Deutsch, Français, Русский.
 
 ### Storage & Privacy
 - **Local SQLite** — Profiles, saved queries, history, settings — all offline.
@@ -149,7 +155,7 @@ Existing alternatives are either paid and closed-source (Navicat, TablePlus), El
 | Layer | Technology |
 |-------|------------|
 | Desktop shell | Tauri 2 (WebView2 / WebKit / WebKitGTK) |
-| Frontend | React 18 + TypeScript + Vite |
+| Frontend | React 19 + TypeScript + Vite |
 | UI | shadcn/ui + Radix + Tailwind |
 | Grid | Glide Data Grid |
 | SQL editor | CodeMirror 6 |
@@ -211,6 +217,8 @@ Code signing details (SignPath Foundation for Windows, Apple Developer for macOS
 | `Ctrl+W` | Close tab |
 | `Ctrl+Enter` | Run query |
 | `Ctrl+Shift+F` | Format SQL |
+| `Ctrl+S` | Apply pending grid edits / save query |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo pending grid edits |
 | `Ctrl+D` | Structure of the active table |
 | `F2` | Rename (column, table, connection) |
 | `Ctrl+/` | Full cheat-sheet |
@@ -220,8 +228,11 @@ Code signing details (SignPath Foundation for Windows, Apple Developer for macOS
 | Version | Status | Scope |
 |---------|--------|-------|
 | **v0.1** | Released | MySQL/MariaDB/Postgres/SQLite drivers, SQL editor, editable grid, schema editor, data transfer V1.2, import/export, AI chat, MCP server, Docker discovery, custom `EXPLAIN` visualizer |
-| **v0.2** | In Progress | Chained SSH jump hosts, HTTP CONNECT proxy tunnel |
-| **v0.3** | Planned | P2P sync across installs (QUIC) |
+| **v0.2** | Released | Chained SSH jump hosts, HTTP CONNECT proxy tunnel |
+| **v0.3** | Released | Server-side query cancel, SSH `known_hosts` (TOFU + mismatch block), UPDATE/DELETE WHERE guard, top slow queries shortcut, query history filters, undo/redo on grid edits, 6 new languages (ES, zh-CN, JA, DE, FR, RU), enriched welcome with feature highlights and recent connections, importers for DBeaver / HeidiSQL / DataGrip, redesigned tab bar (jump dialog, smooth wheel scroll, floating close, active full-width) |
+| **v0.4** | Planned | P2P sync across installs (QUIC) |
+
+For the detailed change list see [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 

@@ -21,6 +21,16 @@ export interface QueryTabLive {
   editorSql?: string;
   /** Schema selected in the editor selector (to reattach into the same). */
   editorSchema?: string;
+  /** Schema name to show in the status bar (used by list-style tabs
+   *  like tables-list whose schema isn't part of the tab's kind union
+   *  the StatusBar already inspects). */
+  statusSchema?: string;
+  /** Item count for list-style tabs (e.g., 42 tables). */
+  itemCount?: number;
+  /** Already-translated noun for `itemCount` ("table" / "tables"). */
+  itemNoun?: string;
+  /** How many of `itemCount` are currently selected. */
+  selectionCount?: number;
 }
 
 interface ActiveInfoState {

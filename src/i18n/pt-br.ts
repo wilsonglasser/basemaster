@@ -81,6 +81,11 @@ export const ptBR = {
     welcome: "Bem-vindo",
     newTab: "Nova aba",
     closeTab: "Fechar aba",
+    jumpTitle: "Pular pra aba (Ctrl+J)",
+    jumpToBadge: "Pular pra",
+    jumpPlaceholder: "Buscar abas",
+    jumpSection: "Abas",
+    jumpNoMatch: 'Nenhuma aba bate com "{query}"',
     closeAll: "Fechar todas",
     closeOthers: "Fechar outras",
     closeSameConn: "Fechar da mesma conexão",
@@ -178,6 +183,8 @@ export const ptBR = {
     renameTableErr: "Falha ao renomear: {error}",
     exportFailed: "Falha ao exportar: {error}",
     processes: "Processos",
+    slowQueries: "Top queries lentas",
+    slowQueriesLabel: "Queries lentas · {name}",
     users: "Usuários",
     historyLabel: "Histórico · {name}",
     importLabel: "Import · {name}",
@@ -270,6 +277,8 @@ export const ptBR = {
       newRows: "{n} linha nova",
       newRowsMany: "{n} linhas novas",
       seeAllErrors: "Ver todos os erros",
+      undo: "Desfazer (Ctrl+Z)",
+      redo: "Refazer (Ctrl+Shift+Z)",
     },
     noPk: {
       banner:
@@ -420,6 +429,10 @@ export const ptBR = {
     tabLabel: "Tabelas",
     title: "{count} tabelas/views",
     open: "Abrir",
+    design: "Design",
+    importData: "Importar dados",
+    exportData: "Exportar dados",
+    selectedCount: "{count} selecionada(s)",
     filter: "Filtrar tabelas…",
     confirmDelete: "Apagar a tabela \"{name}\"?",
     empty: "Schema sem tabelas.",
@@ -536,7 +549,8 @@ export const ptBR = {
     newConnTitle: "Nova conexão MySQL",
     newConnHint: "Conecte a um servidor local ou remoto",
     importTitle: "Importar conexões",
-    importHint: "Carregue um arquivo .bmconn ou .ncx do Navicat",
+    importHint:
+      "De .bmconn, Navicat .ncx, DBeaver data-sources.json, DataGrip dataSources.xml ou HeidiSQL portable_settings.txt",
     dockerTitle: "Detectar containers Docker",
     dockerHint: "Varre containers MySQL/Postgres rodando localmente",
     githubTitle: "Código no GitHub",
@@ -547,6 +561,23 @@ export const ptBR = {
     imported: "{count} conexão(ões) importada(s).",
     importFailed: "Falha ao importar: {error}",
     filterName: "Conexões",
+    openConnFailed: "Falha ao abrir conexão: {error}",
+    recentTitle: "Conexões recentes",
+    featuresTitle: "O que o BaseMaster faz",
+    featureMultiEngineTitle: "MySQL · MariaDB · Postgres · SQLite",
+    featureMultiEngineHint:
+      "Mesmo workflow nos engines, com tipos nativos preservados ponta a ponta. SQLCipher pra SQLite criptografado.",
+    featureAiTitle: "Agente IA built-in + servidor MCP",
+    featureAiHint:
+      "Use sua própria key (OpenAI, Anthropic, Gemini, …). Ou exponha as conexões pra clientes externos via MCP local.",
+    featureSshTitle: "Túneis SSH com jump chains",
+    featureSshHint:
+      "Cadeia de jump hosts com auth por chave ou senha em cada hop. Host keys validadas via known_hosts.",
+    featureTransferTitle: "Transferência de dados cross-engine",
+    featureTransferHint:
+      "Cópia paralela em chunks entre conexões, com handling de FK / triggers e tradução de dialeto quando necessário.",
+    tipShortcutPrefix: "Dica — pressione",
+    tipShortcutSuffix: "pra buscar qualquer coisa rapidamente.",
   },
   aiSidebar: {
     agent: "Agente",
@@ -912,6 +943,13 @@ export const ptBR = {
     clearAll: "Limpar tudo",
     countSuffix: " de {total}",
     noneYet: "Nenhuma query executada ainda.",
+    allSchemas: "Todos os schemas",
+    clearFilters: "Limpar filtros",
+    status: {
+      all: "Todas",
+      success: "Sucesso",
+      error: "Erro",
+    },
     noMatch: "Nada bate com o filtro.",
     openInEditor: "Abrir no editor",
     run: "Rodar",
@@ -1176,7 +1214,37 @@ export const ptBR = {
     ai: "Agente IA",
     mcp: "Servidor MCP",
     connections: "Conexões",
+    security: "Segurança",
     shortcuts: "Atalhos",
+  },
+  security: {
+    dangerousQueryTitle: "Guard de UPDATE / DELETE",
+    dangerousQueryDesc:
+      "Confirma antes de rodar UPDATE ou DELETE sem WHERE — o erro clássico que apaga uma tabela inteira.",
+    dangerousQueryToggle: "Perguntar antes de UPDATE/DELETE sem WHERE",
+    knownHostsTitle: "Hosts SSH conhecidos",
+    knownHostsDesc:
+      "Chaves de servidor confiadas no primeiro acesso. Se a chave do servidor mudar, o BaseMaster bloqueia a conexão e pede confirmação novamente — protege contra ataques MITM e rotação silenciosa de chave.",
+    knownHostsEmpty: "Nenhum host SSH confiado ainda.",
+    knownHostsRemoveTitle: "Remover host SSH confiado?",
+    knownHostsRemoveBody:
+      "Na próxima conexão com {host}:{port} você será solicitado a confirmar a chave do servidor novamente.",
+  },
+  dangerousQuery: {
+    titleOne: "UPDATE / DELETE sem WHERE",
+    titleMany: "{count} statements sem WHERE",
+    body: "As statements abaixo vão afetar TODAS as linhas da tabela alvo. Continuar?",
+    dontAskAgain: "Não perguntar novamente",
+    runAnyway: "Executar mesmo assim",
+  },
+  sshHostKey: {
+    title: "Novo servidor SSH — confirme a chave",
+    body:
+      "O BaseMaster está conectando em {host}:{port} pela primeira vez. Verifique se o fingerprint da chave do servidor bate com o esperado (ex: perguntar ao admin do servidor, ou comparar com outra conexão confiável):",
+    tip:
+      "Se este fingerprint parece errado, rejeite a conexão. Aceitar armazena a chave — nas próximas vezes o servidor precisa apresentar a mesma chave ou a conexão é bloqueada.",
+    accept: "Confiar e continuar",
+    reject: "Rejeitar",
   },
   updater: {
     title: "Atualização disponível",

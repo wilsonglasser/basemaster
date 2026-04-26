@@ -28,10 +28,16 @@ export function StatusBar({ className }: StatusBarProps) {
     connectionId ? s.active.has(connectionId) : false,
   );
 
-  const schema =
-    active?.kind.kind === "query" ? active.kind.schema : undefined;
-
   const live = useActiveInfo((s) => (activeId ? s.byTab[activeId] : undefined));
+
+  // Schema from the tab's kind when present, with a fallback to the
+  // live `statusSchema` published by list-style tabs (tables-list).
+  const schema =
+    (active?.kind.kind === "query" && active.kind.schema) ||
+    (active?.kind.kind === "tables-list" && active.kind.schema) ||
+    (active?.kind.kind === "table" && active.kind.schema) ||
+    live?.statusSchema ||
+    undefined;
 
   return (
     <footer
@@ -74,6 +80,23 @@ export function StatusBar({ className }: StatusBarProps) {
           <span>{t("statusBar.noActiveConnection")}</span>
         )}
       </span>
+
+      {live?.itemCount != null && live?.itemNoun && (
+        <>
+          <Sep />
+          <span className="tabular-nums">
+            {live.itemCount} {live.itemNoun}
+          </span>
+        </>
+      )}
+      {live?.selectionCount != null && live.selectionCount > 0 && (
+        <>
+          <Sep />
+          <span className="tabular-nums text-foreground">
+            {t("tablesList.selectedCount", { count: live.selectionCount })}
+          </span>
+        </>
+      )}
 
       {live?.currentSql && (
         <>

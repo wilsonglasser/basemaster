@@ -79,6 +79,11 @@ export const en: Dict = {
     welcome: "Welcome",
     newTab: "New tab",
     closeTab: "Close tab",
+    jumpTitle: "Jump to tab (Ctrl+J)",
+    jumpToBadge: "Jump to",
+    jumpPlaceholder: "Search tabs",
+    jumpSection: "Tabs",
+    jumpNoMatch: 'No tab matches "{query}"',
     closeAll: "Close all",
     closeOthers: "Close others",
     closeSameConn: "Close tabs from same connection",
@@ -176,6 +181,8 @@ export const en: Dict = {
     renameTableErr: "Failed to rename: {error}",
     exportFailed: "Failed to export: {error}",
     processes: "Processes",
+    slowQueries: "Top slow queries",
+    slowQueriesLabel: "Slow queries · {name}",
     users: "Users",
     historyLabel: "History · {name}",
     importLabel: "Import · {name}",
@@ -268,6 +275,8 @@ export const en: Dict = {
       newRows: "{n} new row",
       newRowsMany: "{n} new rows",
       seeAllErrors: "See all errors",
+      undo: "Undo (Ctrl+Z)",
+      redo: "Redo (Ctrl+Shift+Z)",
     },
     noPk: {
       banner:
@@ -418,6 +427,10 @@ export const en: Dict = {
     tabLabel: "Tables",
     title: "{count} tables/views",
     open: "Open",
+    design: "Design",
+    importData: "Import data",
+    exportData: "Export data",
+    selectedCount: "{count} selected",
     filter: "Filter tables…",
     confirmDelete: 'Delete table "{name}"?',
     empty: "Empty schema.",
@@ -534,7 +547,8 @@ export const en: Dict = {
     newConnTitle: "New MySQL connection",
     newConnHint: "Connect to a local or remote server",
     importTitle: "Import connections",
-    importHint: "Load a .bmconn or Navicat .ncx file",
+    importHint:
+      "From .bmconn, Navicat .ncx, DBeaver data-sources.json, DataGrip dataSources.xml, or HeidiSQL portable_settings.txt",
     dockerTitle: "Detect Docker containers",
     dockerHint: "Scan for MySQL/Postgres containers running locally",
     githubTitle: "Source on GitHub",
@@ -545,6 +559,23 @@ export const en: Dict = {
     imported: "{count} connection(s) imported.",
     importFailed: "Failed to import: {error}",
     filterName: "Connections",
+    openConnFailed: "Failed to open connection: {error}",
+    recentTitle: "Recent connections",
+    featuresTitle: "What BaseMaster does",
+    featureMultiEngineTitle: "MySQL · MariaDB · Postgres · SQLite",
+    featureMultiEngineHint:
+      "Same workflow across engines, with native types preserved end-to-end. SQLCipher for encrypted SQLite.",
+    featureAiTitle: "Built-in AI agent + MCP server",
+    featureAiHint:
+      "Bring your own key (OpenAI, Anthropic, Gemini, …). Or expose connections to external clients via the local MCP server.",
+    featureSshTitle: "SSH tunnels with multi-hop jumps",
+    featureSshHint:
+      "Jump-host chains with key or password auth at each hop. Host keys verified against known_hosts.",
+    featureTransferTitle: "Cross-engine data transfer",
+    featureTransferHint:
+      "Parallel chunked copy between connections, with FK / trigger handling and dialect translation when needed.",
+    tipShortcutPrefix: "Tip — press",
+    tipShortcutSuffix: "to search anything fast.",
   },
   aiSidebar: {
     agent: "Agent",
@@ -910,6 +941,13 @@ export const en: Dict = {
     clearAll: "Clear all",
     countSuffix: " of {total}",
     noneYet: "No queries executed yet.",
+    allSchemas: "All schemas",
+    clearFilters: "Clear filters",
+    status: {
+      all: "All",
+      success: "Success",
+      error: "Error",
+    },
     noMatch: "Nothing matches the filter.",
     openInEditor: "Open in editor",
     run: "Run",
@@ -1174,7 +1212,37 @@ export const en: Dict = {
     ai: "AI agent",
     mcp: "MCP server",
     connections: "Connections",
+    security: "Security",
     shortcuts: "Shortcuts",
+  },
+  security: {
+    dangerousQueryTitle: "UPDATE / DELETE guard",
+    dangerousQueryDesc:
+      "Confirms before running UPDATE or DELETE statements without a WHERE clause — the classic mistake that wipes a whole table.",
+    dangerousQueryToggle: "Ask before UPDATE/DELETE without WHERE",
+    knownHostsTitle: "SSH known hosts",
+    knownHostsDesc:
+      "Server keys trusted on first connect. If a server's key ever changes, BaseMaster blocks the connection and asks you to confirm again — protecting you from MITM attacks and silent key rotation.",
+    knownHostsEmpty: "No trusted SSH hosts yet.",
+    knownHostsRemoveTitle: "Remove trusted SSH host?",
+    knownHostsRemoveBody:
+      "On the next connection to {host}:{port} you'll be prompted to confirm the server's key again.",
+  },
+  dangerousQuery: {
+    titleOne: "UPDATE / DELETE without WHERE",
+    titleMany: "{count} statements without WHERE",
+    body: "The statement(s) below will affect ALL rows of the target table. Continue?",
+    dontAskAgain: "Don't ask again",
+    runAnyway: "Run anyway",
+  },
+  sshHostKey: {
+    title: "New SSH server — confirm key",
+    body:
+      "BaseMaster is connecting to {host}:{port} for the first time. Verify the server's key fingerprint matches what you expect (e.g., ask the server admin, or compare with another trusted connection):",
+    tip:
+      "If this fingerprint looks wrong, reject the connection. Accepting stores the key — next time the server must present the same key or the connection is blocked.",
+    accept: "Trust and continue",
+    reject: "Reject",
   },
   updater: {
     title: "Update available",

@@ -486,6 +486,21 @@ impl Driver for PostgresDriver {
         })
     }
 
+    async fn cancel_by_marker(&self, marker: &str) -> Result<()> {
+        let pool = self.pool().await?;
+        // pg_stat_activity.query holds the SQL text (with our
+        // /* marker */ comment prefix) for each backend. Match by LIKE
+        // and cancel the matching pid. Errors ignored — the statement
+        // may have finished between lookup and cancel.
+        let _ = sqlx::query(
+            "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE query LIKE $1",
+        )
+        .bind(format!("%{}%", marker))
+        .execute(&pool)
+        .await;
+        Ok(())
+    }
+
     async fn update_cell(
         &self,
         schema: &str,

@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::data_transfer::TransferControl;
 use crate::http_proxy_tunnel::HttpProxyTunnel;
 use crate::mcp_server::McpServer;
+use crate::ssh_known_hosts::KnownHosts;
 use crate::ssh_tunnel::SshTunnel;
 
 /// One active tunnel for a connection. SSH and HTTP CONNECT proxy are
@@ -51,16 +52,32 @@ pub struct AppState {
     pub transfer_control: Arc<TransferControl>,
     /// Local MCP server. Managed via `mcp_*` commands.
     pub mcp: McpServer,
+    /// In-flight queries. Keyed by the frontend-supplied request_id.
+    /// When the sender flips, `query_run` kicks off `cancel_by_marker`
+    /// against a side-conn to KILL / pg_cancel_backend the statement.
+    /// Entries live only while the query runs.
+    pub running_queries: Arc<RwLock<HashMap<Uuid, tokio::sync::watch::Sender<bool>>>>,
+    /// Persisted per-host SSH public keys — consulted by every SSH
+    /// tunnel connect to detect MITM / key rotation.
+    pub known_hosts: Arc<KnownHosts>,
+    /// Host-key prompts awaiting user confirmation. Keyed by a request_id
+    /// emitted in the `ssh-host-key-prompt` event; resolved by the
+    /// `ssh_host_key_respond` command.
+    pub ssh_key_prompts:
+        Arc<RwLock<HashMap<Uuid, tokio::sync::oneshot::Sender<bool>>>>,
 }
 
 impl AppState {
-    pub fn new(store: Store) -> Self {
+    pub fn new(store: Store, known_hosts: Arc<KnownHosts>) -> Self {
         Self {
             store,
             active: RwLock::new(HashMap::new()),
             tunnels: RwLock::new(HashMap::new()),
             transfer_control: Arc::new(TransferControl::new()),
             mcp: McpServer::new(),
+            running_queries: Arc::new(RwLock::new(HashMap::new())),
+            known_hosts,
+            ssh_key_prompts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }

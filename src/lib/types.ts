@@ -530,3 +530,21 @@ export interface QueryRunBatch {
   finished_at_ms: number;
   total_ms: number;
 }
+
+export interface KnownHostEntry {
+  host: string;
+  port: number;
+  algorithm: string;
+  fingerprint_sha256: string;
+  openssh: string;
+}
+
+/** Event payload emitted by the backend when an SSH host key is new
+ *  and needs user confirmation (TOFU). Resolve via `ipc.ssh.respondKey`. */
+export interface SshHostKeyPrompt {
+  request_id: string;
+  host: string;
+  port: number;
+  algorithm: string;
+  fingerprint_sha256: string;
+}

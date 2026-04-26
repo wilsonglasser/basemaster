@@ -13,25 +13,124 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use std::collections::HashMap;
+use std::time::Duration as StdDuration;
+
 use basemaster_core::SshTunnelConfig;
 use russh::client::{self, Config, Handle};
 use russh::keys::{load_secret_key, ssh_key, PrivateKeyWithHashAlg};
 use russh::ChannelMsg;
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex, RwLock as TokioRwLock};
 use tokio::task::JoinHandle;
+use uuid::Uuid;
 
-/// Handler that accepts any host key. Future TODO: "known hosts" like.
-struct AcceptAllHostKeys;
+use crate::ssh_known_hosts::{fingerprint_sha256, KnownHosts, Verdict};
 
-impl client::Handler for AcceptAllHostKeys {
+/// Shared context threaded into every SSH hop handler so a prompt can
+/// reach the frontend and get a response back.
+#[derive(Clone)]
+pub struct HostKeyPromptCtx {
+    pub app: AppHandle,
+    pub known_hosts: Arc<KnownHosts>,
+    pub prompts: Arc<TokioRwLock<HashMap<Uuid, oneshot::Sender<bool>>>>,
+}
+
+/// Event payload — matches the `SshHostKeyPrompt` type in `src/lib/types.ts`.
+#[derive(Serialize, Clone)]
+struct HostKeyPromptEvent<'a> {
+    request_id: Uuid,
+    host: &'a str,
+    port: u16,
+    algorithm: String,
+    fingerprint_sha256: String,
+}
+
+/// Verifies the server's public key against our stored `known_hosts`.
+///  * `Match`    → accept immediately.
+///  * `Mismatch` → reject (russh aborts the handshake; the caller
+///    translates that into a clear MITM-style error).
+///  * `Unknown`  → emit `ssh-host-key-prompt` to the frontend and wait
+///    for the user to accept or reject. Times out after 2 minutes with
+///    rejection so a dead UI doesn't leave the server hanging.
+struct VerifyingHostKeys {
+    host: String,
+    port: u16,
+    ctx: HostKeyPromptCtx,
+}
+
+impl client::Handler for VerifyingHostKeys {
     type Error = russh::Error;
     async fn check_server_key(
         &mut self,
-        _server_public_key: &ssh_key::PublicKey,
+        server_public_key: &ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        match self
+            .ctx
+            .known_hosts
+            .verify(&self.host, self.port, server_public_key)
+        {
+            Verdict::Match => Ok(true),
+            Verdict::Mismatch => Ok(false),
+            Verdict::Unknown => {
+                let request_id = Uuid::new_v4();
+                let (tx, rx) = oneshot::channel();
+                self.ctx
+                    .prompts
+                    .write()
+                    .await
+                    .insert(request_id, tx);
+
+                let algorithm =
+                    server_public_key.algorithm().as_str().to_string();
+                let fingerprint = fingerprint_sha256(server_public_key);
+                let payload = HostKeyPromptEvent {
+                    request_id,
+                    host: &self.host,
+                    port: self.port,
+                    algorithm,
+                    fingerprint_sha256: fingerprint,
+                };
+                if let Err(e) = self.ctx.app.emit("ssh-host-key-prompt", payload) {
+                    tracing::warn!("emit ssh-host-key-prompt: {e}");
+                    // Can't prompt the user → fail safe (reject).
+                    self.ctx.prompts.write().await.remove(&request_id);
+                    return Ok(false);
+                }
+
+                let accepted = match tokio::time::timeout(
+                    StdDuration::from_secs(120),
+                    rx,
+                )
+                .await
+                {
+                    Ok(Ok(b)) => b,
+                    _ => {
+                        self.ctx.prompts.write().await.remove(&request_id);
+                        false
+                    }
+                };
+
+                if accepted {
+                    if let Err(e) = self
+                        .ctx
+                        .known_hosts
+                        .add(&self.host, self.port, server_public_key.clone())
+                        .await
+                    {
+                        tracing::warn!(
+                            host = %self.host,
+                            port = self.port,
+                            "persist accepted SSH host key: {e}"
+                        );
+                    }
+                }
+                Ok(accepted)
+            }
+        }
     }
 }
 
@@ -41,7 +140,7 @@ pub struct SshTunnel {
     task: Option<JoinHandle<()>>,
     /// All sessions in the chain (jumps + final), in order. Held to keep
     /// them alive; dropped together on close(). Final session is last.
-    sessions: Vec<Arc<Mutex<Handle<AcceptAllHostKeys>>>>,
+    sessions: Vec<Arc<Mutex<Handle<VerifyingHostKeys>>>>,
 }
 
 impl SshTunnel {
@@ -56,6 +155,7 @@ impl SshTunnel {
         final_cfg: &SshTunnelConfig,
         target_host: &str,
         target_port: u16,
+        ctx: HostKeyPromptCtx,
     ) -> Result<Self, String> {
         let config = Arc::new(Config {
             inactivity_timeout: Some(Duration::from_secs(300)),
@@ -65,20 +165,37 @@ impl SshTunnel {
         // Walk the chain. Each iteration authenticates a session and, if
         // there's a next hop, opens a direct-tcpip channel to it, turns
         // it into a stream, and feeds it to the next `connect_stream`.
-        let mut sessions: Vec<Arc<Mutex<Handle<AcceptAllHostKeys>>>> =
+        let mut sessions: Vec<Arc<Mutex<Handle<VerifyingHostKeys>>>> =
             Vec::with_capacity(jumps.len() + 1);
 
         let all_hops: Vec<&SshTunnelConfig> =
             jumps.iter().chain(std::iter::once(final_cfg)).collect();
 
+        let make_handler = |cfg: &SshTunnelConfig| VerifyingHostKeys {
+            host: cfg.host.clone(),
+            port: cfg.port,
+            ctx: ctx.clone(),
+        };
+        let host_key_err = |host: &str, e: russh::Error| -> String {
+            match &e {
+                russh::Error::UnknownKey => format!(
+                    "SSH host key mismatch for {host}: the server's key differs from the \
+                     one stored in known_hosts. This may indicate a MITM attack, or the \
+                     server's key legitimately changed. Remove the stored entry from \
+                     <app-data>/ssh_known_hosts and reconnect to accept the new key."
+                ),
+                _ => format!("ssh connect {host}: {e}"),
+            }
+        };
+
         // Hop 0: plain TcpStream.
         let first = all_hops[0];
         let addr = format!("{}:{}", first.host, first.port);
-        let mut session = client::connect(config.clone(), addr, AcceptAllHostKeys)
+        let mut session = client::connect(config.clone(), addr, make_handler(first))
             .await
-            .map_err(|e| format!("ssh connect {}: {e}", first.host))?;
+            .map_err(|e| host_key_err(&first.host, e))?;
         authenticate(&mut session, first).await?;
-        let mut current: Arc<Mutex<Handle<AcceptAllHostKeys>>> =
+        let mut current: Arc<Mutex<Handle<VerifyingHostKeys>>> =
             Arc::new(Mutex::new(session));
         sessions.push(current.clone());
 
@@ -98,9 +215,9 @@ impl SshTunnel {
             };
             let stream = channel.into_stream();
             let mut next_session =
-                client::connect_stream(config.clone(), stream, AcceptAllHostKeys)
+                client::connect_stream(config.clone(), stream, make_handler(next))
                     .await
-                    .map_err(|e| format!("ssh jump connect to {}: {e}", next.host))?;
+                    .map_err(|e| host_key_err(&next.host, e))?;
             authenticate(&mut next_session, next).await?;
             current = Arc::new(Mutex::new(next_session));
             sessions.push(current.clone());
@@ -179,7 +296,7 @@ impl SshTunnel {
 /// Attempts private-key auth first, then password. Mirrors the former
 /// single-hop logic. One of the two must succeed or we return Err.
 async fn authenticate(
-    session: &mut Handle<AcceptAllHostKeys>,
+    session: &mut Handle<VerifyingHostKeys>,
     cfg: &SshTunnelConfig,
 ) -> Result<(), String> {
     let mut tried = false;
@@ -241,7 +358,7 @@ async fn authenticate(
 /// Bidirectional pipe between a local TCP connection and an SSH
 /// direct-tcpip channel opened on `session`.
 async fn forward_connection(
-    session: Arc<Mutex<Handle<AcceptAllHostKeys>>>,
+    session: Arc<Mutex<Handle<VerifyingHostKeys>>>,
     mut stream: TcpStream,
     originator: SocketAddr,
     target_host: &str,

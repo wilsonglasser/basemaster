@@ -7,6 +7,7 @@ mod mcp_server;
 mod sql_dump;
 mod sql_import;
 mod sql_translate;
+mod ssh_known_hosts;
 mod ssh_tunnel;
 mod state;
 
@@ -75,7 +76,11 @@ pub fn run() {
                 }
                 Err(e) => return Err(Box::new(e)),
             };
-            app.manage(state::AppState::new(store));
+            let known_hosts_path = paths.data_dir.join("ssh_known_hosts");
+            let known_hosts = tauri::async_runtime::block_on(
+                ssh_known_hosts::KnownHosts::load(known_hosts_path),
+            );
+            app.manage(state::AppState::new(store, std::sync::Arc::new(known_hosts)));
 
             // Safety net: the window starts invisible (visible:false in
             // tauri.conf.json) and main.tsx calls show() as soon as it mounts.
@@ -127,6 +132,10 @@ pub fn run() {
             commands::delete_table_rows,
             commands::insert_table_rows,
             commands::query_run,
+            commands::query_cancel,
+            commands::ssh_host_key_respond,
+            commands::ssh_known_hosts_list,
+            commands::ssh_known_hosts_remove,
             commands::open_detached_window,
             commands::close_window,
             commands::data_transfer_start,

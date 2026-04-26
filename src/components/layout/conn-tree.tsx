@@ -10,6 +10,7 @@ import {
   Download,
   Eye,
   FileCode2,
+  Gauge,
   FileText,
   Folder as FolderIcon,
   FunctionSquare,
@@ -670,6 +671,49 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
     });
   };
 
+  const openSlowQueries = () => {
+    // Dialect-specific top-N slow queries. Requires the relevant
+    // performance schema / extension to be enabled on the server.
+    let sql: string | null = null;
+    if (conn.driver === "mysql" || conn.driver === "mariadb") {
+      sql = `-- Top slow queries (needs performance_schema enabled)
+SELECT
+  digest_text                                  AS query,
+  count_star                                   AS calls,
+  ROUND(avg_timer_wait / 1e9, 2)               AS avg_ms,
+  ROUND(sum_timer_wait / 1e9, 2)               AS total_ms,
+  sum_rows_examined                            AS rows_examined,
+  sum_rows_sent                                AS rows_sent
+FROM performance_schema.events_statements_summary_by_digest
+WHERE digest_text IS NOT NULL
+ORDER BY sum_timer_wait DESC
+LIMIT 50;`;
+    } else if (conn.driver === "postgres") {
+      sql = `-- Top slow queries (needs the pg_stat_statements extension)
+SELECT
+  query,
+  calls,
+  ROUND(total_exec_time::numeric, 2)   AS total_ms,
+  ROUND(mean_exec_time::numeric, 2)    AS avg_ms,
+  rows
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 50;`;
+    }
+    if (!sql) return;
+    newTab({
+      label: t("tree.slowQueriesLabel", { name: conn.name }),
+      kind: {
+        kind: "query",
+        connectionId: conn.id,
+        schema: conn.default_database ?? undefined,
+        initialSql: sql,
+        autoRun: true,
+      },
+      accentColor: conn.color,
+    });
+  };
+
   const openHistory = () => {
     openTab(
       (tab) =>
@@ -880,6 +924,15 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
         { icon: <ArrowRightLeft className="h-3.5 w-3.5" />, label: t("tree.dataTransfer"), onClick: openDataTransfer },
         { icon: <Upload className="h-3.5 w-3.5" />, label: t("tree.sqlImport"), onClick: () => openSqlImport() },
         { icon: <History className="h-3.5 w-3.5" />, label: t("tree.queryHistory"), onClick: openHistory },
+        ...(conn.driver !== "sqlite"
+          ? [
+              {
+                icon: <Gauge className="h-3.5 w-3.5" />,
+                label: t("tree.slowQueries"),
+                onClick: openSlowQueries,
+              } as ContextEntry,
+            ]
+          : []),
         { icon: <Cog className="h-3.5 w-3.5" />, label: t("tree.processes"), onClick: openProcesses },
         { icon: <Plug className="h-3.5 w-3.5" />, label: t("tree.users"), onClick: openUsers },
         { icon: <RefreshCw className="h-3.5 w-3.5" />, label: t("common.refresh"), onClick: refresh },

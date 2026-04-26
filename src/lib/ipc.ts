@@ -17,6 +17,7 @@ import type {
   ForeignKeyInfo,
   IndexInfo,
   InsertResult,
+  KnownHostEntry,
   McpStatus,
   PageOptions,
   PkEntry,
@@ -244,8 +245,36 @@ export const ipc = {
         rows,
       }),
 
-    runQuery: (connectionId: Uuid, sql: string, schema: string | null) =>
-      invoke<QueryRunBatch>("query_run", { connectionId, schema, sql }),
+    runQuery: (
+      connectionId: Uuid,
+      sql: string,
+      schema: string | null,
+      requestId: string | null = null,
+    ) =>
+      invoke<QueryRunBatch>("query_run", {
+        connectionId,
+        schema,
+        sql,
+        requestId,
+      }),
+
+    cancelQuery: (requestId: string) =>
+      invoke<boolean>("query_cancel", { requestId }),
+  },
+
+  ssh: {
+    respondKey: (requestId: string, accept: boolean) =>
+      invoke<boolean>("ssh_host_key_respond", { requestId, accept }),
+
+    knownHostsList: () =>
+      invoke<KnownHostEntry[]>("ssh_known_hosts_list"),
+
+    knownHostsRemove: (host: string, port: number, fingerprintSha256: string) =>
+      invoke<void>("ssh_known_hosts_remove", {
+        host,
+        port,
+        fingerprintSha256,
+      }),
   },
 
   transfer: {

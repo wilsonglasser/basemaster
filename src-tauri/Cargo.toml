@@ -43,7 +43,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 # russh com ring (não aws-lc — evita dependência do NASM no Windows).
-russh = { version = "0.60", default-features = false, features = ["ring", "flate2", "rsa", "async-trait"] }
+russh = { version = "0.60.1", default-features = false, features = ["ring", "flate2", "rsa", "async-trait"] }
 async-trait = "0.1"
 async-channel = "2"
 # `zip` pra dump em ZIP. `default-features = false` pra evitar compressões

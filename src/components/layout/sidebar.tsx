@@ -147,7 +147,10 @@ export function Sidebar({ className }: SidebarProps) {
         {loading && connections.length === 0 ? (
           <SidebarSkeleton />
         ) : connections.length === 0 ? (
-          <EmptyConnections onCreate={newConnection} />
+          <EmptyConnections
+            onCreate={newConnection}
+            onDocker={() => useDockerDiscover.getState().setOpen(true)}
+          />
         ) : (
           <ConnTree />
         )}
@@ -226,7 +229,13 @@ export function Sidebar({ className }: SidebarProps) {
   );
 }
 
-function EmptyConnections({ onCreate }: { onCreate: () => void }) {
+function EmptyConnections({
+  onCreate,
+  onDocker,
+}: {
+  onCreate: () => void;
+  onDocker: () => void;
+}) {
   const t = useT();
   return (
     <div className="mt-6 flex flex-col items-center px-3 text-center">
@@ -237,14 +246,24 @@ function EmptyConnections({ onCreate }: { onCreate: () => void }) {
       <div className="mt-1 text-xs text-muted-foreground">
         {t("sidebar.noConnectionsHint")}
       </div>
-      <button
-        type="button"
-        onClick={onCreate}
-        className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-conn-accent px-3 py-1.5 text-xs font-medium text-conn-accent-foreground shadow-sm transition-opacity hover:opacity-90"
-      >
-        <Plus className="h-3.5 w-3.5" />
-        {t("sidebar.newConnection")}
-      </button>
+      <div className="mt-4 flex flex-col gap-1.5">
+        <button
+          type="button"
+          onClick={onCreate}
+          className="inline-flex items-center gap-1.5 rounded-md bg-conn-accent px-3 py-1.5 text-xs font-medium text-conn-accent-foreground shadow-sm transition-opacity hover:opacity-90"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t("sidebar.newConnection")}
+        </button>
+        <button
+          type="button"
+          onClick={onDocker}
+          className="inline-flex items-center justify-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Container className="h-3.5 w-3.5" />
+          {t("sidebar.dockerDetect")}
+        </button>
+      </div>
     </div>
   );
 }
@@ -347,7 +366,7 @@ function SidebarTreeArea({ children }: { children: React.ReactNode }) {
         filters: [
           {
             name: t("sidebar.filterConnectionsName"),
-            extensions: ["bmconn", "json", "ncx", "xml"],
+            extensions: ["bmconn", "json", "ncx", "xml", "txt"],
           },
         ],
       });
@@ -442,7 +461,7 @@ function ImportConnectionsButton() {
         filters: [
           {
             name: t("sidebar.filterConnectionsName"),
-            extensions: ["bmconn", "json", "ncx", "xml"],
+            extensions: ["bmconn", "json", "ncx", "xml", "txt"],
           },
         ],
       });
