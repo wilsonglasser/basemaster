@@ -10,7 +10,7 @@ import {
   Upload,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/invoke";
 
 import { ipc } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
