@@ -1,6 +1,8 @@
-import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, Keyboard, KeyRound, Loader2, Monitor, Moon, Palette, Plug, Server, ShieldCheck, Sparkles, Sun, Trash2, Upload } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, Info, Keyboard, KeyRound, Loader2, Monitor, Moon, Palette, Plug, RefreshCw, Server, ShieldCheck, Sparkles, Sun, Trash2, Upload } from "lucide-react";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { getVersion, getTauriVersion } from "@tauri-apps/api/app";
+import { invoke } from "@/lib/invoke";
 import { useEffect, useMemo, useState } from "react";
 
 import { MODEL_CATALOG, parseModelKey, providerMeta, PROVIDERS, type ProviderId } from "@/lib/ai/catalog";
@@ -11,8 +13,12 @@ import { useI18n, useT, type Lang, type TKey } from "@/state/i18n";
 import { DARK_PRESETS, LIGHT_PRESETS, useTheme } from "@/state/theme";
 import { ipc } from "@/lib/ipc";
 import { useDangerousQuery } from "@/state/dangerous-query";
+import { useUpdater } from "@/state/updater";
 import type { KnownHostEntry, McpStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const REPO_URL = "https://github.com/wilsonglasser/basemaster";
+const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
 
 const LANGS: Array<{ value: Lang; label: string; flag: string }> = [
   { value: "pt-BR", label: "Português (Brasil)", flag: "🇧🇷" },
@@ -25,7 +31,7 @@ const LANGS: Array<{ value: Lang; label: string; flag: string }> = [
   { value: "ru", label: "Русский", flag: "🇷🇺" },
 ];
 
-type TabId = "appearance" | "ai" | "mcp" | "connections" | "security" | "shortcuts";
+type TabId = "appearance" | "ai" | "mcp" | "connections" | "security" | "shortcuts" | "about";
 
 const TABS: Array<{ id: TabId; labelKey: TKey; icon: React.ReactNode }> = [
   { id: "appearance", labelKey: "settingsNav.appearance", icon: <Palette className="h-4 w-4" /> },
@@ -34,6 +40,7 @@ const TABS: Array<{ id: TabId; labelKey: TKey; icon: React.ReactNode }> = [
   { id: "connections", labelKey: "settingsNav.connections", icon: <Plug className="h-4 w-4" /> },
   { id: "security", labelKey: "settingsNav.security", icon: <ShieldCheck className="h-4 w-4" /> },
   { id: "shortcuts", labelKey: "settingsNav.shortcuts", icon: <Keyboard className="h-4 w-4" /> },
+  { id: "about", labelKey: "settingsNav.about", icon: <Info className="h-4 w-4" /> },
 ];
 
 export function SettingsView() {
@@ -77,6 +84,7 @@ export function SettingsView() {
           {tab === "connections" && <ConnectionsPortabilityPanel />}
           {tab === "security" && <SecurityPanel />}
           {tab === "shortcuts" && <ShortcutsPanel />}
+          {tab === "about" && <AboutPanel />}
         </div>
       </main>
     </div>
@@ -981,6 +989,180 @@ function OptionRow({
     >
       {children}
       {selected && <Check className="h-4 w-4 text-conn-accent" />}
+    </button>
+  );
+}
+
+function AboutPanel() {
+  const t = useT();
+  const lang = useI18n((s) => s.lang);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [tauriVersion, setTauriVersion] = useState<string | null>(null);
+
+  const status = useUpdater((s) => s.status);
+  const lastCheckedAt = useUpdater((s) => s.lastCheckedAt);
+  const checkNow = useUpdater((s) => s.checkNow);
+
+  // Local outcome banner — `useUpdater` falls back to "idle" both when there's
+  // no update AND when the dialog dismisses, so we can't infer "up to date"
+  // from the global status alone. This local flag tracks the last manual check.
+  const [outcome, setOutcome] = useState<"upToDate" | "error" | null>(null);
+  const [outcomeMsg, setOutcomeMsg] = useState<string>("");
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+    getTauriVersion().then(setTauriVersion).catch(() => {});
+  }, []);
+
+  // Translate global status transitions into the local outcome banner.
+  useEffect(() => {
+    if (status.kind === "checking") {
+      setOutcome(null);
+      setOutcomeMsg("");
+    } else if (status.kind === "available") {
+      // Dialog handles it; clear our local state.
+      setOutcome(null);
+    } else if (status.kind === "error") {
+      setOutcome("error");
+      setOutcomeMsg(status.message);
+    }
+  }, [status]);
+
+  const handleCheck = async () => {
+    setOutcome(null);
+    const before = lastCheckedAt;
+    await checkNow();
+    const s = useUpdater.getState();
+    // Status went back to idle AND lastCheckedAt advanced → no update found.
+    if (
+      s.status.kind === "idle" &&
+      s.lastCheckedAt &&
+      s.lastCheckedAt !== before
+    ) {
+      setOutcome("upToDate");
+    }
+  };
+
+  const checking = status.kind === "checking";
+  const lastCheckedLabel =
+    lastCheckedAt != null
+      ? new Date(lastCheckedAt).toLocaleString(lang === "pt-BR" ? "pt-BR" : lang)
+      : null;
+
+  return (
+    <div className="space-y-6">
+      <section className="flex items-start gap-4">
+        <div className="grid h-16 w-16 shrink-0 place-items-center rounded-lg bg-conn-accent/15 font-mono text-xl font-bold text-conn-accent">
+          BM
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-base font-semibold">BaseMaster</h3>
+          <p className="text-xs text-muted-foreground">{t("about.tagline")}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            <span>
+              {t("about.versionLabel")}{" "}
+              <code className="rounded bg-muted/50 px-1 py-0.5 font-mono">
+                {appVersion ?? "…"}
+              </code>
+            </span>
+            {tauriVersion && (
+              <span>
+                Tauri{" "}
+                <code className="rounded bg-muted/50 px-1 py-0.5 font-mono">
+                  {tauriVersion}
+                </code>
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("about.linksTitle")}
+        </h3>
+        <div className="grid gap-1.5">
+          <LinkRow
+            label={t("about.repoLabel")}
+            url={REPO_URL}
+            display="github.com/wilsonglasser/basemaster"
+          />
+          <LinkRow
+            label={t("about.licenseLabel")}
+            url={LICENSE_URL}
+            display={t("about.licenseValue")}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("about.updatesTitle")}
+        </h3>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleCheck()}
+            disabled={checking}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors",
+              checking
+                ? "border-border opacity-60"
+                : "border-border hover:bg-accent",
+            )}
+          >
+            {checking ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            {checking ? t("about.checking") : t("about.checkForUpdates")}
+          </button>
+
+          <span className="text-[11px] text-muted-foreground">
+            {lastCheckedLabel
+              ? t("about.lastChecked", { when: lastCheckedLabel })
+              : t("about.lastCheckedNever")}
+          </span>
+        </div>
+
+        {outcome === "upToDate" && (
+          <div className="inline-flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/5 px-2.5 py-1.5 text-xs text-green-700 dark:text-green-400">
+            <Check className="h-3.5 w-3.5" />
+            {t("about.upToDate", { version: appVersion ?? "" })}
+          </div>
+        )}
+        {outcome === "error" && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+            {outcomeMsg || t("about.checkFailed")}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function LinkRow({
+  label,
+  url,
+  display,
+}: {
+  label: string;
+  url: string;
+  display: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => void openUrl(url)}
+      className="group flex items-center justify-between rounded-md border border-border bg-card/40 px-3 py-2 text-left text-xs transition-colors hover:bg-accent"
+    >
+      <span className="text-muted-foreground">{label}</span>
+      <span className="inline-flex items-center gap-1.5 font-mono">
+        {display}
+        <ExternalLink className="h-3 w-3 text-muted-foreground transition-colors group-hover:text-foreground" />
+      </span>
     </button>
   );
 }

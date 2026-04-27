@@ -127,6 +127,7 @@ export const ptBR = {
     noSchemas: "sem schemas",
     indexing: "indexando…",
     openTable: "Abrir tabela",
+    editTable: "Editar tabela",
     selectAll: "SELECT * FROM {name}",
     emptyQuery: "Nova query (vazia)",
     view: "view",
@@ -1216,6 +1217,7 @@ export const ptBR = {
     connections: "Conexões",
     security: "Segurança",
     shortcuts: "Atalhos",
+    about: "Sobre",
   },
   security: {
     dangerousQueryTitle: "Guard de UPDATE / DELETE",
@@ -1260,6 +1262,21 @@ export const ptBR = {
     installing: "Instalando e reiniciando…",
     errorTitle: "Falha ao atualizar",
     errorDismiss: "Fechar",
+  },
+  about: {
+    tagline: "Cliente de banco de dados multiplataforma",
+    versionLabel: "Versão:",
+    linksTitle: "Recursos",
+    repoLabel: "Código-fonte",
+    licenseLabel: "Licença",
+    licenseValue: "MIT",
+    updatesTitle: "Atualizações",
+    checkForUpdates: "Verificar atualizações",
+    checking: "Verificando…",
+    upToDate: "Você está na versão mais recente (v{version}).",
+    lastChecked: "Última verificação: {when}",
+    lastCheckedNever: "Nunca verificado",
+    checkFailed: "Falha ao verificar.",
   },
 };
 
