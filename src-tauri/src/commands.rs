@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use basemaster_core::{
-    Column, Driver, ForeignKeyInfo, IndexInfo, PageOptions, QueryResult, SchemaInfo,
-    SchemaSnapshot, TableInfo, TableOptions, Value,
+    Column, Driver, FilterNode, ForeignKeyInfo, IndexInfo, PageOptions, QueryResult,
+    SchemaInfo, SchemaSnapshot, TableInfo, TableOptions, Value,
 };
 use basemaster_store::{
     secrets, ConnectionDraft, ConnectionFolder, ConnectionFolderDraft,
@@ -425,6 +425,21 @@ pub async fn connection_active(state: State<'_, AppState>) -> R<Vec<Uuid>> {
     Ok(state.active.read().await.keys().copied().collect())
 }
 
+/// Reveal a stored secret from the OS keyring. Returns None when no
+/// secret was stored for that kind. Single command (kind-dispatched)
+/// keeps the IPC surface small.
+#[tauri::command]
+pub async fn connection_reveal_secret(id: Uuid, kind: String) -> R<Option<String>> {
+    let result = match kind.as_str() {
+        "password" => secrets::get_password(id),
+        "ssh_password" => secrets::get_ssh_password(id),
+        "ssh_key_passphrase" => secrets::get_ssh_key_passphrase(id),
+        "http_proxy_password" => secrets::get_http_proxy_password(id),
+        other => return Err(format!("kind desconhecido: {other}")),
+    };
+    result.map_err(err)
+}
+
 // ---------------------------------------------------------------- introspection
 
 async fn driver_for(state: &AppState, id: Uuid) -> R<Arc<dyn Driver>> {
@@ -516,9 +531,12 @@ pub async fn table_count(
     connection_id: Uuid,
     schema: String,
     table: String,
+    filter_tree: Option<FilterNode>,
 ) -> R<u64> {
     let d = driver_for(&state, connection_id).await?;
-    d.count_table_rows(&schema, &table).await.map_err(err)
+    d.count_table_rows(&schema, &table, filter_tree.as_ref())
+        .await
+        .map_err(err)
 }
 
 /// Duplicates a table: CREATE TABLE new LIKE old + INSERT SELECT.

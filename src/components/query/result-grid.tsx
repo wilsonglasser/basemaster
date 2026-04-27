@@ -17,6 +17,16 @@ import { allCells } from "@glideapps/glide-data-grid-cells";
 
 import { isNullish } from "@/lib/format-value";
 import type { Column, Value } from "@/lib/types";
+import { useTheme } from "@/state/theme";
+import type { GridTokens } from "@/lib/theme/presets";
+
+export interface SelectionInfo {
+  hasSelection: boolean;
+  /** Distinct rows touched by the selection — single-cell, range, or
+   *  row markers all collapse into a row set. Useful for "X linhas
+   *  selecionadas" hints. */
+  selectedRows: number;
+}
 
 import {
   displayText as toDisplayText,
@@ -31,7 +41,6 @@ import {
 interface ResultGridProps {
   columns: string[];
   rows: Value[][];
-  theme?: "dark" | "light";
   /** Text for the yellow highlight (all occurrences). */
   searchValue?: string;
   /** List of matches (col, row) — painted yellow. */
@@ -73,9 +82,10 @@ interface ResultGridProps {
   ) => void;
   /** Rows marked for deletion (paints the entire row red). */
   rowsPendingDelete?: ReadonlySet<number>;
-  /** Notifies whether there's any selection (cell range or row). Used to
-   *  enable/hide the trash button on the toolbar. */
-  onSelectionStateChange?: (hasSelection: boolean) => void;
+  /** Notifies whether there's any selection and how many distinct rows
+   *  it spans (range height + row markers). Used to enable the trash
+   *  button and to show a "X selected" hint in the footer. */
+  onSelectionInfoChange?: (info: SelectionInfo) => void;
   /** [col, row] when the manual cursor changes — for the status bar. */
   onCellSelect?: (cell: readonly [number, number] | undefined) => void;
   /** Click on a column header (0-based index). */
@@ -126,7 +136,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
     {
       columns,
       rows,
-      theme = "dark",
       searchValue,
       searchResults,
       focusedCell,
@@ -140,7 +149,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       onDeleteCells,
       onDeleteRows,
       rowsPendingDelete,
-      onSelectionStateChange,
+      onSelectionInfoChange,
       onBatchEdit,
       onAppendRow,
       onCellContextMenu,
@@ -151,6 +160,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
     },
     ref,
   ) {
+    // Grid colors come from the active preset's `grid` token subset —
+    // hex/rgba only (Glide's canvas parser doesn't accept oklch). Subscribes
+    // to `useTheme` so changing preset live (settings panel) repaints.
+    const gridTokens = useTheme((s) => s.effectivePreset().grid);
+    const gridTheme = useMemo<Partial<Theme>>(
+      () => ({ ...BASE, ...glideThemeFromTokens(gridTokens) }),
+      [gridTokens],
+    );
+
     const editorRef = useRef<DataEditorRef>(null);
     // Capture clientX/Y from the native contextmenu to position the menu —
     // Glide only gives bounds relative to the canvas, not the viewport.
@@ -251,11 +269,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
 
     const selectedRow = selection.current?.cell[1];
     const rowOverrideTheme: Partial<Theme> = useMemo(
-      () =>
-        theme === "dark"
-          ? { bgCell: "#252830", bgCellMedium: "#282b34" }
-          : { bgCell: "#f1f5f9", bgCellMedium: "#e9eff5" },
-      [theme],
+      () => ({
+        bgCell: gridTokens.bgCellSelected,
+        bgCellMedium: gridTokens.bgCellSelectedMedium,
+      }),
+      [gridTokens],
     );
     // Rows marked for DELETE: translucent red across the whole row.
     // Don't override textDark/textLight — doing so would make the row marker
@@ -449,7 +467,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           }}
           height="100%"
           width="100%"
-          theme={theme === "dark" ? DARK_THEME : LIGHT_THEME}
+          theme={gridTheme}
           searchValue={searchValue ?? ""}
           searchResults={shiftedSearchResults}
           highlightRegions={highlightRegions}
@@ -457,9 +475,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           onGridSelectionChange={(s) => {
             setSelection(s);
             onCellSelect?.(s.current?.cell);
-            const hasSel =
-              s.current !== undefined || s.rows.toArray().length > 0;
-            onSelectionStateChange?.(hasSel);
+            onSelectionInfoChange?.(computeSelectionInfo(s));
           }}
           onColumnResize={(_col, newSize, idx) => {
             const id = columns[idx];
@@ -608,6 +624,22 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
   },
 );
 
+function computeSelectionInfo(s: GridSelection): SelectionInfo {
+  const rows = new Set<number>();
+  if (s.current) {
+    const r = s.current.range;
+    for (let y = r.y; y < r.y + r.height; y++) rows.add(y);
+    for (const stacked of s.current.rangeStack) {
+      for (let y = stacked.y; y < stacked.y + stacked.height; y++) rows.add(y);
+    }
+  }
+  s.rows.toArray().forEach((r) => rows.add(r));
+  return {
+    hasSelection: rows.size > 0,
+    selectedRows: rows.size,
+  };
+}
+
 const BASE: Partial<Theme> = {
   fontFamily: "var(--font-sans)",
   headerFontStyle: "600 12px",
@@ -617,47 +649,28 @@ const BASE: Partial<Theme> = {
   drilldownBorder: "transparent",
 };
 
-// Cores em hex/rgba — evita esquisitices do parser do Glide com `oklch`
-// (cause of the "white background" on the selected cell).
-const DARK_THEME: Partial<Theme> = {
-  ...BASE,
-  bgCell: "#0b0d12",
-  bgCellMedium: "#13161d",
-  bgHeader: "#13161d",
-  bgHeaderHovered: "#1c1f27",
-  bgHeaderHasFocus: "rgba(74, 109, 230, 0.45)",
-  textDark: "#f5f6f8",
-  textMedium: "#9ea3ad",
-  textLight: "#6b7280",
-  textBubble: "#f5f6f8",
-  textHeader: "#f5f6f8",
-  textHeaderSelected: "#ffffff",
-  bgIconHeader: "#9ea3ad",
-  fgIconHeader: "#0b0d12",
-  borderColor: "#262a33",
-  horizontalBorderColor: "#1f232b",
-  accentColor: "var(--conn-accent)" as unknown as string,
-  accentLight: "rgba(74, 109, 230, 0.22)",
-  bgSearchResult: "rgba(255, 200, 80, 0.45)",
-};
-
-const LIGHT_THEME: Partial<Theme> = {
-  ...BASE,
-  bgCell: "#ffffff",
-  bgCellMedium: "#f9fafb",
-  bgHeader: "#f3f4f6",
-  bgHeaderHovered: "#e5e7eb",
-  bgHeaderHasFocus: "rgba(67, 96, 200, 0.35)",
-  textDark: "#111827",
-  textMedium: "#4b5563",
-  textLight: "#9ca3af",
-  textBubble: "#111827",
-  textHeader: "#111827",
-  bgIconHeader: "#6b7280",
-  fgIconHeader: "#ffffff",
-  borderColor: "#e5e7eb",
-  horizontalBorderColor: "#f3f4f6",
-  accentColor: "var(--conn-accent)" as unknown as string,
-  accentLight: "rgba(67, 96, 200, 0.18)",
-  bgSearchResult: "rgba(255, 200, 80, 0.55)",
-};
+/** Map our preset's grid subset onto Glide's `Theme`. `accentColor` reads
+ *  the conn-accent CSS var (Glide passes that to DOM nodes; safe to use
+ *  here even though the canvas parser won't accept `oklch`). */
+function glideThemeFromTokens(g: GridTokens): Partial<Theme> {
+  return {
+    bgCell: g.bgCell,
+    bgCellMedium: g.bgCellMedium,
+    bgHeader: g.bgHeader,
+    bgHeaderHovered: g.bgHeaderHovered,
+    bgHeaderHasFocus: g.bgHeaderHasFocus,
+    textDark: g.textDark,
+    textMedium: g.textMedium,
+    textLight: g.textLight,
+    textBubble: g.textDark,
+    textHeader: g.textHeader,
+    textHeaderSelected: g.textHeaderSelected,
+    bgIconHeader: g.bgIconHeader,
+    fgIconHeader: g.fgIconHeader,
+    borderColor: g.borderColor,
+    horizontalBorderColor: g.horizontalBorderColor,
+    accentColor: "var(--conn-accent)" as unknown as string,
+    accentLight: g.accentLight,
+    bgSearchResult: g.bgSearchResult,
+  };
+}

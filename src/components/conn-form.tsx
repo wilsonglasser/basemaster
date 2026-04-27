@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { CONN_COLORS, ipc } from "@/lib/ipc";
+import { PasswordInput } from "@/components/ui/password-input";
 import { parseDsn } from "@/lib/dsn";
 import type { ConnectionDraft, SshTunnelConfig, TlsMode, Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -460,12 +461,16 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                     : t("connForm.sqlitePasswordNew")
                 }
               >
-                <input
-                  type="password"
+                <PasswordInput
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={setPassword}
                   placeholder={t("connForm.sqlitePasswordPlaceholder")}
                   className={INPUT}
+                  onReveal={
+                    editingId
+                      ? () => ipc.connections.revealSecret(editingId, "password")
+                      : undefined
+                  }
                 />
               </Field>
             </>
@@ -522,11 +527,15 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                       : t("connForm.password")
                   }
                 >
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={setPassword}
                     className={INPUT}
+                    onReveal={
+                      editingId
+                        ? () => ipc.connections.revealSecret(editingId, "password")
+                        : undefined
+                    }
                   />
                 </Field>
               </div>
@@ -662,12 +671,9 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                           ))}
                         </div>
                         {hop.auth === "password" ? (
-                          <input
-                            type="password"
+                          <PasswordInput
                             value={hop.password}
-                            onChange={(e) =>
-                              updateJump(idx, { password: e.target.value })
-                            }
+                            onChange={(v) => updateJump(idx, { password: v })}
                             placeholder={
                               editingId
                                 ? t("connForm.sshPasswordKeepPlaceholder")
@@ -686,13 +692,10 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                               placeholder={t("connForm.sshKeyPlaceholder")}
                               className="flex-1 rounded-md border border-border bg-background px-2 py-2 font-mono text-[11px]"
                             />
-                            <input
-                              type="password"
+                            <PasswordInput
                               value={hop.keyPassphrase}
-                              onChange={(e) =>
-                                updateJump(idx, {
-                                  keyPassphrase: e.target.value,
-                                })
+                              onChange={(v) =>
+                                updateJump(idx, { keyPassphrase: v })
                               }
                               placeholder={t("connForm.passphrase")}
                               className="w-40 rounded-md border border-border bg-background px-2 py-2 text-sm"
@@ -762,16 +765,20 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
               </Field>
               {sshAuth === "password" ? (
                 <Field label={t("connForm.sshPassword")}>
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={sshPassword}
-                    onChange={(e) => setSshPassword(e.target.value)}
+                    onChange={setSshPassword}
                     placeholder={
                       editingId
                         ? t("connForm.sshPasswordKeepPlaceholder")
                         : "••••••••"
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
+                    onReveal={
+                      editingId
+                        ? () => ipc.connections.revealSecret(editingId, "ssh_password")
+                        : undefined
+                    }
                   />
                 </Field>
               ) : (
@@ -820,16 +827,24 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                     </div>
                   </Field>
                   <Field label={t("connForm.passphrase")}>
-                    <input
-                      type="password"
+                    <PasswordInput
                       value={sshKeyPassphrase}
-                      onChange={(e) => setSshKeyPassphrase(e.target.value)}
+                      onChange={setSshKeyPassphrase}
                       placeholder={
                         editingId
                           ? t("connForm.passphraseKeepPlaceholder")
                           : t("connForm.passphraseNewPlaceholder")
                       }
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
+                      onReveal={
+                        editingId
+                          ? () =>
+                              ipc.connections.revealSecret(
+                                editingId,
+                                "ssh_key_passphrase",
+                              )
+                          : undefined
+                      }
                     />
                   </Field>
                 </>
@@ -894,16 +909,24 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
                 />
               </Field>
               <Field label={t("connForm.proxyPassword")}>
-                <input
-                  type="password"
+                <PasswordInput
                   value={proxyPassword}
-                  onChange={(e) => setProxyPassword(e.target.value)}
+                  onChange={setProxyPassword}
                   placeholder={
                     editingId
                       ? t("connForm.proxyPasswordKeepPlaceholder")
                       : "••••••••"
                   }
                   className={INPUT}
+                  onReveal={
+                    editingId
+                      ? () =>
+                          ipc.connections.revealSecret(
+                            editingId,
+                            "http_proxy_password",
+                          )
+                      : undefined
+                  }
                 />
               </Field>
               <div className="text-[11px] text-muted-foreground">

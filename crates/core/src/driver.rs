@@ -262,8 +262,15 @@ pub trait Driver: Send + Sync {
         })
     }
 
-    /// Total COUNT(*) of table rows. Default uses `query()`.
-    async fn count_table_rows(&self, schema: &str, table: &str) -> Result<u64> {
+    /// Total COUNT(*) of table rows, optionally filtered by `filter_tree`.
+    /// Default ignores the filter (raw COUNT(*)) — drivers that want
+    /// filtered counts must override and parametrize the WHERE clause.
+    async fn count_table_rows(
+        &self,
+        schema: &str,
+        table: &str,
+        _filter_tree: Option<&FilterNode>,
+    ) -> Result<u64> {
         let sql = format!("SELECT COUNT(*) FROM {}", self.quote_ident(table));
         let q = self.query(Some(schema), &sql).await?;
         let total = q

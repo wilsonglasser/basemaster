@@ -24,7 +24,6 @@ import {
 
 import type { SQLNamespace } from "@codemirror/lang-sql";
 
-import { useTheme } from "@/state/theme";
 import { detectDangerousStatements } from "@/lib/dangerous-query";
 import { ipc } from "@/lib/ipc";
 import { ExportDialog } from "@/components/export-dialog";
@@ -93,7 +92,6 @@ export function QueryTab({
   savedQueryName,
 }: QueryTabProps) {
   const t = useT();
-  const theme = useTheme((s) => s.effectiveMode());
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === connectionId),
   );
@@ -696,7 +694,6 @@ export function QueryTab({
               <div className="min-h-0 flex-1">
                 <ResultArea
                   state={run}
-                  theme={theme}
                   searchValue={search.mode === "dado" ? search.value : ""}
                   searchResults={search.mode === "dado" ? matches : undefined}
                   focusedCell={focusedCell}
@@ -879,7 +876,6 @@ function Toolbar({
 
 function ResultArea({
   state,
-  theme,
   searchValue,
   searchResults,
   focusedCell,
@@ -890,7 +886,6 @@ function ResultArea({
   onCellSelect,
 }: {
   state: RunState;
-  theme: "dark" | "light";
   searchValue: string;
   searchResults?: ReadonlyArray<readonly [number, number]>;
   focusedCell?: readonly [number, number] | null;
@@ -961,7 +956,6 @@ function ResultArea({
         {typeof view === "number" ? (
           <ResultPane
             result={batch.results[view]}
-            theme={theme}
             searchValue={searchValue}
             searchResults={searchResults}
             focusedCell={focusedCell}
@@ -1091,7 +1085,6 @@ function ResultBadge({
 
 function ResultPane({
   result,
-  theme,
   searchValue,
   searchResults,
   focusedCell,
@@ -1101,7 +1094,6 @@ function ResultPane({
   onCellSelect,
 }: {
   result: QueryRunResult;
-  theme: "dark" | "light";
   searchValue: string;
   searchResults?: ReadonlyArray<readonly [number, number]>;
   focusedCell?: readonly [number, number] | null;
@@ -1154,7 +1146,6 @@ function ResultPane({
       ref={gridRef}
       columns={result.columns}
       rows={result.rows}
-      theme={theme}
       searchValue={searchValue}
       searchResults={searchResults}
       focusedCell={focusedCell}

@@ -30,7 +30,6 @@ import {
   useContextMenu,
   type ContextEntry,
 } from "@/hooks/use-context-menu";
-import { useTheme } from "@/state/theme";
 import { ExportDialog } from "@/components/export-dialog";
 import { RecordFormView } from "@/components/table/record-form-view";
 import { writeInMemory } from "@/lib/export";
@@ -61,6 +60,7 @@ import { useTabs } from "@/state/tabs";
 import {
   ResultGrid,
   type ResultGridHandle,
+  type SelectionInfo,
 } from "../query/result-grid";
 import {
   FilterBar,
@@ -108,7 +108,6 @@ export function TableView({
   initialView = "data",
   initialEdit = false,
 }: TableViewProps) {
-  const theme = useTheme((s) => s.effectiveMode());
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === connectionId),
   );
@@ -160,13 +159,21 @@ export function TableView({
     initialTabState?.orderBy ?? null,
   );
   // V2: filters as a tree. Migrates the V1 flat format automatically.
-  const [filterTree, setFilterTree] = useState<FilterNode>(
+  // Two-phase: `filterTree` is the editable draft (chip edits, removals);
+  // `appliedFilterTree` is what feeds the query. Apply is explicit.
+  const initialFilterTree =
     initialTabState?.filterTree ??
-      (initialTabState?.filters
-        ? leavesToTree(initialTabState.filters)
-        : emptyRoot()),
-  );
+    (initialTabState?.filters
+      ? leavesToTree(initialTabState.filters)
+      : emptyRoot());
+  const [filterTree, setFilterTree] = useState<FilterNode>(initialFilterTree);
+  const [appliedFilterTree, setAppliedFilterTree] =
+    useState<FilterNode>(initialFilterTree);
   const filterCount = countLeaves(filterTree);
+  const filterDirty = useMemo(
+    () => JSON.stringify(filterTree) !== JSON.stringify(appliedFilterTree),
+    [filterTree, appliedFilterTree],
+  );
   const [filterBarOpen, setFilterBarOpen] = useState(filterCount > 0);
   const [count, setCount] = useState<number | null>(null);
   const [data, setData] = useState<QueryResult | null>(null);
@@ -188,7 +195,10 @@ export function TableView({
     () => newRows.filter((m) => m.size > 0).length,
     [newRows],
   );
-  const [hasSelection, setHasSelection] = useState(false);
+  const [selectionInfo, setSelectionInfo] = useState<{
+    hasSelection: boolean;
+    selectedRows: number;
+  }>({ hasSelection: false, selectedRows: 0 });
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
@@ -380,7 +390,12 @@ export function TableView({
 
   const loadCount = async () => {
     try {
-      const c = await ipc.db.tableCount(connectionId, schema, table);
+      const c = await ipc.db.tableCount(
+        connectionId,
+        schema,
+        table,
+        appliedFilterTree,
+      );
       setCount(c);
     } catch (e) {
       console.error("tableCount:", e);
@@ -391,7 +406,7 @@ export function TableView({
     if (!connActive) return;
     loadCount();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, schema, table, connActive]);
+  }, [connectionId, schema, table, connActive, appliedFilterTree]);
 
   const reqIdRef = useRef(0);
   const loadPage = async () => {
@@ -399,11 +414,12 @@ export function TableView({
     setError(null);
     const myReq = ++reqIdRef.current;
     try {
+      const appliedCount = countLeaves(appliedFilterTree);
       const r = await ipc.db.tablePage(connectionId, schema, table, {
         limit,
         offset: limit > 0 ? page * limit : 0,
         order_by: orderBy ?? undefined,
-        filter_tree: filterCount > 0 ? filterTree : null,
+        filter_tree: appliedCount > 0 ? appliedFilterTree : null,
       });
       if (myReq !== reqIdRef.current) return;
       setData(applySavedColumnOrder(r, useTabState.getState().tableOf(tabId)?.columnOrder));
@@ -1064,7 +1080,7 @@ export function TableView({
     if (!connActive) return;
     loadPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, schema, table, page, limit, orderBy, filterTree, connActive]);
+  }, [connectionId, schema, table, page, limit, orderBy, appliedFilterTree, connActive]);
 
   // Status bar live info.
   useEffect(() => {
@@ -1084,15 +1100,24 @@ export function TableView({
       orderBy,
       hiddenColumns: Array.from(hiddenColumns),
       columnOrder: data?.columns,
-      filterTree,
+      // Persist the *applied* tree, not the draft — restoring an open tab
+      // shouldn't auto-apply mid-edit changes the user hadn't committed.
+      filterTree: appliedFilterTree,
       // V1 legacy — zeroed to avoid confusion on next read.
       filters: undefined,
     });
-  }, [tabId, page, limit, orderBy, hiddenColumns, data?.columns, filterTree, patchTableState]);
+  }, [tabId, page, limit, orderBy, hiddenColumns, data?.columns, appliedFilterTree, patchTableState]);
 
   const handleFilterTreeChange = (next: FilterNode) => {
-    setFilterTree(next);
-    setPage(0); // reset pagination on filter change
+    setFilterTree(next); // draft only — query reruns on Apply
+  };
+  const applyFilters = () => {
+    setAppliedFilterTree(filterTree);
+    setPage(0);
+  };
+  const resetFilters = () => {
+    // Discards uncommitted edits, reverts draft to last applied.
+    setFilterTree(appliedFilterTree);
   };
   useEffect(() => {
     return () => clearLive(tabId);
@@ -1325,10 +1350,30 @@ export function TableView({
         onOpenSearch={() => setSearchOpen(true)}
         onToggleColumns={() => setColumnsPopoverOpen((o) => !o)}
         columnsHidden={hiddenColumns.size}
-        onToggleFilters={() => setFilterBarOpen((o) => !o)}
+        onToggleFilters={() => {
+          // Opening with no filters yet → seed an initial empty rule so the
+          // user lands directly on a chip to fill instead of an empty bar.
+          if (!filterBarOpen && filterCount === 0 && data?.columns.length) {
+            setFilterTree({
+              kind: "group",
+              op: "and",
+              children: [
+                {
+                  kind: "leaf",
+                  filter: {
+                    column: data.columns[0],
+                    op: "eq",
+                    value: { type: "string", value: "" },
+                  },
+                },
+              ],
+            });
+          }
+          setFilterBarOpen((o) => !o);
+        }}
         filterCount={filterCount}
         onDeleteSelected={
-          editable && hasSelection
+          editable && selectionInfo.hasSelection
             ? () => gridRef.current?.deleteSelected()
             : undefined
         }
@@ -1341,6 +1386,7 @@ export function TableView({
         onClearOrder={() => setOrderBy(null)}
         dataView={dataView}
         onDataView={setDataView}
+        selectedRows={selectionInfo.selectedRows}
       />
       {view === "data" && (
         <SearchBar
@@ -1359,6 +1405,9 @@ export function TableView({
           columnMeta={orderedColumnMeta}
           tree={filterTree}
           onChange={handleFilterTreeChange}
+          dirty={filterDirty}
+          onApply={applyFilters}
+          onReset={resetFilters}
         />
       )}
       <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -1400,7 +1449,6 @@ export function TableView({
             columnMeta={displayColumnMeta}
             loading={loading}
             error={error}
-            theme={theme}
             searchValue={search.mode === "dado" ? search.value : ""}
             searchResults={search.mode === "dado" ? matches : undefined}
             focusedCell={focusedCell}
@@ -1414,7 +1462,7 @@ export function TableView({
             onBatchEdit={visualBatchEdit}
             onDeleteCells={visualDeleteCells}
             onDeleteRows={handleDeleteRows}
-            onSelectionStateChange={setHasSelection}
+            onSelectionInfoChange={setSelectionInfo}
             onAppendRow={editable ? handleAppendRow : undefined}
             onCellContextMenu={visualCellContextMenu}
             onColumnMoved={visualColumnMoved}
@@ -1539,6 +1587,7 @@ function Toolbar({
   onClearOrder,
   dataView,
   onDataView,
+  selectedRows,
 }: {
   connectionId: Uuid;
   schema: string;
@@ -1566,6 +1615,7 @@ function Toolbar({
   onClearOrder: () => void;
   dataView: "grid" | "form";
   onDataView: (v: "grid" | "form") => void;
+  selectedRows: number;
 }) {
   const showPagination = view === "data" && limit > 0;
   const start = limit > 0 ? page * limit + 1 : 1;
@@ -1656,6 +1706,15 @@ function Toolbar({
               {count != null
                 ? t("table.pagination.allRows", { count: localeCountFmt(count) })
                 : t("table.pagination.all")}
+            </span>
+          )}
+
+          {view === "data" && selectedRows > 0 && (
+            <span className="tabular-nums text-muted-foreground/80">
+              ·{" "}
+              {t("table.pagination.selectedRows", {
+                count: localeCountFmt(selectedRows),
+              })}
             </span>
           )}
 
@@ -1851,7 +1910,6 @@ function DataPane({
   columnMeta,
   loading,
   error,
-  theme,
   searchValue,
   searchResults,
   focusedCell,
@@ -1865,7 +1923,7 @@ function DataPane({
   onBatchEdit,
   onDeleteCells,
   onDeleteRows,
-  onSelectionStateChange,
+  onSelectionInfoChange,
   onCellSelect,
   onCellContextMenu,
   onColumnMoved,
@@ -1881,7 +1939,6 @@ function DataPane({
   columnMeta?: readonly Column[];
   loading: boolean;
   error: string | null;
-  theme: "dark" | "light";
   searchValue: string;
   searchResults?: ReadonlyArray<readonly [number, number]>;
   focusedCell?: readonly [number, number] | null;
@@ -1897,7 +1954,7 @@ function DataPane({
   ) => void;
   onDeleteCells: (cells: Array<readonly [number, number]>) => void;
   onDeleteRows: (rows: number[]) => void;
-  onSelectionStateChange: (has: boolean) => void;
+  onSelectionInfoChange: (info: SelectionInfo) => void;
   onCellSelect: (cell: readonly [number, number] | undefined) => void;
   onCellContextMenu?: (
     col: number,
@@ -1961,7 +2018,6 @@ function DataPane({
         columns={decoratedColumns}
         columnMeta={columnMeta}
         rows={displayRows}
-        theme={theme}
         searchValue={searchValue}
         searchResults={searchResults}
         focusedCell={focusedCell}
@@ -1976,7 +2032,7 @@ function DataPane({
         onAppendRow={onAppendRow}
         onDeleteCells={onDeleteCells}
         onDeleteRows={onDeleteRows}
-        onSelectionStateChange={onSelectionStateChange}
+        onSelectionInfoChange={onSelectionInfoChange}
         onCellSelect={onCellSelect}
         onCellContextMenu={onCellContextMenu}
         onColumnMoved={onColumnMoved}

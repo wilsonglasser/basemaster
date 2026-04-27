@@ -485,6 +485,38 @@ impl Driver for MysqlDriver {
         })
     }
 
+    /// Override that honors `filter_tree` with parametrized binds. Default
+    /// trait impl would fall back to `query()` (raw SQL, no filter).
+    async fn count_table_rows(
+        &self,
+        schema: &str,
+        table: &str,
+        filter_tree: Option<&FilterNode>,
+    ) -> Result<u64> {
+        let pool = self.pool().await?;
+        let mut sql = format!(
+            "SELECT COUNT(*) FROM {}.{}",
+            self.quote_ident(schema),
+            self.quote_ident(table),
+        );
+        if let Some(tree) = filter_tree {
+            if let Some(clause) = render_node(self, tree) {
+                sql.push_str(" WHERE ");
+                sql.push_str(&clause);
+            }
+        }
+        let mut q = sqlx::query(&sql);
+        if let Some(tree) = filter_tree {
+            q = bind_node(q, tree);
+        }
+        let row = q
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| Error::Sql(e.to_string()))?;
+        let total: i64 = row.try_get(0).map_err(|e| Error::Sql(e.to_string()))?;
+        Ok(total.max(0) as u64)
+    }
+
     async fn execute(&self, schema: Option<&str>, sql: &str) -> Result<ExecuteResult> {
         let pool = self.pool().await?;
 

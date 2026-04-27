@@ -112,6 +112,7 @@ pub fn run() {
             commands::connection_open,
             commands::connection_close,
             commands::connection_active,
+            commands::connection_reveal_secret,
             commands::list_schemas,
             commands::list_tables,
             commands::describe_table,

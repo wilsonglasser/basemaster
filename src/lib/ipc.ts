@@ -14,6 +14,7 @@ import type {
   ImportDone,
   ImportOptions,
   EditResult,
+  FilterNode,
   ForeignKeyInfo,
   IndexInfo,
   InsertResult,
@@ -112,6 +113,12 @@ export const ipc = {
 
     active: () => invoke<Uuid[]>("connection_active"),
 
+    /** Reveal a stored secret from the OS keyring. */
+    revealSecret: (
+      id: Uuid,
+      kind: "password" | "ssh_password" | "ssh_key_passphrase" | "http_proxy_password",
+    ) => invoke<string | null>("connection_reveal_secret", { id, kind }),
+
     reorder: (orderedIds: Uuid[]) =>
       invoke<void>("connection_reorder", { orderedIds }),
   },
@@ -189,9 +196,20 @@ export const ipc = {
     prefetchSchema: (connectionId: Uuid, schema: string) =>
       invoke<SchemaSnapshot>("schema_prefetch", { connectionId, schema }),
 
-    /** Navicat mode — TableView. */
-    tableCount: (connectionId: Uuid, schema: string, table: string) =>
-      invoke<number>("table_count", { connectionId, schema, table }),
+    /** Navicat mode — TableView. `filterTree` honored by drivers that
+     *  override `count_table_rows` (MySQL/MariaDB); others ignore it. */
+    tableCount: (
+      connectionId: Uuid,
+      schema: string,
+      table: string,
+      filterTree: FilterNode | null = null,
+    ) =>
+      invoke<number>("table_count", {
+        connectionId,
+        schema,
+        table,
+        filterTree,
+      }),
 
     tablePage: (
       connectionId: Uuid,

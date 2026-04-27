@@ -503,7 +503,7 @@ async fn transfer_one(
 
     // 1. Count total for progress.
     let total = source
-        .count_table_rows(&opts.source_schema, table)
+        .count_table_rows(&opts.source_schema, table, None)
         .await
         .map_err(|e| format!("count {}: {}", table, e))?;
 

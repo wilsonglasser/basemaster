@@ -1,8 +1,10 @@
 import { useState } from "react";
 import {
+  Check,
   Filter as FilterIcon,
   FolderPlus,
   Plus,
+  Undo2,
   X,
 } from "lucide-react";
 
@@ -22,6 +24,11 @@ interface Props {
   columnMeta?: readonly Column[];
   tree: FilterNode;
   onChange: (next: FilterNode) => void;
+  /** Two-phase apply: edits update the draft only; clicking Apply runs the
+   *  query. `dirty` is true when the draft differs from the applied tree. */
+  dirty: boolean;
+  onApply: () => void;
+  onReset: () => void;
 }
 
 type ValueKind = "none" | "single" | "double" | "csv" | "custom";
@@ -127,7 +134,16 @@ export function leavesToTree(filters: Filter[]): FilterNode {
   };
 }
 
-export function FilterBar({ columns, columnMeta, tree, onChange }: Props) {
+export function FilterBar({
+  columns,
+  columnMeta,
+  tree,
+  onChange,
+  dirty,
+  onApply,
+  onReset,
+}: Props) {
+  const t = useT();
   return (
     <div className="flex shrink-0 items-start gap-2 border-b border-border bg-card/20 px-3 py-1.5">
       <FilterIcon className="mt-1.5 h-3 w-3 text-muted-foreground" />
@@ -139,6 +155,33 @@ export function FilterBar({ columns, columnMeta, tree, onChange }: Props) {
           onChange={onChange}
           isRoot
         />
+      </div>
+      <div className="mt-0.5 flex shrink-0 items-center gap-1">
+        {dirty && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={t("filters.reset")}
+          >
+            <Undo2 className="h-3 w-3" />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onApply}
+          disabled={!dirty}
+          className={cn(
+            "inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium transition-colors",
+            dirty
+              ? "bg-conn-accent text-conn-accent-foreground hover:opacity-90"
+              : "border border-border text-muted-foreground/60",
+          )}
+          title={t("filters.apply")}
+        >
+          <Check className="h-3 w-3" />
+          {t("filters.apply")}
+        </button>
       </div>
     </div>
   );

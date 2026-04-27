@@ -55,11 +55,37 @@ export interface ThemeTokens {
   connAccentForeground: string;
 }
 
+/** Grid (Glide Data Grid) token subset — separate from ThemeTokens
+ *  because the Glide canvas parser doesn't accept `oklch(...)`, so all
+ *  values must be hex / rgb / rgba. Each preset defines its own palette
+ *  rather than deriving 1:1 from the main tokens. */
+export interface GridTokens {
+  bgCell: string;
+  bgCellMedium: string; // zebra stripe
+  bgCellSelected: string; // current-row override
+  bgCellSelectedMedium: string;
+  bgHeader: string;
+  bgHeaderHovered: string;
+  bgHeaderHasFocus: string; // selected column header (alpha tint)
+  textDark: string;
+  textMedium: string;
+  textLight: string;
+  textHeader: string;
+  textHeaderSelected: string;
+  bgIconHeader: string;
+  fgIconHeader: string;
+  borderColor: string;
+  horizontalBorderColor: string;
+  accentLight: string; // current cell tint (alpha)
+  bgSearchResult: string; // search match (alpha)
+}
+
 export interface Preset {
   id: PresetId;
   name: string;
   mode: ThemeMode;
   tokens: ThemeTokens;
+  grid: GridTokens;
   cmTheme: Extension;
 }
 
@@ -335,24 +361,216 @@ const solarizedLightTokens: ThemeTokens = {
   connAccentForeground: "oklch(0.99 0 0)",
 };
 
+// ---------------- GRID PALETTES ----------------
+// Hex / rgba only — Glide's canvas parser doesn't accept `oklch(...)`.
+
+const gridSlate: GridTokens = {
+  bgCell: "#0b0d12",
+  bgCellMedium: "#13161d",
+  bgCellSelected: "#252830",
+  bgCellSelectedMedium: "#282b34",
+  bgHeader: "#13161d",
+  bgHeaderHovered: "#1c1f27",
+  bgHeaderHasFocus: "rgba(74, 109, 230, 0.45)",
+  textDark: "#f5f6f8",
+  textMedium: "#9ea3ad",
+  textLight: "#6b7280",
+  textHeader: "#f5f6f8",
+  textHeaderSelected: "#ffffff",
+  bgIconHeader: "#9ea3ad",
+  fgIconHeader: "#0b0d12",
+  borderColor: "#262a33",
+  horizontalBorderColor: "#1f232b",
+  accentLight: "rgba(74, 109, 230, 0.22)",
+  bgSearchResult: "rgba(255, 200, 80, 0.45)",
+};
+
+const gridDarcula: GridTokens = {
+  bgCell: "#313335",
+  bgCellMedium: "#2b2b2b",
+  bgCellSelected: "#4a4a48",
+  bgCellSelectedMedium: "#444442",
+  bgHeader: "#3c3f41",
+  bgHeaderHovered: "#4b4e51",
+  bgHeaderHasFocus: "rgba(204, 120, 50, 0.40)",
+  textDark: "#a9b7c6",
+  textMedium: "#808080",
+  textLight: "#606060",
+  textHeader: "#bbbbbb",
+  textHeaderSelected: "#ffffff",
+  bgIconHeader: "#a9b7c6",
+  fgIconHeader: "#313335",
+  borderColor: "#323232",
+  horizontalBorderColor: "#2b2b2b",
+  accentLight: "rgba(204, 120, 50, 0.22)",
+  bgSearchResult: "rgba(255, 200, 80, 0.45)",
+};
+
+const gridOneDark: GridTokens = {
+  bgCell: "#282c34",
+  bgCellMedium: "#2c313a",
+  bgCellSelected: "#3a3f4b",
+  bgCellSelectedMedium: "#363b47",
+  bgHeader: "#21252b",
+  bgHeaderHovered: "#2d323b",
+  bgHeaderHasFocus: "rgba(97, 175, 239, 0.40)",
+  textDark: "#abb2bf",
+  textMedium: "#828997",
+  textLight: "#5c6370",
+  textHeader: "#abb2bf",
+  textHeaderSelected: "#ffffff",
+  bgIconHeader: "#abb2bf",
+  fgIconHeader: "#282c34",
+  borderColor: "#3e4451",
+  horizontalBorderColor: "#2c313a",
+  accentLight: "rgba(97, 175, 239, 0.22)",
+  bgSearchResult: "rgba(229, 192, 123, 0.45)",
+};
+
+const gridTokyoNight: GridTokens = {
+  bgCell: "#1a1b26",
+  bgCellMedium: "#1f2030",
+  bgCellSelected: "#2a2d40",
+  bgCellSelectedMedium: "#262838",
+  bgHeader: "#16161e",
+  bgHeaderHovered: "#22242e",
+  bgHeaderHasFocus: "rgba(187, 154, 247, 0.40)",
+  textDark: "#c0caf5",
+  textMedium: "#9aa5ce",
+  textLight: "#565f89",
+  textHeader: "#c0caf5",
+  textHeaderSelected: "#ffffff",
+  bgIconHeader: "#9aa5ce",
+  fgIconHeader: "#1a1b26",
+  borderColor: "#292e42",
+  horizontalBorderColor: "#1f2030",
+  accentLight: "rgba(187, 154, 247, 0.22)",
+  bgSearchResult: "rgba(255, 200, 80, 0.40)",
+};
+
+const gridDimmed: GridTokens = {
+  bgCell: "#22272e",
+  bgCellMedium: "#2d333b",
+  bgCellSelected: "#373e47",
+  bgCellSelectedMedium: "#323942",
+  bgHeader: "#1c2128",
+  bgHeaderHovered: "#373e47",
+  bgHeaderHasFocus: "rgba(83, 155, 245, 0.40)",
+  textDark: "#adbac7",
+  textMedium: "#768390",
+  textLight: "#545d68",
+  textHeader: "#adbac7",
+  textHeaderSelected: "#ffffff",
+  bgIconHeader: "#adbac7",
+  fgIconHeader: "#22272e",
+  borderColor: "#444c56",
+  horizontalBorderColor: "#373e47",
+  accentLight: "rgba(83, 155, 245, 0.22)",
+  bgSearchResult: "rgba(255, 200, 80, 0.45)",
+};
+
+const gridClean: GridTokens = {
+  bgCell: "#ffffff",
+  bgCellMedium: "#f9fafb",
+  bgCellSelected: "#f1f5f9",
+  bgCellSelectedMedium: "#e9eff5",
+  bgHeader: "#f3f4f6",
+  bgHeaderHovered: "#e5e7eb",
+  bgHeaderHasFocus: "rgba(67, 96, 200, 0.35)",
+  textDark: "#111827",
+  textMedium: "#4b5563",
+  textLight: "#9ca3af",
+  textHeader: "#111827",
+  textHeaderSelected: "#111827",
+  bgIconHeader: "#6b7280",
+  fgIconHeader: "#ffffff",
+  borderColor: "#e5e7eb",
+  horizontalBorderColor: "#f3f4f6",
+  accentLight: "rgba(67, 96, 200, 0.18)",
+  bgSearchResult: "rgba(255, 200, 80, 0.55)",
+};
+
+const gridIntellijLight: GridTokens = {
+  bgCell: "#ffffff",
+  bgCellMedium: "#f7f8fa",
+  bgCellSelected: "#dce7fb",
+  bgCellSelectedMedium: "#d2def5",
+  bgHeader: "#e6ebf5",
+  bgHeaderHovered: "#d9dfec",
+  bgHeaderHasFocus: "rgba(74, 140, 199, 0.35)",
+  textDark: "#000000",
+  textMedium: "#4a4a4a",
+  textLight: "#999999",
+  textHeader: "#000000",
+  textHeaderSelected: "#000000",
+  bgIconHeader: "#4a4a4a",
+  fgIconHeader: "#ffffff",
+  borderColor: "#c9ccd6",
+  horizontalBorderColor: "#e0e2e8",
+  accentLight: "rgba(74, 140, 199, 0.18)",
+  bgSearchResult: "rgba(255, 230, 100, 0.55)",
+};
+
+const gridGithubLight: GridTokens = {
+  bgCell: "#ffffff",
+  bgCellMedium: "#f6f8fa",
+  bgCellSelected: "#ddf4ff",
+  bgCellSelectedMedium: "#cce9f5",
+  bgHeader: "#f6f8fa",
+  bgHeaderHovered: "#eaeef2",
+  bgHeaderHasFocus: "rgba(9, 105, 218, 0.30)",
+  textDark: "#24292e",
+  textMedium: "#586069",
+  textLight: "#959da5",
+  textHeader: "#24292e",
+  textHeaderSelected: "#24292e",
+  bgIconHeader: "#586069",
+  fgIconHeader: "#ffffff",
+  borderColor: "#d0d7de",
+  horizontalBorderColor: "#eaeef2",
+  accentLight: "rgba(9, 105, 218, 0.18)",
+  bgSearchResult: "rgba(255, 215, 100, 0.55)",
+};
+
+const gridSolarizedLight: GridTokens = {
+  bgCell: "#fdf6e3",
+  bgCellMedium: "#f5efd7",
+  bgCellSelected: "#eee2bd",
+  bgCellSelectedMedium: "#e5d9b3",
+  bgHeader: "#eee8d5",
+  bgHeaderHovered: "#e5dfc8",
+  bgHeaderHasFocus: "rgba(38, 139, 210, 0.35)",
+  textDark: "#586e75",
+  textMedium: "#657b83",
+  textLight: "#93a1a1",
+  textHeader: "#586e75",
+  textHeaderSelected: "#586e75",
+  bgIconHeader: "#657b83",
+  fgIconHeader: "#fdf6e3",
+  borderColor: "#d9d2bb",
+  horizontalBorderColor: "#eee8d5",
+  accentLight: "rgba(38, 139, 210, 0.18)",
+  bgSearchResult: "rgba(220, 180, 80, 0.55)",
+};
+
 // ---------------- LISTS ----------------
 
 export type DarkPreset = Preset & { id: DarkPresetId };
 export type LightPreset = Preset & { id: LightPresetId };
 
 export const DARK_PRESETS: DarkPreset[] = [
-  { id: "slate", name: "Slate (default)", mode: "dark", tokens: slateDark, cmTheme: oneDark },
-  { id: "darcula", name: "Darcula (JetBrains)", mode: "dark", tokens: darculaTokens, cmTheme: darcula },
-  { id: "one-dark", name: "One Dark", mode: "dark", tokens: oneDarkTokens, cmTheme: oneDark },
-  { id: "tokyo-night", name: "Tokyo Night", mode: "dark", tokens: tokyoNightTokens, cmTheme: tokyoNight },
-  { id: "dimmed", name: "GitHub Dark Dimmed", mode: "dark", tokens: dimmedTokens, cmTheme: githubDark },
+  { id: "slate", name: "Slate (default)", mode: "dark", tokens: slateDark, grid: gridSlate, cmTheme: oneDark },
+  { id: "darcula", name: "Darcula (JetBrains)", mode: "dark", tokens: darculaTokens, grid: gridDarcula, cmTheme: darcula },
+  { id: "one-dark", name: "One Dark", mode: "dark", tokens: oneDarkTokens, grid: gridOneDark, cmTheme: oneDark },
+  { id: "tokyo-night", name: "Tokyo Night", mode: "dark", tokens: tokyoNightTokens, grid: gridTokyoNight, cmTheme: tokyoNight },
+  { id: "dimmed", name: "GitHub Dark Dimmed", mode: "dark", tokens: dimmedTokens, grid: gridDimmed, cmTheme: githubDark },
 ];
 
 export const LIGHT_PRESETS: LightPreset[] = [
-  { id: "clean", name: "Clean (default)", mode: "light", tokens: cleanLight, cmTheme: githubLight },
-  { id: "intellij-light", name: "IntelliJ Light", mode: "light", tokens: intellijLightTokens, cmTheme: githubLight },
-  { id: "github-light", name: "GitHub Light", mode: "light", tokens: githubLightTokens, cmTheme: githubLight },
-  { id: "solarized-light", name: "Solarized Light", mode: "light", tokens: solarizedLightTokens, cmTheme: solarizedLight },
+  { id: "clean", name: "Clean (default)", mode: "light", tokens: cleanLight, grid: gridClean, cmTheme: githubLight },
+  { id: "intellij-light", name: "IntelliJ Light", mode: "light", tokens: intellijLightTokens, grid: gridIntellijLight, cmTheme: githubLight },
+  { id: "github-light", name: "GitHub Light", mode: "light", tokens: githubLightTokens, grid: gridGithubLight, cmTheme: githubLight },
+  { id: "solarized-light", name: "Solarized Light", mode: "light", tokens: solarizedLightTokens, grid: gridSolarizedLight, cmTheme: solarizedLight },
 ];
 
 // ---------------- CUSTOM ----------------
@@ -375,7 +593,67 @@ export function deriveCustomPreset(
       ? deriveDarkTokens(l, c, h)
       : deriveLightTokens(l, c, h);
 
-  return { id, name: name ?? (mode === "dark" ? "Custom dark" : "Custom light"), mode, tokens, cmTheme };
+  const grid: GridTokens =
+    mode === "dark" ? deriveDarkGrid(baseHex) : deriveLightGrid(baseHex);
+
+  return {
+    id,
+    name: name ?? (mode === "dark" ? "Custom dark" : "Custom light"),
+    mode,
+    tokens,
+    grid,
+    cmTheme,
+  };
+}
+
+/** Mix two `#rrggbb` colors. `t=0` → a, `t=1` → b. */
+function mixHex(a: string, b: string, t: number): string {
+  const ah = a.replace("#", "");
+  const bh = b.replace("#", "");
+  const ar = parseInt(ah.slice(0, 2), 16);
+  const ag = parseInt(ah.slice(2, 4), 16);
+  const ab = parseInt(ah.slice(4, 6), 16);
+  const br = parseInt(bh.slice(0, 2), 16);
+  const bg = parseInt(bh.slice(2, 4), 16);
+  const bb = parseInt(bh.slice(4, 6), 16);
+  const r = Math.round(ar * (1 - t) + br * t);
+  const g = Math.round(ag * (1 - t) + bg * t);
+  const bl = Math.round(ab * (1 - t) + bb * t);
+  const hex = (n: number) => n.toString(16).padStart(2, "0");
+  return `#${hex(r)}${hex(g)}${hex(bl)}`;
+}
+
+function deriveDarkGrid(baseHex: string): GridTokens {
+  // Use slate's text/accent palette but rebase the surface colors on the
+  // user's chosen background — keeps zebra stripes / borders coherent
+  // even when the base is wildly different from #0b0d12.
+  return {
+    ...gridSlate,
+    bgCell: baseHex,
+    bgCellMedium: mixHex(baseHex, "#ffffff", 0.04),
+    bgCellSelected: mixHex(baseHex, "#ffffff", 0.10),
+    bgCellSelectedMedium: mixHex(baseHex, "#ffffff", 0.08),
+    bgHeader: mixHex(baseHex, "#000000", 0.20),
+    bgHeaderHovered: mixHex(baseHex, "#000000", 0.10),
+    borderColor: mixHex(baseHex, "#ffffff", 0.10),
+    horizontalBorderColor: mixHex(baseHex, "#ffffff", 0.05),
+    fgIconHeader: baseHex,
+  };
+}
+
+function deriveLightGrid(baseHex: string): GridTokens {
+  return {
+    ...gridClean,
+    bgCell: baseHex,
+    bgCellMedium: mixHex(baseHex, "#000000", 0.03),
+    bgCellSelected: mixHex(baseHex, "#000000", 0.08),
+    bgCellSelectedMedium: mixHex(baseHex, "#000000", 0.06),
+    bgHeader: mixHex(baseHex, "#000000", 0.05),
+    bgHeaderHovered: mixHex(baseHex, "#000000", 0.10),
+    borderColor: mixHex(baseHex, "#000000", 0.12),
+    horizontalBorderColor: mixHex(baseHex, "#000000", 0.05),
+    fgIconHeader: baseHex,
+  };
 }
 
 function deriveDarkTokens(bgL: number, bgC: number, bgH: number): ThemeTokens {

@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 
 const REPO_URL = "https://github.com/wilsonglasser/basemaster";
 const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
+const WEBSITE_URL = "https://basemaster.app/";
 
 const LANGS: Array<{ value: Lang; label: string; flag: string }> = [
   { value: "pt-BR", label: "Português (Brasil)", flag: "🇧🇷" },
@@ -1052,9 +1053,11 @@ function AboutPanel() {
   return (
     <div className="space-y-6">
       <section className="flex items-start gap-4">
-        <div className="grid h-16 w-16 shrink-0 place-items-center rounded-lg bg-conn-accent/15 font-mono text-xl font-bold text-conn-accent">
-          BM
-        </div>
+        <img
+          src="/icon.png"
+          alt="BaseMaster"
+          className="h-16 w-16 shrink-0 rounded-lg"
+        />
         <div className="min-w-0 flex-1">
           <h3 className="text-base font-semibold">BaseMaster</h3>
           <p className="text-xs text-muted-foreground">{t("about.tagline")}</p>
@@ -1082,6 +1085,11 @@ function AboutPanel() {
           {t("about.linksTitle")}
         </h3>
         <div className="grid gap-1.5">
+          <LinkRow
+            label={t("about.websiteLabel")}
+            url={WEBSITE_URL}
+            display="basemaster.app"
+          />
           <LinkRow
             label={t("about.repoLabel")}
             url={REPO_URL}

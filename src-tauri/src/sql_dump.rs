@@ -529,7 +529,7 @@ async fn dump_one_table(
 
     // Count total for progress.
     let total = source
-        .count_table_rows(schema, table)
+        .count_table_rows(schema, table, None)
         .await
         .map_err(|e| format!("count {}.{}: {}", schema, table, e))?;
     if total == 0 {
