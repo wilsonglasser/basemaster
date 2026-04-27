@@ -64,6 +64,7 @@ import {
   useSidebarMultiSelect,
 } from "@/state/sidebar-multi-select";
 import { confirmDestructive } from "@/state/destructive-confirm";
+import { useTableViewBridge } from "@/state/table-view-bridge";
 import { useTabs } from "@/state/tabs";
 
 type DdlKind = "view" | "function" | "procedure" | "trigger";
@@ -407,6 +408,12 @@ function useSidebarShortcuts() {
         ) {
           return;
         }
+      }
+      // If the user has a text selection (e.g. inside a <pre> SQL preview),
+      // let the native copy run — this shortcut is only for "no selection,
+      // sidebar item focused" cases.
+      if (key === "c" && (window.getSelection()?.toString().length ?? 0) > 0) {
+        return;
       }
       const sel = useSidebarSelection.getState().selected;
       if (!sel) return;
@@ -2009,6 +2016,41 @@ function TableNode({
     });
   };
 
+  const editTable = () => {
+    // If the tab is already open, drive it via the bridge so we end up
+    // on the Structure sub-tab in edit mode without remounting it.
+    const tabsSt = useTabs.getState();
+    const existing = tabsSt.tabs.find(
+      (x) =>
+        x.kind.kind === "table" &&
+        x.kind.connectionId === conn.id &&
+        x.kind.schema === table.schema &&
+        x.kind.table === table.name,
+    );
+    if (existing) {
+      tabsSt.setActive(existing.id);
+      const bridge = useTableViewBridge.getState();
+      const ok = bridge.setViewOf(existing.id, "structure");
+      if (ok) {
+        // Wait for StructurePane to mount before requesting edit.
+        setTimeout(() => bridge.startEditOf(existing.id), 50);
+        return;
+      }
+    }
+    newTab({
+      label: table.name,
+      kind: {
+        kind: "table",
+        connectionId: conn.id,
+        schema: table.schema,
+        table: table.name,
+        initialView: "structure",
+        initialEdit: true,
+      },
+      accentColor: conn.color,
+    });
+  };
+
   const openSelectAll = () => {
     const isPg = conn.driver === "postgres";
     const qi = isPg
@@ -2215,6 +2257,12 @@ function TableNode({
       icon: <TableIcon className="h-3.5 w-3.5" />,
       label: t("tree.openTable"),
       onClick: openTable,
+    },
+    {
+      icon: <Pencil className="h-3.5 w-3.5" />,
+      label: t("tree.editTable"),
+      shortcut: "Ctrl+D",
+      onClick: editTable,
     },
     {
       icon: <FileCode2 className="h-3.5 w-3.5" />,

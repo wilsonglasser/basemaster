@@ -53,6 +53,7 @@ import { appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useI18n, useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
+import { useTableDraft } from "@/state/table-draft";
 import { useTableViewBridge } from "@/state/table-view-bridge";
 import { useTabState } from "@/state/tab-state";
 import { useTabs } from "@/state/tabs";
@@ -126,7 +127,15 @@ export function TableView({
   const initialTabState = useTabState.getState().tableOf(tabId);
   const patchTableState = useTabState((s) => s.patchTable);
 
-  const [view, setView] = useState<View>(initialView);
+  // Hydrate from the draft store first (survives tab switches), then
+  // fall back to the prop-based initial view.
+  const [view, setView] = useState<View>(
+    () => useTableDraft.getState().get(tabId)?.view ?? initialView,
+  );
+
+  useEffect(() => {
+    useTableDraft.getState().patch(tabId, { view });
+  }, [tabId, view]);
 
   // Bridge pra Ctrl+D / AI poder alternar sub-tab de fora.
   useEffect(() => {

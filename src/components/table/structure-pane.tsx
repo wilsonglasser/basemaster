@@ -26,6 +26,14 @@ import { appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
+import {
+  useTableDraft,
+  type DraftColumn,
+  type DraftForeignKey,
+  type DraftIndex,
+  type DraftOptions,
+  type StructureTab,
+} from "@/state/table-draft";
 import { useTableViewBridge } from "@/state/table-view-bridge";
 
 interface StructurePaneProps {
@@ -62,15 +70,45 @@ export function StructurePane({
   );
   const typeOptions = useMemo(() => columnTypeOptions(driver), [driver]);
 
-  const [editing, setEditing] = useState(false);
+  // Hydrate from the in-memory draft store so dirty edits survive
+  // tab switches (App.tsx unmounts inactive tabs).
+  const persisted = tabId
+    ? useTableDraft.getState().get(tabId)
+    : undefined;
+  const [editing, setEditing] = useState<boolean>(persisted?.editing ?? false);
   const autoEditTriggeredRef = useRef(false);
-  const [draftCols, setDraftCols] = useState<DraftColumn[] | null>(null);
-  const [draftIdx, setDraftIdx] = useState<DraftIndex[] | null>(null);
-  const [draftFks, setDraftFks] = useState<DraftForeignKey[] | null>(null);
-  const [draftOpts, setDraftOpts] = useState<DraftOptions | null>(null);
+  const [draftCols, setDraftCols] = useState<DraftColumn[] | null>(
+    persisted?.draftCols ?? null,
+  );
+  const [draftIdx, setDraftIdx] = useState<DraftIndex[] | null>(
+    persisted?.draftIdx ?? null,
+  );
+  const [draftFks, setDraftFks] = useState<DraftForeignKey[] | null>(
+    persisted?.draftFks ?? null,
+  );
+  const [draftOpts, setDraftOpts] = useState<DraftOptions | null>(
+    persisted?.draftOpts ?? null,
+  );
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<StructureTab>("columns");
+  const [activeTab, setActiveTab] = useState<StructureTab>(
+    persisted?.structureTab ?? "columns",
+  );
+
+  // Persist to the draft store on every change. Cleared explicitly in
+  // `discardEdit` and `handleApply` (writing undefineds via patch would
+  // leave a stale `editing: false` entry behind).
+  useEffect(() => {
+    if (!tabId) return;
+    useTableDraft.getState().patch(tabId, {
+      editing,
+      structureTab: activeTab,
+      draftCols: draftCols ?? undefined,
+      draftIdx: draftIdx ?? undefined,
+      draftFks: draftFks ?? undefined,
+      draftOpts: draftOpts ?? undefined,
+    });
+  }, [tabId, editing, activeTab, draftCols, draftIdx, draftFks, draftOpts]);
 
   useEffect(() => {
     if (!cols) {
@@ -109,7 +147,9 @@ export function StructurePane({
   const startEdit = () => {
     if (!cols) return;
     setDraftCols(cols.map(columnToDraft));
-    setDraftIdx((indexes ?? []).map(indexToDraft));
+    // PK is edited via the column's "Primary key" toggle, not as an index row —
+    // including it here would make the diff emit `ADD UNIQUE INDEX 'PRIMARY'`.
+    setDraftIdx((indexes ?? []).filter((i) => !i.is_primary).map(indexToDraft));
     setDraftFks((fks ?? []).map(fkToDraft));
     setDraftOpts(optionsToDraft(options));
     setEditing(true);
@@ -117,11 +157,16 @@ export function StructurePane({
   };
 
   // Auto-enter edit mode quando `initialEdit=true` — espera cols/indexes/fks
-  // carregarem antes de disparar, pra evitar draft vazio.
+  // carregarem antes de disparar, pra evitar draft vazio. Se já existe draft
+  // hidratado (tab switch), reativa edit mode sem regenerar (preserva edits).
   useEffect(() => {
     if (!initialEdit || autoEditTriggeredRef.current) return;
     if (!cols || indexes == null || fks == null || options == null) return;
     autoEditTriggeredRef.current = true;
+    if (draftCols) {
+      setEditing(true);
+      return;
+    }
     startEdit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialEdit, cols, indexes, fks, options]);
@@ -143,6 +188,7 @@ export function StructurePane({
     setEditing(false);
     setApplyError(null);
     if (activeTab === "sql") setActiveTab("columns");
+    if (tabId) useTableDraft.getState().clear(tabId);
   };
 
   const ddl = useMemo(() => {
@@ -200,6 +246,7 @@ export function StructurePane({
       setDraftIdx(null);
       setDraftFks(null);
       setDraftOpts(null);
+      if (tabId) useTableDraft.getState().clear(tabId);
     } catch (e) {
       setApplyError(String(e));
     } finally {
@@ -333,15 +380,6 @@ export function StructurePane({
     </div>
   );
 }
-
-type StructureTab =
-  | "columns"
-  | "indexes"
-  | "foreign_keys"
-  | "checks"
-  | "triggers"
-  | "options"
-  | "sql";
 
 function StructureTabs({
   active,
@@ -596,18 +634,6 @@ function Spinner({ label }: { label?: string }) {
 
 /** Editable representation of a column. `originalName === null` means
  *  a new column (didn't exist in the table yet). */
-interface DraftColumn {
-  uid: string;
-  originalName: string | null;
-  name: string;
-  rawType: string;
-  nullable: boolean;
-  default: string | null;
-  comment: string;
-  isPrimaryKey: boolean;
-  isAutoIncrement: boolean;
-}
-
 let nextUid = 1;
 function newUid() {
   return `col-${nextUid++}`;
@@ -1094,21 +1120,12 @@ function formatType(t: ColumnType): string {
 // Indexes editor
 // =============================================================================
 
-interface DraftIndex {
-  uid: string;
-  originalName: string | null;
-  name: string;
-  columns: string[];
-  unique: boolean;
-  indexType: string; // BTREE | HASH | FULLTEXT | SPATIAL
-}
-
 const INDEX_TYPES = ["BTREE", "HASH", "FULLTEXT", "SPATIAL"];
 
 function indexToDraft(i: IndexInfo): DraftIndex {
   return {
     uid: newUid(),
-    originalName: i.is_primary ? null : i.name, // PK editada via coluna PK
+    originalName: i.name,
     name: i.name,
     columns: [...i.columns],
     unique: i.unique,
@@ -1229,18 +1246,6 @@ function IndexesEditor({
 // =============================================================================
 // Foreign Keys editor
 // =============================================================================
-
-interface DraftForeignKey {
-  uid: string;
-  originalName: string | null;
-  name: string;
-  columns: string[];
-  refSchema: string;
-  refTable: string;
-  refColumns: string[];
-  onUpdate: string;
-  onDelete: string;
-}
 
 const FK_ACTIONS = ["RESTRICT", "CASCADE", "SET NULL", "NO ACTION"];
 
@@ -1504,15 +1509,6 @@ function ForeignKeysTable({ fks }: { fks: ForeignKeyInfo[] }) {
 // =============================================================================
 // Options editor
 // =============================================================================
-
-interface DraftOptions {
-  engine: string;
-  charset: string;
-  collation: string;
-  rowFormat: string;
-  autoIncrement: string;
-  comment: string;
-}
 
 const MYSQL_ENGINES = ["InnoDB", "MyISAM", "MEMORY", "ARCHIVE", "CSV"];
 const MYSQL_CHARSETS = ["utf8mb4", "utf8mb3", "latin1", "ascii"];
