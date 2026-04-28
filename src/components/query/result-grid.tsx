@@ -34,7 +34,6 @@ import {
   parseDateText,
   pickEditorKind,
   textToNumber,
-  valueToBoolean,
   valueToNumber,
 } from "./cell-types";
 
@@ -416,20 +415,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         };
       }
 
-      // BOOLEAN → built-in checkbox.
-      if (editor.kind === "boolean") {
-        const b = isDirty
-          ? dirtyText === "1" || dirtyText?.toLowerCase() === "true"
-          : valueToBoolean(value);
-        return {
-          kind: GridCellKind.Boolean,
-          data: b as boolean | undefined,
-          allowOverlay: false,
-          readonly,
-          themeOverride,
-        };
-      }
-
       // TEXT (default).
       return {
         kind: GridCellKind.Text,
@@ -505,6 +490,18 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
                   } else {
                     onCellEdit(col, row, text);
                   }
+                  // Keep focus on the edited cell so the user can keep
+                  // arrow-navigating from there. Glide's default Enter would
+                  // move the cursor down, which feels like "deselecting".
+                  setSelection({
+                    columns: CompactSelection.empty(),
+                    rows: CompactSelection.empty(),
+                    current: {
+                      cell: [col, row],
+                      range: { x: col, y: row, width: 1, height: 1 },
+                      rangeStack: [],
+                    },
+                  });
                 }
               : undefined
           }

@@ -988,8 +988,9 @@ export function TableView({
         const entries = Array.from(dirty.entries());
         const edits: CellEdit[] = entries.map(([, e]) => {
           const colName = data.columns[e.col];
+          const colMeta = cachedColumns?.find((c) => c.name === colName);
           const rowPk: PkEntry[] = buildRowKey(e.originalRow);
-          const newVal: Value = intentToValue(e.intent, e.newText);
+          const newVal: Value = intentToValue(e.intent, e.newText, colMeta);
           return { row_pk: rowPk, column: colName, new_value: newVal };
         });
         const results = await ipc.db.applyTableEdits(
@@ -1003,7 +1004,9 @@ export function TableView({
           if (r.kind === "err") {
             errs.push(`edit #${i + 1}: ${r.message}`);
           } else {
-            updatedCells.set(key, intentToValue(e.intent, e.newText));
+            const colName = data.columns[e.col];
+            const colMeta = cachedColumns?.find((c) => c.name === colName);
+            updatedCells.set(key, intentToValue(e.intent, e.newText, colMeta));
           }
         });
       }
@@ -1014,7 +1017,10 @@ export function TableView({
         const rowsPayload: PkEntry[][] = nonEmptyNewRows.map((m) =>
           Array.from(m.entries()).map(([column, text]) => ({
             column,
-            value: textToValue(text),
+            value: textToValue(
+              text,
+              cachedColumns?.find((c) => c.name === column),
+            ),
           })),
         );
         const insRes = await ipc.db.insertTableRows(
@@ -1032,9 +1038,9 @@ export function TableView({
           // fills the auto_increment PK with last_insert_id.
           const m = nonEmptyNewRows[i];
           const values: Value[] = data.columns.map((colName) => {
-            const typed = m.get(colName);
-            if (typed !== undefined) return textToValue(typed);
             const colMeta = cachedColumns?.find((c) => c.name === colName);
+            const typed = m.get(colName);
+            if (typed !== undefined) return textToValue(typed, colMeta);
             if (
               colMeta?.is_primary_key &&
               colMeta.is_auto_increment &&
@@ -2319,10 +2325,27 @@ function formatValueForEdit(v: Value): string {
 }
 
 /** Converts user-typed text into a Value to send to the backend.
- *  v0: empty string → NULL; else → string (MySQL coerces).
- *  v1+: use the column type to pick the correct variant. */
-function textToValue(text: string): Value {
+ *  Uses the column type (when available) to pick the correct variant —
+ *  JSON gets parsed (or wrapped as a JSON string when not parseable),
+ *  bool gets coerced from "true"/"false"/"0"/"1". Defaults to string. */
+function textToValue(text: string, column?: Column): Value {
   if (text === "") return { type: "null" };
+  const kind = column?.column_type.kind;
+  if (kind === "json") {
+    try {
+      return { type: "json", value: JSON.parse(text) };
+    } catch {
+      // User typed plain text into a JSON cell — wrap it as a JSON string
+      // literal so MySQL's JSON parser accepts it.
+      return { type: "json", value: text };
+    }
+  }
+  if (kind === "boolean") {
+    const t = text.trim().toLowerCase();
+    if (t === "true" || t === "1") return { type: "bool", value: true };
+    if (t === "false" || t === "0") return { type: "bool", value: false };
+    // Fall through — let the backend reject unrecognized text.
+  }
   return { type: "string", value: text };
 }
 
@@ -2331,10 +2354,11 @@ function textToValue(text: string): Value {
 function intentToValue(
   intent: "edit" | "null" | "empty",
   text: string,
+  column?: Column,
 ): Value {
   if (intent === "null") return { type: "null" };
   if (intent === "empty") return { type: "string", value: "" };
-  return textToValue(text);
+  return textToValue(text, column);
 }
 
 /** Applies the column order saved in tab-state (if it exists and matches

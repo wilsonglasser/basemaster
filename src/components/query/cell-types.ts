@@ -20,7 +20,6 @@ export type EditorKind =
       /** Fixed decimals for DECIMAL(p,s). undefined = unrestricted. */
       fixedDecimals?: number;
     }
-  | { kind: "boolean" }
   | { kind: "enum"; values: string[] }
   | { kind: "date"; dateKind: DateKind };
 
@@ -41,7 +40,10 @@ export function pickEditorKind(column: Column | undefined): EditorKind {
         fixedDecimals: t.scale,
       };
     case "boolean":
-      return { kind: "boolean" };
+      // Render as a dropdown so the user can type/select true/false/0/1.
+      // Native checkbox doesn't accept keyboard typing — power users want
+      // to edit via keyboard like any other cell.
+      return { kind: "enum", values: ["true", "false", "0", "1"] };
     case "enum":
       return { kind: "enum", values: t.values };
     case "date":
@@ -151,15 +153,6 @@ export function textToNumber(text: string): number | undefined {
   if (!text) return undefined;
   const n = Number(text);
   return isNaN(n) ? undefined : n;
-}
-
-/** Parses to Boolean cell. */
-export function valueToBoolean(v: Value | undefined): boolean | undefined {
-  if (!v || isNullish(v)) return undefined;
-  if (v.type === "bool") return v.value;
-  if (v.type === "int" || v.type === "u_int") return v.value !== 0;
-  if (v.type === "string") return v.value === "1" || v.value.toLowerCase() === "true";
-  return undefined;
 }
 
 /** Default display text (NULL or formatted). */
