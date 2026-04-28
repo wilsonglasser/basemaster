@@ -408,6 +408,11 @@ function useSidebarShortcuts() {
         ) {
           return;
         }
+        // Skip if focus is in the main panel (active tab content — grid,
+        // query editor, etc.). The sidebar shortcut is exclusive to the
+        // sidebar tree; otherwise Ctrl+C in a table grid would stomp the
+        // grid's own copy.
+        if (tgt.closest("main")) return;
       }
       // If the user has a text selection (e.g. inside a <pre> SQL preview),
       // let the native copy run — this shortcut is only for "no selection,

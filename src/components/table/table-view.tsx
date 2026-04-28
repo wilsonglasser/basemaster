@@ -788,35 +788,64 @@ export function TableView({
     const existingLen = data.rows.length;
     const isNewRow = row >= existingLen;
 
-    // Resolve texto + null status da cell considerando dirty / newRows.
-    let currentText: string;
-    let currentIsNull: boolean;
-    if (isNewRow) {
-      const rowMap = newRows[row - existingLen];
-      const typed = rowMap?.get(colName);
-      if (typed === undefined) {
-        currentText = "";
-        currentIsNull = true;
-      } else {
-        currentText = typed;
-        currentIsNull = false;
+    // Resolve cell text (considering dirty/newRows) for any field-coord cell.
+    const cellTextAt = (
+      fieldCol: number,
+      r: number,
+    ): { text: string; isNull: boolean } => {
+      const cName = data.columns[fieldCol];
+      if (!cName) return { text: "", isNull: true };
+      const isNew = r >= existingLen;
+      if (isNew) {
+        const rowMap = newRows[r - existingLen];
+        const typed = rowMap?.get(cName);
+        if (typed === undefined) return { text: "", isNull: true };
+        return { text: typed, isNull: false };
       }
-    } else {
-      const key = `${row}:${col}`;
+      const key = `${r}:${fieldCol}`;
       const pending = dirty.get(key);
       if (pending) {
-        if (pending.intent === "null") {
-          currentText = "";
-          currentIsNull = true;
-        } else {
-          currentText = pending.newText;
-          currentIsNull = false;
-        }
-      } else {
-        const v = data.rows[row]?.[col];
-        currentText = formatValue(v);
-        currentIsNull = isNullish(v);
+        if (pending.intent === "null") return { text: "", isNull: true };
+        return { text: pending.newText, isNull: false };
       }
+      const v = data.rows[r]?.[fieldCol];
+      return { text: formatValue(v), isNull: isNullish(v) };
+    };
+
+    const { text: currentText, isNull: currentIsNull } = cellTextAt(col, row);
+
+    // Multi-cell copy (Navicat-style): if the right-clicked cell is part of
+    // the current selection AND there's more than one cell selected, copy
+    // the whole selection as TSV. Otherwise just the right-clicked cell.
+    const visSelected = gridRef.current?.getSelectedCells() ?? [];
+    const fieldSelected = visSelected.map(
+      ([vc, r]) => [v2f(vc), r] as const,
+    );
+    const inSelection = fieldSelected.some(
+      ([c, r]) => c === col && r === row,
+    );
+    let copyText = currentText;
+    if (visSelected.length > 1 && inSelection) {
+      // Group cells by row; sort columns by VISUAL index so the TSV layout
+      // matches the on-screen order (left-to-right).
+      const byRow = new Map<
+        number,
+        Array<{ visualCol: number; fieldCol: number }>
+      >();
+      for (const [vc, r] of visSelected) {
+        const list = byRow.get(r) ?? [];
+        list.push({ visualCol: vc, fieldCol: v2f(vc) });
+        byRow.set(r, list);
+      }
+      const lines: string[] = [];
+      for (const r of [...byRow.keys()].sort((a, b) => a - b)) {
+        const cols = byRow
+          .get(r)!
+          .sort((a, b) => a.visualCol - b.visualCol)
+          .map(({ fieldCol }) => cellTextAt(fieldCol, r).text);
+        lines.push(cols.join("\t"));
+      }
+      copyText = lines.join("\n");
     }
 
     const items: ContextEntry[] = [
@@ -825,7 +854,7 @@ export function TableView({
         label: t("table.cellMenu.copy"),
         shortcut: "Ctrl+C",
         onClick: () => {
-          void navigator.clipboard.writeText(currentText);
+          void navigator.clipboard.writeText(copyText);
         },
       },
       {

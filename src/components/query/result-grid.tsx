@@ -108,6 +108,10 @@ export interface ResultGridHandle {
   selectCell: (col: number, row: number) => void;
   /** Expands the current selection and calls onDeleteCells (used by the trash button). */
   deleteSelected: () => void;
+  /** Returns the currently selected cells in VISUAL coords (col, row).
+   *  Includes the cursor cell, the range, and any whole rows selected
+   *  via row markers. Empty if there's no selection. */
+  getSelectedCells: () => Array<readonly [number, number]>;
 }
 
 const EMPTY_SELECTION: GridSelection = {
@@ -237,6 +241,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         if (selection.current) {
           onDeleteRows?.([selection.current.cell[1]]);
         }
+      },
+      getSelectedCells() {
+        return expandSelectionToCells(selection);
       },
     }));
 
