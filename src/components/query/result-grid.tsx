@@ -176,6 +176,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
     // Capture clientX/Y from the native contextmenu to position the menu —
     // Glide only gives bounds relative to the canvas, not the viewport.
     const ctxPosRef = useRef<{ x: number; y: number } | null>(null);
+    // After a cell edit, Glide fires onGridSelectionChange to move the cursor
+    // down — we override that to keep focus on the edited cell so the user
+    // can keep arrow-navigating from there. Cleared on the next selection
+    // change.
+    const restoreCellRef = useRef<readonly [number, number] | null>(null);
     const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
     const [selection, setSelection] = useState<GridSelection>(EMPTY_SELECTION);
 
@@ -465,6 +470,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           highlightRegions={highlightRegions}
           gridSelection={selection}
           onGridSelectionChange={(s) => {
+            // After a cell edit, Glide tries to move the cursor down — pin
+            // it back on the edited cell so the user can arrow-navigate from
+            // there.
+            const restore = restoreCellRef.current;
+            restoreCellRef.current = null;
+            if (restore) {
+              const [rc, rr] = restore;
+              const pinned: GridSelection = {
+                columns: CompactSelection.empty(),
+                rows: CompactSelection.empty(),
+                current: {
+                  cell: [rc, rr],
+                  range: { x: rc, y: rr, width: 1, height: 1 },
+                  rangeStack: [],
+                },
+              };
+              setSelection(pinned);
+              onCellSelect?.(pinned.current?.cell);
+              onSelectionInfoChange?.(computeSelectionInfo(pinned));
+              return;
+            }
             setSelection(s);
             onCellSelect?.(s.current?.cell);
             onSelectionInfoChange?.(computeSelectionInfo(s));
@@ -490,18 +516,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
                   } else {
                     onCellEdit(col, row, text);
                   }
-                  // Keep focus on the edited cell so the user can keep
-                  // arrow-navigating from there. Glide's default Enter would
-                  // move the cursor down, which feels like "deselecting".
-                  setSelection({
-                    columns: CompactSelection.empty(),
-                    rows: CompactSelection.empty(),
-                    current: {
-                      cell: [col, row],
-                      range: { x: col, y: row, width: 1, height: 1 },
-                      rangeStack: [],
-                    },
-                  });
+                  // Right after this, Glide will fire onGridSelectionChange
+                  // moving the cursor down. The ref tells that handler to
+                  // override and pin the cursor back on the edited cell.
+                  restoreCellRef.current = [col, row];
                 }
               : undefined
           }
