@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import JSON5 from "json5";
 import {
   Ban,
   Check,
@@ -2335,12 +2336,17 @@ function textToValue(text: string, column?: Column): Value {
   if (text === "") return { type: "null" };
   const kind = column?.column_type.kind;
   if (kind === "json") {
+    // Try strict JSON first, then JSON5 (single quotes, trailing commas,
+    // unquoted keys) — most users typing `['teste']` mean an array of
+    // one string. Only fall back to wrapping when neither parses.
     try {
       return { type: "json", value: JSON.parse(text) };
     } catch {
-      // User typed plain text into a JSON cell — wrap it as a JSON string
-      // literal so MySQL's JSON parser accepts it.
-      return { type: "json", value: text };
+      try {
+        return { type: "json", value: JSON5.parse(text) };
+      } catch {
+        return { type: "json", value: text };
+      }
     }
   }
   if (kind === "boolean") {

@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import {
   CompactSelection,
@@ -472,7 +473,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           onGridSelectionChange={(s) => {
             // After a cell edit, Glide tries to move the cursor down — pin
             // it back on the edited cell so the user can arrow-navigate from
-            // there.
+            // there. flushSync forces the override to land before Glide's
+            // post-edit scroll runs (otherwise the cursor "moves but doesn't"
+            // and the viewport jitters).
             const restore = restoreCellRef.current;
             restoreCellRef.current = null;
             if (restore) {
@@ -486,9 +489,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
                   rangeStack: [],
                 },
               };
-              setSelection(pinned);
+              flushSync(() => {
+                setSelection(pinned);
+              });
               onCellSelect?.(pinned.current?.cell);
               onSelectionInfoChange?.(computeSelectionInfo(pinned));
+              // Glide's updateSelectedCell already scrolled to the moved-down
+              // cell; bring the viewport back so the pinned cell stays put.
+              editorRef.current?.scrollTo(rc, rr, "both", 0, 0);
               return;
             }
             setSelection(s);
