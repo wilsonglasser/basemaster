@@ -1,5 +1,4 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 
 import {
   CompactSelection,
@@ -177,30 +176,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
     // Capture clientX/Y from the native contextmenu to position the menu —
     // Glide only gives bounds relative to the canvas, not the viewport.
     const ctxPosRef = useRef<{ x: number; y: number } | null>(null);
-    // Cell that the user is currently editing — captured when the overlay
-    // opens (onCellActivated) or when an edit fires (onCellsEdited, covers
-    // editOnType). Used in onFinishedEditing to pin the cursor back so Enter
-    // doesn't drop it a row down regardless of whether the value changed.
-    const editingCellRef = useRef<readonly [number, number] | null>(null);
-    // Glide's internal scroll container. We snapshot scrollTop/scrollLeft
-    // when an edit starts and restore them on onFinishedEditing — Glide's
-    // internal updateSelectedCell calls scrollTo(col, row+1) which can shift
-    // the viewport when the moved cell is at the edge.
-    // Glide doesn't expose `scrollRef` on DataEditor's public props, so we
-    // reach in via the `.dvn-scroller` className.
-    const wrapperRef = useRef<HTMLDivElement | null>(null);
-    const findScroller = (): HTMLElement | null =>
-      wrapperRef.current?.querySelector<HTMLElement>(".dvn-scroller") ?? null;
-    const preEditScrollRef = useRef<{ top: number; left: number } | null>(null);
-    const captureScroll = () => {
-      const el = findScroller();
-      if (el) {
-        preEditScrollRef.current = {
-          top: el.scrollTop,
-          left: el.scrollLeft,
-        };
-      }
-    };
     const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
     const [selection, setSelection] = useState<GridSelection>(EMPTY_SELECTION);
 
@@ -453,7 +428,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
 
     return (
       <div
-        ref={wrapperRef}
         className="h-full w-full"
         onContextMenuCapture={(e) => {
           ctxPosRef.current = { x: e.clientX, y: e.clientY };
@@ -495,53 +469,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
             onCellSelect?.(s.current?.cell);
             onSelectionInfoChange?.(computeSelectionInfo(s));
           }}
-          onCellActivated={(cell) => {
-            // User is opening an overlay (Enter or double-click). Snapshot
-            // the cell + scroll so onFinishedEditing can pin them back.
-            editingCellRef.current = cell;
-            captureScroll();
-          }}
-          onFinishedEditing={(_newValue, movement) => {
-            const cell = editingCellRef.current;
-            editingCellRef.current = null;
-            const saved = preEditScrollRef.current;
-            preEditScrollRef.current = null;
-            const [movX, movY] = movement;
-            if (!cell || (movX === 0 && movY === 0)) return;
-            // Glide's onFinishEditing already called updateSelectedCell to
-            // move the cursor by `movement` AND scrollTo'd that cell. Pin
-            // the selection back and restore the scroll position from before
-            // the edit — fights the "Enter drops a row + scroll jumps" UX.
-            const [rc, rr] = cell;
-            flushSync(() => {
-              setSelection({
-                columns: CompactSelection.empty(),
-                rows: CompactSelection.empty(),
-                current: {
-                  cell: [rc, rr],
-                  range: { x: rc, y: rr, width: 1, height: 1 },
-                  rangeStack: [],
-                },
-              });
-            });
-            // Restore scroll twice: once now (to override Glide's post-edit
-            // scrollTo) and once in the next animation frame (to override
-            // any layout-effect-driven re-scroll Glide does on the render
-            // triggered by our flushSync).
-            const restore = () => {
-              const scroller = findScroller();
-              if (saved && scroller) {
-                if (scroller.scrollTop !== saved.top) {
-                  scroller.scrollTop = saved.top;
-                }
-                if (scroller.scrollLeft !== saved.left) {
-                  scroller.scrollLeft = saved.left;
-                }
-              }
-            };
-            restore();
-            requestAnimationFrame(restore);
-          }}
+          // Native fork prop: Enter/Tab commit the value but keep the cursor
+          // on the edited cell — no setSelection/scroll dance needed.
+          keepFocusOnAccept={true}
           onColumnResize={(_col, newSize, idx) => {
             const id = columns[idx];
             if (!id) return;
@@ -569,12 +499,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           onCellsEdited={
             onCellEdit || onBatchEdit
               ? (edits) => {
-                  // editOnType bypasses onCellActivated — capture the
-                  // editing cell here so onFinishedEditing can pin it back.
-                  if (edits.length === 1 && editingCellRef.current === null) {
-                    editingCellRef.current = edits[0].location;
-                    captureScroll();
-                  }
                   const cells = expandSelectionToCells(selection);
                   if (edits.length === 1 && cells.length > 1 && onCellEdit) {
                     const text = extractCellText(edits[0].value);
