@@ -1446,7 +1446,7 @@ export function TableView({
           onReset={resetFilters}
         />
       )}
-      <div className="relative flex min-h-0 flex-1 flex-col bg-background">
+      <div className="flex min-h-0 flex-1 flex-col bg-background">
         {view === "data" && !connActive ? (
           <ConnectingPlaceholder
             connName={conn?.name ?? connectionId}
@@ -1528,29 +1528,26 @@ export function TableView({
             }}
           />
         )}
-        {view === "data" &&
-          (dirty.size > 0 ||
-            rowsToDelete.size > 0 ||
-            filledNewRowsCount > 0) && (
-            // Floats over the bottom of the grid so its appearance/dismissal
-            // doesn't resize the grid container — Glide's ResizeObserver was
-            // firing on layout change and snapping scrollLeft back to 0.
-            <div className="absolute bottom-0 left-0 right-0 z-10 shadow-md">
-              <DirtyFooter
-                editCount={dirty.size}
-                deleteCount={rowsToDelete.size}
-                insertCount={filledNewRowsCount}
-                applying={applying}
-                error={applyError}
-                onApply={handleApply}
-                onDiscard={handleDiscard}
-                onUndo={undoEdit}
-                onRedo={redoEdit}
-                canUndo={canUndo}
-                canRedo={canRedo}
-              />
-            </div>
-          )}
+        {view === "data" && (
+          // Always rendered as a flex sibling so its appearance/dismissal
+          // doesn't resize the grid container — Glide's ResizeObserver was
+          // firing on layout change and snapping scrollLeft back to 0.
+          // Hidden when there are no pending changes, but the slot stays
+          // in the layout.
+          <DirtyFooter
+            editCount={dirty.size}
+            deleteCount={rowsToDelete.size}
+            insertCount={filledNewRowsCount}
+            applying={applying}
+            error={applyError}
+            onApply={handleApply}
+            onDiscard={handleDiscard}
+            onUndo={undoEdit}
+            onRedo={redoEdit}
+            canUndo={canUndo}
+            canRedo={canRedo}
+          />
+        )}
         {view === "data" && noPk && data && (
           <div
             className={cn(
@@ -2457,15 +2454,22 @@ function DirtyFooter({
     parts.push(
       t(insertCount === 1 ? "table.footer.newRows" : "table.footer.newRowsMany", { n: insertCount }),
     );
+  // Always rendered as a flex sibling so its visibility flip doesn't resize
+  // the grid above. When there's nothing pending we keep the same layout
+  // height but go invisible + non-interactive.
+  const hidden = editCount === 0 && deleteCount === 0 && insertCount === 0;
   return (
     <div
+      aria-hidden={hidden}
       className={cn(
         "flex shrink-0 flex-col gap-1 border-t border-border px-3 py-1.5 text-xs",
-        error
-          ? "bg-destructive/10"
-          : deleteCount > 0
+        hidden
+          ? "invisible pointer-events-none"
+          : error
             ? "bg-destructive/10"
-            : "bg-yellow-500/10",
+            : deleteCount > 0
+              ? "bg-destructive/10"
+              : "bg-yellow-500/10",
       )}
     >
       <div className="flex items-center gap-3">
