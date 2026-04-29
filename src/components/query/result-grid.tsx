@@ -524,11 +524,23 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
                 },
               });
             });
-            const scroller = findScroller();
-            if (saved && scroller) {
-              scroller.scrollTop = saved.top;
-              scroller.scrollLeft = saved.left;
-            }
+            // Restore scroll twice: once now (to override Glide's post-edit
+            // scrollTo) and once in the next animation frame (to override
+            // any layout-effect-driven re-scroll Glide does on the render
+            // triggered by our flushSync).
+            const restore = () => {
+              const scroller = findScroller();
+              if (saved && scroller) {
+                if (scroller.scrollTop !== saved.top) {
+                  scroller.scrollTop = saved.top;
+                }
+                if (scroller.scrollLeft !== saved.left) {
+                  scroller.scrollLeft = saved.left;
+                }
+              }
+            };
+            restore();
+            requestAnimationFrame(restore);
           }}
           onColumnResize={(_col, newSize, idx) => {
             const id = columns[idx];
