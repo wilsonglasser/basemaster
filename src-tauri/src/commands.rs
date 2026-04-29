@@ -37,6 +37,13 @@ pub fn ping() -> &'static str {
     "pong"
 }
 
+/// Opens the WebView2 DevTools for the focused window. Available in release
+/// because the `tauri` crate is built with the `devtools` feature flag.
+#[tauri::command]
+pub fn open_devtools(window: tauri::WebviewWindow) {
+    window.open_devtools();
+}
+
 // ---------------------------------------------------------------- connections
 
 #[tauri::command]

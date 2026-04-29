@@ -1446,7 +1446,7 @@ export function TableView({
           onReset={resetFilters}
         />
       )}
-      <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="relative flex min-h-0 flex-1 flex-col bg-background">
         {view === "data" && !connActive ? (
           <ConnectingPlaceholder
             connName={conn?.name ?? connectionId}
@@ -1532,19 +1532,24 @@ export function TableView({
           (dirty.size > 0 ||
             rowsToDelete.size > 0 ||
             filledNewRowsCount > 0) && (
-            <DirtyFooter
-              editCount={dirty.size}
-              deleteCount={rowsToDelete.size}
-              insertCount={filledNewRowsCount}
-              applying={applying}
-              error={applyError}
-              onApply={handleApply}
-              onDiscard={handleDiscard}
-              onUndo={undoEdit}
-              onRedo={redoEdit}
-              canUndo={canUndo}
-              canRedo={canRedo}
-            />
+            // Floats over the bottom of the grid so its appearance/dismissal
+            // doesn't resize the grid container — Glide's ResizeObserver was
+            // firing on layout change and snapping scrollLeft back to 0.
+            <div className="absolute bottom-0 left-0 right-0 z-10 shadow-md">
+              <DirtyFooter
+                editCount={dirty.size}
+                deleteCount={rowsToDelete.size}
+                insertCount={filledNewRowsCount}
+                applying={applying}
+                error={applyError}
+                onApply={handleApply}
+                onDiscard={handleDiscard}
+                onUndo={undoEdit}
+                onRedo={redoEdit}
+                canUndo={canUndo}
+                canRedo={canRedo}
+              />
+            </div>
           )}
         {view === "data" && noPk && data && (
           <div

@@ -469,9 +469,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
             onCellSelect?.(s.current?.cell);
             onSelectionInfoChange?.(computeSelectionInfo(s));
           }}
-          // Native fork prop: Enter/Tab commit the value but keep the cursor
-          // on the edited cell — no setSelection/scroll dance needed.
-          keepFocusOnAccept={true}
+          // Native fork prop: Enter commits the value but keeps the cursor
+          // on the edited cell — no setSelection/scroll dance needed. Tab
+          // and Shift+Enter still move horizontally / upward as usual.
+          keepFocusOnEnterAccept={true}
           onColumnResize={(_col, newSize, idx) => {
             const id = columns[idx];
             if (!id) return;

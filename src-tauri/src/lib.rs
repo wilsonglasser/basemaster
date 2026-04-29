@@ -103,6 +103,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::ping,
+            commands::open_devtools,
             commands::connection_list,
             commands::connection_get,
             commands::connection_create,

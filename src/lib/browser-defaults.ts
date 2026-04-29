@@ -11,7 +11,17 @@ export function installBrowserDefaultPrevention() {
     if (key === "F5") return block(e);
     if (mod && low === "r") return block(e);
 
-    // F12 / Ctrl+Shift+I/J/C stay unblocked — see top-of-file note.
+    // F12 / Ctrl+Shift+I open DevTools. The prevent-default plugin disables
+    // WebView2's native accelerator keys (so users can't reload or print),
+    // which also kills F12 — re-add it via a Tauri command.
+    if (key === "F12" || (mod && e.shiftKey && low === "i")) {
+      e.preventDefault();
+      e.stopPropagation();
+      void import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("open_devtools"),
+      );
+      return;
+    }
 
     // Print, Save as, Open file (browser-native, useless in an app).
     if (mod && !e.shiftKey && !e.altKey) {
