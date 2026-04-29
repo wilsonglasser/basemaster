@@ -46,7 +46,7 @@ importers:
         version: 6.41.1
       '@glideapps/glide-data-grid':
         specifier: github:wilsonglasser/glide-data-grid#keep-focus-on-accept-pkg
-        version: https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/a0ef38bac3db1040bbf25b4d2f2b9997cb1ae438(lodash@4.18.1)(marked@16.4.2)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)
+        version: https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/140e2a8079200124410ed10156d13e20d0be926b(lodash@4.18.1)(marked@16.4.2)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)
       '@glideapps/glide-data-grid-cells':
         specifier: ^6.0.3
         version: 6.0.3(@types/react@19.2.14)(lodash@4.18.1)(marked@16.4.2)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)
@@ -413,8 +413,8 @@ packages:
   '@glideapps/glide-data-grid-cells@6.0.3':
     resolution: {integrity: sha512-SOZ+zlXAqSEACyZ26w41O2y0tr5qhJnxYOu9W327L23+Z2Sz0xpyiP8FQOZx1mzdyXLO9eBqQIv9ByDTftLIIA==}
 
-  '@glideapps/glide-data-grid@https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/a0ef38bac3db1040bbf25b4d2f2b9997cb1ae438':
-    resolution: {tarball: https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/a0ef38bac3db1040bbf25b4d2f2b9997cb1ae438}
+  '@glideapps/glide-data-grid@https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/140e2a8079200124410ed10156d13e20d0be926b':
+    resolution: {tarball: https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/140e2a8079200124410ed10156d13e20d0be926b}
     version: 6.0.4-keep-focus-on-accept
     peerDependencies:
       lodash: ^4.17.19
@@ -2245,7 +2245,7 @@ snapshots:
 
   '@glideapps/glide-data-grid-cells@6.0.3(@types/react@19.2.14)(lodash@4.18.1)(marked@16.4.2)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)':
     dependencies:
-      '@glideapps/glide-data-grid': https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/a0ef38bac3db1040bbf25b4d2f2b9997cb1ae438(lodash@4.18.1)(marked@16.4.2)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)
+      '@glideapps/glide-data-grid': https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/140e2a8079200124410ed10156d13e20d0be926b(lodash@4.18.1)(marked@16.4.2)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)
       '@linaria/react': 4.5.4(react@19.2.5)
       '@toast-ui/editor': 3.1.10
       '@toast-ui/react-editor': 3.1.10(react@19.2.5)
@@ -2259,7 +2259,7 @@ snapshots:
       - react-responsive-carousel
       - supports-color
 
-  '@glideapps/glide-data-grid@https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/a0ef38bac3db1040bbf25b4d2f2b9997cb1ae438(lodash@4.18.1)(marked@16.4.2)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)':
+  '@glideapps/glide-data-grid@https://codeload.github.com/wilsonglasser/glide-data-grid/tar.gz/140e2a8079200124410ed10156d13e20d0be926b(lodash@4.18.1)(marked@16.4.2)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)':
     dependencies:
       '@linaria/react': 6.3.0(react@19.2.5)
       canvas-hypertxt: 1.0.3
