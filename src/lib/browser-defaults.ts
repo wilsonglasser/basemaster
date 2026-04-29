@@ -1,9 +1,7 @@
-/** Disables default WebView behavior (reload, devtools, browser context
- *  menu, etc.) to make the app feel native.
- *  In dev, DevTools (F12) stays enabled for debugging. */
+/** Disables default WebView behavior (reload, browser context menu, etc.)
+ *  to make the app feel native. F12 / DevTools stay accessible — BaseMaster
+ *  is a developer tool and users may need them to debug their own setups. */
 export function installBrowserDefaultPrevention() {
-  const isDev = import.meta.env.DEV;
-
   const onKey = (e: KeyboardEvent) => {
     const key = e.key;
     const low = key.toLowerCase();
@@ -13,13 +11,7 @@ export function installBrowserDefaultPrevention() {
     if (key === "F5") return block(e);
     if (mod && low === "r") return block(e);
 
-    // DevTools in production.
-    if (!isDev) {
-      if (key === "F12") return block(e);
-      if (mod && e.shiftKey && (low === "i" || low === "j" || low === "c")) {
-        return block(e);
-      }
-    }
+    // F12 / Ctrl+Shift+I/J/C stay unblocked — see top-of-file note.
 
     // Print, Save as, Open file (browser-native, useless in an app).
     if (mod && !e.shiftKey && !e.altKey) {

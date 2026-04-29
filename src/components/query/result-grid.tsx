@@ -530,6 +530,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
                   if (edits.length === 1 && cells.length > 1 && onCellEdit) {
                     const text = extractCellText(edits[0].value);
                     for (const [c, r] of cells) onCellEdit(c, r, text);
+                    // Pin the cursor on the originally-edited cell so Enter
+                    // doesn't drop selection a row down.
+                    restoreCellRef.current = edits[0].location;
                     return true;
                   }
                   if (onBatchEdit) {
@@ -539,11 +542,18 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
                       text: extractCellText(e.value),
                     }));
                     if (batched.length > 0) onBatchEdit(batched);
+                    // Single-cell case (overlay Enter) — pin the cursor there.
+                    if (edits.length === 1) {
+                      restoreCellRef.current = edits[0].location;
+                    }
                     return true;
                   }
                   for (const e of edits) {
                     const [col, row] = e.location;
                     onCellEdit?.(col, row, extractCellText(e.value));
+                  }
+                  if (edits.length === 1) {
+                    restoreCellRef.current = edits[0].location;
                   }
                   return true;
                 }

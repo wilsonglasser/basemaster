@@ -44,6 +44,9 @@ interface StructurePaneProps {
   initialEdit?: boolean;
   /** tabId do TableView pai — registra bridge pra edit remoto (Ctrl+D). */
   tabId?: string;
+  /** Called after a successful ALTER apply, so the parent can refresh
+   *  the data grid (column types/order may have changed). */
+  onApplied?: () => void;
 }
 
 export function StructurePane({
@@ -52,6 +55,7 @@ export function StructurePane({
   table,
   initialEdit = false,
   tabId,
+  onApplied,
 }: StructurePaneProps) {
   const t = useT();
   const cols = useSchemaCache(
@@ -247,6 +251,7 @@ export function StructurePane({
       setDraftFks(null);
       setDraftOpts(null);
       if (tabId) useTableDraft.getState().clear(tabId);
+      onApplied?.();
     } catch (e) {
       setApplyError(String(e));
     } finally {

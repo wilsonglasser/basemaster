@@ -17,7 +17,7 @@ basemaster-driver-mysql = { path = "../crates/driver-mysql" }
 basemaster-driver-postgres = { path = "../crates/driver-postgres" }
 basemaster-driver-sqlite = { path = "../crates/driver-sqlite" }
 basemaster-store = { path = "../crates/store" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"

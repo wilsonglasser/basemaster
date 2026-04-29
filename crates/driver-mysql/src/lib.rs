@@ -1065,6 +1065,10 @@ fn parse_column_type(raw: &str) -> ColumnType {
         .and_then(|(_, rest)| rest.split_once(')').map(|(in_p, _)| in_p));
 
     match head {
+        // tinyint(1) is the MySQL convention for BOOLEAN — `BOOL`/`BOOLEAN`
+        // in DDL is rewritten to `tinyint(1)`. Treat it as Boolean so the
+        // grid renders a true/false dropdown.
+        "tinyint" if inside_parens.map(|p| p.trim()) == Some("1") => ColumnType::Boolean,
         "tinyint" => ColumnType::Integer { bits: 8, unsigned },
         "smallint" => ColumnType::Integer { bits: 16, unsigned },
         "mediumint" => ColumnType::Integer { bits: 24, unsigned },

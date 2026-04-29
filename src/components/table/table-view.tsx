@@ -1522,6 +1522,9 @@ export function TableView({
             schema={schema}
             table={table}
             initialEdit={initialEdit}
+            onApplied={() => {
+              void refresh();
+            }}
           />
         )}
         {view === "data" &&
