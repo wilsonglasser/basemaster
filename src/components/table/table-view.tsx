@@ -437,20 +437,6 @@ export function TableView({
     }
   };
 
-  const scrollAfterLayout = (
-    col: number,
-    row: number,
-    align: "start" | "center" | "end" = "end",
-  ) => {
-    // setTimeout with enough delay for Glide's ResizeObserver to have
-    // already reflected the new height (caused by the footer appearing).
-    // Isolated RAFs were running before the resize and Glide was scrolling
-    // using stale dimensions.
-    window.setTimeout(() => {
-      gridRef.current?.scrollToCell(col, row, align);
-    }, 80);
-  };
-
   const handleCellEdit = (col: number, row: number, newText: string) => {
     if (!data) return;
     const existingLen = data.rows.length;
@@ -466,7 +452,6 @@ export function TableView({
         next[newIdx] = m;
         return next;
       });
-      scrollAfterLayout(col, row);
       return;
     }
     const original = data.rows[row]?.[col];
@@ -483,7 +468,6 @@ export function TableView({
       }
       return next;
     });
-    scrollAfterLayout(col, row);
   };
 
   const handleAppendRow = (focusCol = 0) => {
@@ -560,9 +544,6 @@ export function TableView({
       });
     }
 
-    // Scroll to the last row touched.
-    const lastRow = Math.max(...edits.map((e) => e.row));
-    scrollAfterLayout(0, lastRow);
   };
 
   const handleDeleteCells = (
@@ -1528,26 +1509,24 @@ export function TableView({
             }}
           />
         )}
-        {view === "data" && (
-          // Always rendered as a flex sibling so its appearance/dismissal
-          // doesn't resize the grid container — Glide's ResizeObserver was
-          // firing on layout change and snapping scrollLeft back to 0.
-          // Hidden when there are no pending changes, but the slot stays
-          // in the layout.
-          <DirtyFooter
-            editCount={dirty.size}
-            deleteCount={rowsToDelete.size}
-            insertCount={filledNewRowsCount}
-            applying={applying}
-            error={applyError}
-            onApply={handleApply}
-            onDiscard={handleDiscard}
-            onUndo={undoEdit}
-            onRedo={redoEdit}
-            canUndo={canUndo}
-            canRedo={canRedo}
-          />
-        )}
+        {view === "data" &&
+          (dirty.size > 0 ||
+            rowsToDelete.size > 0 ||
+            filledNewRowsCount > 0) && (
+            <DirtyFooter
+              editCount={dirty.size}
+              deleteCount={rowsToDelete.size}
+              insertCount={filledNewRowsCount}
+              applying={applying}
+              error={applyError}
+              onApply={handleApply}
+              onDiscard={handleDiscard}
+              onUndo={undoEdit}
+              onRedo={redoEdit}
+              canUndo={canUndo}
+              canRedo={canRedo}
+            />
+          )}
         {view === "data" && noPk && data && (
           <div
             className={cn(
@@ -2454,22 +2433,15 @@ function DirtyFooter({
     parts.push(
       t(insertCount === 1 ? "table.footer.newRows" : "table.footer.newRowsMany", { n: insertCount }),
     );
-  // Always rendered as a flex sibling so its visibility flip doesn't resize
-  // the grid above. When there's nothing pending we keep the same layout
-  // height but go invisible + non-interactive.
-  const hidden = editCount === 0 && deleteCount === 0 && insertCount === 0;
   return (
     <div
-      aria-hidden={hidden}
       className={cn(
         "flex shrink-0 flex-col gap-1 border-t border-border px-3 py-1.5 text-xs",
-        hidden
-          ? "invisible pointer-events-none"
-          : error
+        error
+          ? "bg-destructive/10"
+          : deleteCount > 0
             ? "bg-destructive/10"
-            : deleteCount > 0
-              ? "bg-destructive/10"
-              : "bg-yellow-500/10",
+            : "bg-yellow-500/10",
       )}
     >
       <div className="flex items-center gap-3">

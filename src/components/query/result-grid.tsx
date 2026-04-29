@@ -420,6 +420,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         kind: GridCellKind.Text,
         data: display,
         displayData: display,
+        // Bypass Glide's CSV-style escaping on copy. JSON cells contain " and
+        // were being copied as `"{""a"":""b""}"`. With copyData set, the
+        // value is written to the clipboard as-is.
+        copyData: display,
         allowOverlay: true,
         readonly,
         themeOverride,
