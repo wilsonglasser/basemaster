@@ -242,6 +242,10 @@ PRs welcome. Open an issue before large changes so we can align on scope.
 
 [MIT](LICENSE) — Free and open-source.
 
+## Disclaimer
+
+BaseMaster is experimental software under active development. It connects directly to your databases and can execute destructive operations. **Every action you run through it is your responsibility.** Read the full [Terms of Use & Disclaimer](TERMS.md) before using it on data you care about.
+
 ---
 
 <p align="center">
