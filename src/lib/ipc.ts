@@ -28,8 +28,12 @@ import type {
   QueryRunBatch,
   SavedQuery,
   SavedQueryDraft,
+  SchemaFolder,
+  SchemaFolderAssignment,
   SchemaInfo,
   SchemaSnapshot,
+  TableFolder,
+  TableFolderAssignment,
   TableInfo,
   TableOpResult,
   TableOptions,
@@ -330,6 +334,57 @@ export const ipc = {
       }),
   },
 
+  schemaFolders: {
+    list: (connectionId: Uuid) =>
+      invoke<SchemaFolder[]>("schema_folders_list", { connectionId }),
+    assignments: (connectionId: Uuid) =>
+      invoke<SchemaFolderAssignment[]>("schema_folders_assignments", {
+        connectionId,
+      }),
+    create: (connectionId: Uuid, name: string) =>
+      invoke<SchemaFolder>("schema_folders_create", { connectionId, name }),
+    rename: (id: Uuid, name: string) =>
+      invoke<void>("schema_folders_rename", { id, name }),
+    delete: (id: Uuid) => invoke<void>("schema_folders_delete", { id }),
+    move: (connectionId: Uuid, schema: string, folderId: Uuid | null) =>
+      invoke<void>("schema_folders_move", {
+        connectionId,
+        schema,
+        folderId,
+      }),
+  },
+
+  tableFolders: {
+    list: (connectionId: Uuid, schema: string) =>
+      invoke<TableFolder[]>("table_folders_list", { connectionId, schema }),
+    assignments: (connectionId: Uuid, schema: string) =>
+      invoke<TableFolderAssignment[]>("table_folders_assignments", {
+        connectionId,
+        schema,
+      }),
+    create: (connectionId: Uuid, schema: string, name: string) =>
+      invoke<TableFolder>("table_folders_create", {
+        connectionId,
+        schema,
+        name,
+      }),
+    rename: (id: Uuid, name: string) =>
+      invoke<void>("table_folders_rename", { id, name }),
+    delete: (id: Uuid) => invoke<void>("table_folders_delete", { id }),
+    move: (
+      connectionId: Uuid,
+      schema: string,
+      table: string,
+      folderId: Uuid | null,
+    ) =>
+      invoke<void>("table_folders_move", {
+        connectionId,
+        schema,
+        table,
+        folderId,
+      }),
+  },
+
   queryHistory: {
     list: (connectionId: Uuid, limit?: number) =>
       invoke<QueryHistoryEntry[]>("query_history_list", {
@@ -379,6 +434,24 @@ export const ipc = {
     start: (port?: number) =>
       invoke<McpStatus>("mcp_start", { port: port ?? null }),
     stop: () => invoke<McpStatus>("mcp_stop"),
+  },
+
+  archive: {
+    /** Bundles a list of files into a ZIP. If `deleteSources` is true,
+     *  the source files are removed after the ZIP is built. */
+    makeZip: (
+      entries: { sourcePath: string; archiveName: string }[],
+      outputPath: string,
+      deleteSources?: boolean,
+    ) =>
+      invoke<void>("make_zip_archive", {
+        entries: entries.map((e) => ({
+          source_path: e.sourcePath,
+          archive_name: e.archiveName,
+        })),
+        outputPath,
+        deleteSources: deleteSources ?? false,
+      }),
   },
 
   taskbar: {

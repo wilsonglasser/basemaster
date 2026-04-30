@@ -35,6 +35,15 @@ export function DestructiveConfirmDialog() {
 
   if (!pending) return null;
 
+  const connColor = pending.connectionColor ?? null;
+  const dialogStyle = connColor
+    ? ({
+        // Tint the border so the modal visually inherits the conn accent.
+        borderColor: `${connColor}80`,
+        boxShadow: `0 0 0 1px ${connColor}40, 0 25px 50px -12px rgba(0,0,0,0.5)`,
+      } as React.CSSProperties)
+    : undefined;
+
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60"
@@ -42,6 +51,7 @@ export function DestructiveConfirmDialog() {
     >
       <div
         className="flex w-[520px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-destructive/40 bg-popover shadow-xl"
+        style={dialogStyle}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center gap-2 border-b border-border bg-destructive/10 px-4 py-3">
@@ -50,6 +60,30 @@ export function DestructiveConfirmDialog() {
             {pending.title}
           </h2>
         </header>
+
+        {pending.connectionName && (
+          <div
+            className="flex items-center gap-2 border-b border-border px-4 py-2 text-[11px]"
+            style={
+              connColor
+                ? { backgroundColor: `${connColor}1a` }
+                : undefined
+            }
+          >
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{
+                backgroundColor: connColor ?? "var(--muted-foreground)",
+              }}
+            />
+            <span className="font-medium text-muted-foreground">
+              {t("destructive.onConnection")}
+            </span>
+            <span className="font-mono font-semibold text-foreground">
+              {pending.connectionName}
+            </span>
+          </div>
+        )}
 
         <div className="max-h-[60vh] overflow-y-auto px-4 py-3">
           <p className="text-xs text-muted-foreground">{pending.description}</p>

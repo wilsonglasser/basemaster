@@ -16,6 +16,11 @@ import type { Uuid } from "@/lib/types";
  *   table2
  *   table3
  *
+ * For folder copy we use a different header that bundles the folder name:
+ *   #basemaster:table-folder {"connectionId":"...","schema":"...","folder":"..."}
+ *   table1
+ *   table2
+ *
  * The first line lets pasting into any editor show a "natural" list
  * (bare names) while our parser recognizes the header and reconstructs
  * the original context.
@@ -24,12 +29,24 @@ export interface TableClipboardPayload {
   connectionId: Uuid;
   schema: string;
   tables: string[];
+  /** When present, this clipboard is a folder copy: paste should also
+   *  recreate the folder on the target side and assign the new tables. */
+  folderName?: string;
 }
 
-const HEADER_PREFIX = "#basemaster:tables ";
+const HEADER_TABLES = "#basemaster:tables ";
+const HEADER_TABLE_FOLDER = "#basemaster:table-folder ";
 
 export function serializeTableClipboard(p: TableClipboardPayload): string {
-  const header = `${HEADER_PREFIX}${JSON.stringify({
+  if (p.folderName) {
+    const header = `${HEADER_TABLE_FOLDER}${JSON.stringify({
+      connectionId: p.connectionId,
+      schema: p.schema,
+      folder: p.folderName,
+    })}`;
+    return [header, ...p.tables].join("\n");
+  }
+  const header = `${HEADER_TABLES}${JSON.stringify({
     connectionId: p.connectionId,
     schema: p.schema,
   })}`;
@@ -43,17 +60,38 @@ export function parseTableClipboard(
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
   if (lines.length === 0) return null;
   const head = lines[0];
-  if (!head.startsWith(HEADER_PREFIX)) return null;
   try {
-    const meta = JSON.parse(head.slice(HEADER_PREFIX.length));
-    if (typeof meta.connectionId !== "string" || typeof meta.schema !== "string") {
-      return null;
+    if (head.startsWith(HEADER_TABLE_FOLDER)) {
+      const meta = JSON.parse(head.slice(HEADER_TABLE_FOLDER.length));
+      if (
+        typeof meta.connectionId !== "string" ||
+        typeof meta.schema !== "string" ||
+        typeof meta.folder !== "string"
+      ) {
+        return null;
+      }
+      return {
+        connectionId: meta.connectionId,
+        schema: meta.schema,
+        folderName: meta.folder,
+        tables: lines.slice(1),
+      };
     }
-    return {
-      connectionId: meta.connectionId,
-      schema: meta.schema,
-      tables: lines.slice(1),
-    };
+    if (head.startsWith(HEADER_TABLES)) {
+      const meta = JSON.parse(head.slice(HEADER_TABLES.length));
+      if (
+        typeof meta.connectionId !== "string" ||
+        typeof meta.schema !== "string"
+      ) {
+        return null;
+      }
+      return {
+        connectionId: meta.connectionId,
+        schema: meta.schema,
+        tables: lines.slice(1),
+      };
+    }
+    return null;
   } catch {
     return null;
   }

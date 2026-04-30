@@ -14,7 +14,9 @@ pub mod connection_folders;
 pub mod connections;
 pub mod query_history;
 pub mod saved_queries;
+pub mod schema_folders;
 pub mod secrets;
+pub mod table_folders;
 
 pub use connection_folders::{
     ConnectionFolder, ConnectionFolderDraft, ConnectionFolderRepo,
@@ -24,6 +26,8 @@ pub use query_history::{
     QueryHistoryDraft, QueryHistoryEntry, QueryHistoryRepo,
 };
 pub use saved_queries::{SavedQuery, SavedQueryDraft, SavedQueryRepo};
+pub use schema_folders::{SchemaFolder, SchemaFolderAssignment, SchemaFolderRepo};
+pub use table_folders::{TableFolder, TableFolderAssignment, TableFolderRepo};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -138,5 +142,13 @@ impl Store {
 
     pub fn connection_folders(&self) -> ConnectionFolderRepo<'_> {
         ConnectionFolderRepo::new(&self.pool)
+    }
+
+    pub fn schema_folders(&self) -> SchemaFolderRepo<'_> {
+        SchemaFolderRepo::new(&self.pool)
+    }
+
+    pub fn table_folders(&self) -> TableFolderRepo<'_> {
+        TableFolderRepo::new(&self.pool)
     }
 }

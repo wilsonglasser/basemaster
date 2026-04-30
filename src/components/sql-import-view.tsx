@@ -30,9 +30,15 @@ interface Props {
   tabId: string;
   targetConnectionId: Uuid;
   schema?: string;
+  initialFilePath?: string;
 }
 
-export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
+export function SqlImportView({
+  tabId,
+  targetConnectionId,
+  schema,
+  initialFilePath,
+}: Props) {
   const t = useT();
   const conn = useConnections((s) =>
     s.connections.find((c) => c.id === targetConnectionId),
@@ -45,7 +51,7 @@ export function SqlImportView({ tabId, targetConnectionId, schema }: Props) {
   const ensureSnapshot = useSchemaCache((s) => s.ensureSnapshot);
   const patchTab = useTabs((s) => s.patch);
 
-  const [path, setPath] = useState<string | null>(null);
+  const [path, setPath] = useState<string | null>(initialFilePath ?? null);
   const [targetSchema, setTargetSchema] = useState<string>(
     schema ?? conn?.default_database ?? "",
   );

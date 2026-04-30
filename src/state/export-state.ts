@@ -24,6 +24,15 @@ export type ExportRequest =
         schema: string;
         table: string;
       };
+    }
+  | {
+      mode: "multi-stream";
+      defaultName: string;
+      multiContext: {
+        connectionId: Uuid;
+        schema: string;
+        tables: string[];
+      };
     };
 
 interface ExportState {

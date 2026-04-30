@@ -31,6 +31,14 @@ interface Props {
   /** Supported formats. Default = all. Useful to disable XLSX in
    *  streaming mode (in-memory-only). */
   allowedFormats?: ExportFormat[];
+  /** When true, hides the column picker. Used by multi-table export
+   *  where the dialog asks only for format + path; each table's
+   *  columns are exported in full. */
+  hideColumns?: boolean;
+  /** Override the save dialog's filter & extension (e.g. "zip" for
+   *  multi-table bundles). Defaults to the format's extension. */
+  saveExtension?: string;
+  saveLabel?: string;
   /** Runs the export. Receives what the user chose. Can update
    *  progress via setProgress (rendered by the dialog). Throws on error. */
   onExport: (
@@ -46,6 +54,9 @@ export function ExportDialog({
   defaultName,
   rowCount,
   allowedFormats,
+  hideColumns,
+  saveExtension,
+  saveLabel,
   onExport,
 }: Props) {
   const t = useT();
@@ -107,27 +118,30 @@ export function ExportDialog({
   const selectNone = () => setSelected(new Set());
 
   const handleExport = async () => {
-    if (selected.size === 0) {
+    if (!hideColumns && selected.size === 0) {
       alert(t("exportDialog.selectAtLeastOneColumn"));
       return;
     }
     const meta = EXPORT_FORMATS.find((f) => f.id === format);
-    const ext =
+    const defaultExt =
       format === "xlsx"
         ? "xlsx"
         : format === "json"
           ? "json"
           : "csv";
+    const ext = saveExtension ?? defaultExt;
     const path = await save({
       title: t("exportDialog.title"),
       defaultPath: `${defaultName}.${ext}`,
       filters: [
-        { name: meta?.label ?? ext.toUpperCase(), extensions: [ext] },
+        { name: saveLabel ?? meta?.label ?? ext.toUpperCase(), extensions: [ext] },
       ],
     });
     if (!path) return;
 
-    const orderedCols = columns.filter((c) => selected.has(c));
+    const orderedCols = hideColumns
+      ? []
+      : columns.filter((c) => selected.has(c));
     setRunning(true);
     setProgress(null);
     try {
@@ -199,6 +213,7 @@ export function ExportDialog({
             </div>
           </section>
 
+          {!hideColumns && (
           <section>
             <div className="mb-1.5 flex items-baseline justify-between gap-2">
               <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -256,6 +271,7 @@ export function ExportDialog({
               )}
             </div>
           </section>
+          )}
 
           {rowCount != null && (
             <div className="text-[11px] text-muted-foreground">

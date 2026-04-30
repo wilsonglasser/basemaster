@@ -46,8 +46,11 @@ import {
 import type {
   ConnectionProfile,
   SavedQuery,
+  SchemaFolder,
   SchemaInfo,
+  TableFolder,
   TableInfo,
+  Uuid,
 } from "@/lib/types";
 import { DbIcon } from "@/components/ui/db-icon";
 import { cn } from "@/lib/utils";
@@ -56,6 +59,7 @@ import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { filterBySchema, useSavedQueries } from "@/state/saved-queries";
 import { useSchemaCache } from "@/state/schema-cache";
+import { useSchemaFolders, useTableFolders } from "@/state/folder-stores";
 import { HighlightText } from "@/components/ui/highlight-text";
 import { matches, useSidebarFilter } from "@/state/sidebar-filter";
 import { useSidebarSelection } from "@/state/sidebar-selection";
@@ -466,6 +470,7 @@ function useSidebarShortcuts() {
             targetConnectionId: sel.connectionId,
             targetSchema: tgtSchema,
             tables: payload.tables,
+            targetFolderName: payload.folderName,
           },
           accentColor: tgtConn.color,
         });
@@ -856,6 +861,7 @@ LIMIT 50;`;
         targetConnectionId: conn.id,
         targetSchema: tgtSchema,
         tables: payload.tables,
+        targetFolderName: payload.folderName,
       },
       accentColor: conn.color,
     });
@@ -928,6 +934,17 @@ LIMIT 50;`;
     });
   };
 
+  const createSchemaFolderForConn = useSchemaFolders((s) => s.create);
+  const createSchemaFolder = async () => {
+    const name = await appPrompt(t("tree.schemaFolderPrompt"));
+    if (!name || !name.trim()) return;
+    try {
+      await createSchemaFolderForConn(conn.id, name.trim());
+    } catch (e) {
+      void appAlert(t("tree.createFolderFailed", { error: String(e) }));
+    }
+  };
+
   const menuItems: ContextEntry[] = active
     ? [
         { icon: <FileCode2 className="h-3.5 w-3.5" />, label: t("tree.newQuery"), onClick: newQuery },
@@ -947,6 +964,7 @@ LIMIT 50;`;
           : []),
         { icon: <Cog className="h-3.5 w-3.5" />, label: t("tree.processes"), onClick: openProcesses },
         { icon: <Plug className="h-3.5 w-3.5" />, label: t("tree.users"), onClick: openUsers },
+        { icon: <FolderIcon className="h-3.5 w-3.5" />, label: t("tree.newSchemaFolder"), onClick: createSchemaFolder },
         { icon: <RefreshCw className="h-3.5 w-3.5" />, label: t("common.refresh"), onClick: refresh },
         { icon: <Unplug className="h-3.5 w-3.5" />, label: t("tree.disconnect"), onClick: disconnect },
         { separator: true },
@@ -1106,6 +1124,41 @@ LIMIT 50;`;
               ? "border-conn-accent/40 bg-conn-accent/5"
               : "border-border",
           )}
+          onDragOver={(e) => {
+            if (
+              e.dataTransfer.types.includes(
+                "application/x-basemaster-schema",
+              ) &&
+              e.dataTransfer.getData(
+                "application/x-basemaster-schema-conn",
+              ) === conn.id
+            ) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }
+          }}
+          onDrop={async (e) => {
+            const sourceConn = e.dataTransfer.getData(
+              "application/x-basemaster-schema-conn",
+            );
+            const schemaName = e.dataTransfer.getData(
+              "application/x-basemaster-schema",
+            );
+            if (sourceConn !== conn.id || !schemaName) return;
+            // Only act if the schema was actually inside a folder.
+            const cur = useSchemaFolders
+              .getState()
+              .assignments[conn.id]?.[schemaName];
+            if (!cur) return;
+            e.preventDefault();
+            try {
+              await useSchemaFolders
+                .getState()
+                .move(conn.id, schemaName, null);
+            } catch (err) {
+              void appAlert(t("tree.moveFailed", { error: String(err) }));
+            }
+          }}
         >
           {error && (
             <li className="px-1.5 py-1 text-xs text-destructive">{error}</li>
@@ -1167,6 +1220,14 @@ function SchemasList({
   conn: ConnectionProfile;
   schemas: SchemaInfo[];
 }) {
+  const ensureFolders = useSchemaFolders((s) => s.ensure);
+  const folders = useSchemaFolders((s) => s.folders[conn.id]);
+  const assignments = useSchemaFolders((s) => s.assignments[conn.id]);
+
+  useEffect(() => {
+    void ensureFolders(conn.id).catch(() => {});
+  }, [conn.id, ensureFolders]);
+
   const { user, system } = useMemo(() => {
     const u: SchemaInfo[] = [];
     const s: SchemaInfo[] = [];
@@ -1179,9 +1240,33 @@ function SchemasList({
     return { user: u, system: s };
   }, [schemas, conn.driver]);
 
+  // Split user schemas into (a) those with a folder assignment and
+  // (b) loose ones. Folders render first, loose schemas after.
+  const { groupedByFolder, loose } = useMemo(() => {
+    const grouped: Record<Uuid, SchemaInfo[]> = {};
+    const lose: SchemaInfo[] = [];
+    for (const sc of user) {
+      const fid = assignments?.[sc.name];
+      if (fid) {
+        (grouped[fid] ??= []).push(sc);
+      } else {
+        lose.push(sc);
+      }
+    }
+    return { groupedByFolder: grouped, loose: lose };
+  }, [user, assignments]);
+
   return (
     <>
-      {user.map((s) => (
+      {(folders ?? []).map((f) => (
+        <SchemaFolderNode
+          key={f.id}
+          conn={conn}
+          folder={f}
+          schemas={groupedByFolder[f.id] ?? []}
+        />
+      ))}
+      {loose.map((s) => (
         <SchemaNode key={s.name} conn={conn} schema={s} />
       ))}
       {system.length > 0 && (
@@ -1421,18 +1506,16 @@ function SchemaNode({
   };
 
   const dropSchema = async () => {
-    const confirmed = await appConfirm(
-      t("tree.dropDbConfirm", { kind: dbLabel, name: schema.name }),
-    );
-    if (!confirmed) return;
-    // Second confirmation by typing the name (extra protection).
-    const typed = await appPrompt(
-      t("tree.dropDbTypePrompt", { name: schema.name }),
-    );
-    if (typed !== schema.name) {
-      await appAlert(t("tree.dropDbNameMismatch"));
-      return;
-    }
+    const ok = await confirmDestructive({
+      title: t("tree.dropDbTitle", { kind: dbLabel, name: schema.name }),
+      description: t("tree.dropDbBody"),
+      items: [schema.name],
+      confirmLabel: t("tree.dropDbConfirmLabel", { kind: dbLabel }),
+      checkboxLabel: t("tree.destructiveAck"),
+      connectionName: conn.name,
+      connectionColor: conn.color ?? null,
+    });
+    if (!ok) return;
     const isPg = conn.driver === "postgres";
     const quoted = isPg
       ? `"${schema.name.replace(/"/g, '""')}"`
@@ -1519,18 +1602,89 @@ function SchemaNode({
         targetConnectionId: conn.id,
         targetSchema: schema.name,
         tables: payload.tables,
+        targetFolderName: payload.folderName,
       },
       accentColor: conn.color,
     });
   };
 
+  const schemaFolders = useSchemaFolders((s) => s.folders[conn.id]) ?? [];
+  const schemaAssignments =
+    useSchemaFolders((s) => s.assignments[conn.id]) ?? {};
+  const moveSchemaToFolder = useSchemaFolders((s) => s.move);
+  const createSchemaFolderForConn = useSchemaFolders((s) => s.create);
+  const createTableFolderForSchema = useTableFolders((s) => s.create);
+  const currentSchemaFolderId = schemaAssignments[schema.name];
+
+  const moveToFolderItems: ContextEntry[] = [
+    ...schemaFolders.map<ContextEntry>((f) => ({
+      icon: <FolderIcon className="h-3.5 w-3.5" />,
+      label: t("tree.moveToFolder", { name: f.name }),
+      onClick: async () => {
+        try {
+          await moveSchemaToFolder(conn.id, schema.name, f.id);
+        } catch (e) {
+          void appAlert(t("tree.moveFailed", { error: String(e) }));
+        }
+      },
+      disabled: currentSchemaFolderId === f.id,
+    })),
+    {
+      icon: <FolderIcon className="h-3.5 w-3.5" />,
+      label: t("tree.moveToNewFolder"),
+      onClick: async () => {
+        const name = await appPrompt(t("tree.schemaFolderPrompt"));
+        if (!name || !name.trim()) return;
+        try {
+          const f = await createSchemaFolderForConn(conn.id, name.trim());
+          await moveSchemaToFolder(conn.id, schema.name, f.id);
+        } catch (e) {
+          void appAlert(t("tree.moveFailed", { error: String(e) }));
+        }
+      },
+    },
+    ...(currentSchemaFolderId
+      ? [
+          {
+            icon: <FolderIcon className="h-3.5 w-3.5" />,
+            label: t("tree.removeFromFolder"),
+            onClick: async () => {
+              try {
+                await moveSchemaToFolder(conn.id, schema.name, null);
+              } catch (e) {
+                void appAlert(t("tree.moveFailed", { error: String(e) }));
+              }
+            },
+          } as ContextEntry,
+        ]
+      : []),
+  ];
+
+  const newTableFolder = async () => {
+    const name = await appPrompt(t("tree.tableFolderPrompt"));
+    if (!name || !name.trim()) return;
+    try {
+      await createTableFolderForSchema(conn.id, schema.name, name.trim());
+    } catch (e) {
+      void appAlert(t("tree.createFolderFailed", { error: String(e) }));
+    }
+  };
+
   const menu = useContextMenu([
     { icon: <FileCode2 className="h-3.5 w-3.5" />, label: t("tree.newQuerySchema"), onClick: newQuery },
     { icon: <Plus className="h-3.5 w-3.5" />, label: t("tree.newTable"), onClick: newTableHere },
+    { icon: <FolderIcon className="h-3.5 w-3.5" />, label: t("tree.newTableFolder"), onClick: newTableFolder },
     { icon: <Database className="h-3.5 w-3.5" />, label: t("tree.newDbSibling", { kind: dbLabel }), onClick: createSiblingDatabase },
     { separator: true },
     { icon: <Copy className="h-3.5 w-3.5" />, label: t("tree.copyTables"), onClick: copyAllTables },
     { icon: <ClipboardPaste className="h-3.5 w-3.5" />, label: t("tree.pasteTables"), onClick: pasteTablesHere },
+    { separator: true },
+    {
+      submenu: true,
+      icon: <FolderIcon className="h-3.5 w-3.5" />,
+      label: t("tree.moveToFolderMenu"),
+      items: moveToFolderItems,
+    },
     { separator: true },
     { icon: <FileText className="h-3.5 w-3.5" />, label: t("tree.sqlDump"), onClick: openSchemaDump },
     { icon: <Upload className="h-3.5 w-3.5" />, label: t("tree.sqlImport"), onClick: openSchemaImport },
@@ -1552,6 +1706,19 @@ function SchemaNode({
             ? "bg-conn-accent/25 text-foreground ring-1 ring-conn-accent/60"
             : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
         )}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(
+            "application/x-basemaster-schema",
+            schema.name,
+          );
+          e.dataTransfer.setData(
+            "application/x-basemaster-schema-conn",
+            conn.id,
+          );
+          e.dataTransfer.setData("text/plain", schema.name);
+          e.dataTransfer.effectAllowed = "move";
+        }}
         onClick={() => {
           setSidebarSelected({
             kind: "schema",
@@ -1596,7 +1763,55 @@ function SchemaNode({
       {menu.element}
 
       {expanded && (
-        <ul className="ml-4 grid gap-0.5 border-l border-border pl-1">
+        <ul
+          className="ml-4 grid gap-0.5 border-l border-border pl-1"
+          onDragOver={(e) => {
+            if (
+              e.dataTransfer.types.includes(
+                "application/x-basemaster-table",
+              ) &&
+              e.dataTransfer.getData(
+                "application/x-basemaster-table-conn",
+              ) === conn.id &&
+              e.dataTransfer.getData(
+                "application/x-basemaster-table-schema",
+              ) === schema.name
+            ) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }
+          }}
+          onDrop={async (e) => {
+            const sourceConn = e.dataTransfer.getData(
+              "application/x-basemaster-table-conn",
+            );
+            const sourceSchema = e.dataTransfer.getData(
+              "application/x-basemaster-table-schema",
+            );
+            const tableName = e.dataTransfer.getData(
+              "application/x-basemaster-table",
+            );
+            if (
+              sourceConn !== conn.id ||
+              sourceSchema !== schema.name ||
+              !tableName
+            ) {
+              return;
+            }
+            const cur = useTableFolders
+              .getState()
+              .assignments[`${conn.id}:${schema.name}`]?.[tableName];
+            if (!cur) return;
+            e.preventDefault();
+            try {
+              await useTableFolders
+                .getState()
+                .move(conn.id, schema.name, tableName, null);
+            } catch (err) {
+              void appAlert(t("tree.moveFailed", { error: String(err) }));
+            }
+          }}
+        >
           {error && (
             <li className="px-1.5 py-1 text-[11px] text-destructive">
               {error}
@@ -1610,6 +1825,287 @@ function SchemaNode({
               <Loader2 className="h-3 w-3 animate-spin" />
               {t("tree.indexing")}
             </li>
+          )}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function SchemaFolderNode({
+  conn,
+  folder,
+  schemas,
+}: {
+  conn: ConnectionProfile;
+  folder: SchemaFolder;
+  schemas: readonly SchemaInfo[];
+}) {
+  const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const renameFolder = useSchemaFolders((s) => s.rename);
+  const deleteFolder = useSchemaFolders((s) => s.delete);
+  const moveSchema = useSchemaFolders((s) => s.move);
+
+  const handleRename = async () => {
+    const next = await appPrompt(t("tree.renameFolderPrompt"), {
+      defaultValue: folder.name,
+    });
+    if (!next || !next.trim() || next === folder.name) return;
+    try {
+      await renameFolder(conn.id, folder.id, next.trim());
+    } catch (e) {
+      void appAlert(t("tree.moveFailed", { error: String(e) }));
+    }
+  };
+
+  const handleDelete = async () => {
+    const ok = await appConfirm(
+      t("tree.deleteFolderConfirm", { name: folder.name }),
+    );
+    if (!ok) return;
+    try {
+      await deleteFolder(conn.id, folder.id);
+    } catch (e) {
+      void appAlert(t("tree.moveFailed", { error: String(e) }));
+    }
+  };
+
+  const handleDrop = async (schemaName: string) => {
+    try {
+      await moveSchema(conn.id, schemaName, folder.id);
+    } catch (e) {
+      void appAlert(t("tree.moveFailed", { error: String(e) }));
+    }
+  };
+
+  const menu = useContextMenu([
+    {
+      icon: <Pencil className="h-3.5 w-3.5" />,
+      label: t("tree.renameFolder"),
+      onClick: handleRename,
+    },
+    {
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      label: t("tree.deleteFolder"),
+      onClick: handleDelete,
+      variant: "destructive",
+    },
+  ]);
+
+  return (
+    <li>
+      <div
+        onClick={() => setExpanded((e) => !e)}
+        onContextMenu={menu.openAt}
+        onDragOver={(e) => {
+          if (
+            e.dataTransfer.types.includes("application/x-basemaster-schema") &&
+            e.dataTransfer.getData("application/x-basemaster-schema-conn") ===
+              conn.id
+          ) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }
+        }}
+        onDrop={(e) => {
+          const sourceConn = e.dataTransfer.getData(
+            "application/x-basemaster-schema-conn",
+          );
+          const schemaName = e.dataTransfer.getData(
+            "application/x-basemaster-schema",
+          );
+          if (sourceConn !== conn.id || !schemaName) return;
+          e.preventDefault();
+          e.stopPropagation();
+          void handleDrop(schemaName);
+        }}
+        className="group flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+        title={folder.name}
+      >
+        <span className="grid h-4 w-4 place-items-center">
+          {expanded ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
+        </span>
+        <FolderIcon className="h-3 w-3 shrink-0" />
+        <span className="flex-1 truncate font-medium">{folder.name}</span>
+        <span className="text-[10px] tabular-nums text-muted-foreground/60">
+          {schemas.length}
+        </span>
+      </div>
+      {menu.element}
+      {expanded && (
+        <ul className="ml-4 grid gap-0.5 border-l border-border/60 pl-1">
+          {schemas.length === 0 ? (
+            <li className="px-1.5 py-0.5 text-[11px] italic text-muted-foreground/60">
+              {t("tree.folderEmpty")}
+            </li>
+          ) : (
+            schemas.map((s) => (
+              <SchemaNode key={s.name} conn={conn} schema={s} />
+            ))
+          )}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function TableFolderNode({
+  conn,
+  schema,
+  folder,
+  tables,
+}: {
+  conn: ConnectionProfile;
+  schema: string;
+  folder: TableFolder;
+  tables: readonly TableInfo[];
+}) {
+  const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const renameFolder = useTableFolders((s) => s.rename);
+  const deleteFolder = useTableFolders((s) => s.delete);
+  const moveTable = useTableFolders((s) => s.move);
+
+  const handleRename = async () => {
+    const next = await appPrompt(t("tree.renameFolderPrompt"), {
+      defaultValue: folder.name,
+    });
+    if (!next || !next.trim() || next === folder.name) return;
+    try {
+      await renameFolder(conn.id, schema, folder.id, next.trim());
+    } catch (e) {
+      void appAlert(t("tree.moveFailed", { error: String(e) }));
+    }
+  };
+
+  const handleDelete = async () => {
+    const ok = await appConfirm(
+      t("tree.deleteFolderConfirm", { name: folder.name }),
+    );
+    if (!ok) return;
+    try {
+      await deleteFolder(conn.id, schema, folder.id);
+    } catch (e) {
+      void appAlert(t("tree.moveFailed", { error: String(e) }));
+    }
+  };
+
+  const handleDrop = async (tableName: string) => {
+    try {
+      await moveTable(conn.id, schema, tableName, folder.id);
+    } catch (e) {
+      void appAlert(t("tree.moveFailed", { error: String(e) }));
+    }
+  };
+
+  const handleCopyFolder = async () => {
+    const tableNames = tables
+      .filter((it) => it.kind !== "view" && it.kind !== "materialized_view")
+      .map((it) => it.name);
+    if (tableNames.length === 0) {
+      void appAlert(t("tree.noTables"));
+      return;
+    }
+    try {
+      await writeTableClipboard({
+        connectionId: conn.id,
+        schema,
+        tables: tableNames,
+        folderName: folder.name,
+      });
+    } catch (e) {
+      void appAlert(t("tree.pasteFailed", { error: String(e) }));
+    }
+  };
+
+  const menu = useContextMenu([
+    {
+      icon: <Copy className="h-3.5 w-3.5" />,
+      label: t("tree.copyTables"),
+      onClick: handleCopyFolder,
+    },
+    { separator: true },
+    {
+      icon: <Pencil className="h-3.5 w-3.5" />,
+      label: t("tree.renameFolder"),
+      onClick: handleRename,
+    },
+    {
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      label: t("tree.deleteFolder"),
+      onClick: handleDelete,
+      variant: "destructive",
+    },
+  ]);
+
+  return (
+    <li>
+      <div
+        onClick={() => setExpanded((e) => !e)}
+        onContextMenu={menu.openAt}
+        onDragOver={(e) => {
+          if (
+            e.dataTransfer.types.includes("application/x-basemaster-table") &&
+            e.dataTransfer.getData("application/x-basemaster-table-conn") ===
+              conn.id &&
+            e.dataTransfer.getData("application/x-basemaster-table-schema") ===
+              schema
+          ) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }
+        }}
+        onDrop={(e) => {
+          const sourceConn = e.dataTransfer.getData(
+            "application/x-basemaster-table-conn",
+          );
+          const sourceSchema = e.dataTransfer.getData(
+            "application/x-basemaster-table-schema",
+          );
+          const tableName = e.dataTransfer.getData(
+            "application/x-basemaster-table",
+          );
+          if (
+            sourceConn !== conn.id ||
+            sourceSchema !== schema ||
+            !tableName
+          ) {
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          void handleDrop(tableName);
+        }}
+        className="group flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+        title={folder.name}
+      >
+        <span className="grid h-4 w-4 place-items-center">
+          {expanded ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
+        </span>
+        <FolderIcon className="h-3 w-3 shrink-0" />
+        <span className="flex-1 truncate">{folder.name}</span>
+        <span className="text-[10px] tabular-nums text-muted-foreground/60">
+          {tables.length}
+        </span>
+      </div>
+      {menu.element}
+      {expanded && (
+        <ul className="ml-4 grid gap-0.5 border-l border-border/60 pl-1">
+          {tables.length === 0 ? (
+            <li className="px-1.5 py-0.5 text-[11px] italic text-muted-foreground/60">
+              {t("tree.folderEmpty")}
+            </li>
+          ) : (
+            tables.map((it) => <TableNode key={it.name} conn={conn} table={it} />)
           )}
         </ul>
       )}
@@ -1657,6 +2153,29 @@ function CategoryGroup({
     }
     return { tableList: tL, viewList: v };
   }, [tables, query, schemaMatches]);
+
+  const ensureTableFolders = useTableFolders((s) => s.ensure);
+  const tableFolders = useTableFolders(
+    (s) => s.folders[`${conn.id}:${schema}`],
+  );
+  const tableAssignments = useTableFolders(
+    (s) => s.assignments[`${conn.id}:${schema}`],
+  );
+
+  useEffect(() => {
+    void ensureTableFolders(conn.id, schema).catch(() => {});
+  }, [conn.id, schema, ensureTableFolders]);
+
+  const { groupedTables, looseTables } = useMemo(() => {
+    const grouped: Record<Uuid, TableInfo[]> = {};
+    const lose: TableInfo[] = [];
+    for (const it of tableList) {
+      const fid = tableAssignments?.[it.name];
+      if (fid) (grouped[fid] ??= []).push(it);
+      else lose.push(it);
+    }
+    return { groupedTables: grouped, looseTables: lose };
+  }, [tableList, tableAssignments]);
 
   // Keep the multi-select store in sync with the visible list :
   // shift+click needs the ordered range to work.
@@ -1730,7 +2249,16 @@ function CategoryGroup({
         selected={tablesSelected}
         clickableWhenEmpty
       >
-        {tableList.map((it) => (
+        {(tableFolders ?? []).map((f) => (
+          <TableFolderNode
+            key={f.id}
+            conn={conn}
+            schema={schema}
+            folder={f}
+            tables={groupedTables[f.id] ?? []}
+          />
+        ))}
+        {looseTables.map((it) => (
           <TableNode key={it.name} conn={conn} table={it} />
         ))}
       </Category>
@@ -2261,6 +2789,67 @@ function TableNode({
     menu.openAt(e);
   };
 
+  const tableFolderList =
+    useTableFolders((s) => s.folders[`${conn.id}:${table.schema}`]) ?? [];
+  const tableAssignmentsForSchema =
+    useTableFolders((s) => s.assignments[`${conn.id}:${table.schema}`]) ?? {};
+  const moveTableToFolder = useTableFolders((s) => s.move);
+  const createTableFolderInline = useTableFolders((s) => s.create);
+  const currentTableFolderId = tableAssignmentsForSchema[table.name];
+
+  const moveTableItems: ContextEntry[] = [
+    ...tableFolderList.map<ContextEntry>((f) => ({
+      icon: <FolderIcon className="h-3.5 w-3.5" />,
+      label: t("tree.moveToFolder", { name: f.name }),
+      onClick: async () => {
+        try {
+          await moveTableToFolder(conn.id, table.schema, table.name, f.id);
+        } catch (e) {
+          void appAlert(t("tree.moveFailed", { error: String(e) }));
+        }
+      },
+      disabled: currentTableFolderId === f.id,
+    })),
+    {
+      icon: <FolderIcon className="h-3.5 w-3.5" />,
+      label: t("tree.moveToNewFolder"),
+      onClick: async () => {
+        const name = await appPrompt(t("tree.tableFolderPrompt"));
+        if (!name || !name.trim()) return;
+        try {
+          const f = await createTableFolderInline(
+            conn.id,
+            table.schema,
+            name.trim(),
+          );
+          await moveTableToFolder(conn.id, table.schema, table.name, f.id);
+        } catch (e) {
+          void appAlert(t("tree.moveFailed", { error: String(e) }));
+        }
+      },
+    },
+    ...(currentTableFolderId
+      ? [
+          {
+            icon: <FolderIcon className="h-3.5 w-3.5" />,
+            label: t("tree.removeFromFolder"),
+            onClick: async () => {
+              try {
+                await moveTableToFolder(
+                  conn.id,
+                  table.schema,
+                  table.name,
+                  null,
+                );
+              } catch (e) {
+                void appAlert(t("tree.moveFailed", { error: String(e) }));
+              }
+            },
+          } as ContextEntry,
+        ]
+      : []),
+  ];
+
   const menu = useContextMenu([
     {
       icon: <TableIcon className="h-3.5 w-3.5" />,
@@ -2272,6 +2861,12 @@ function TableNode({
       label: t("tree.editTable"),
       shortcut: "Ctrl+D",
       onClick: editTable,
+    },
+    {
+      submenu: true,
+      icon: <FolderIcon className="h-3.5 w-3.5" />,
+      label: t("tree.moveToFolderMenu"),
+      items: moveTableItems,
     },
     {
       icon: <FileCode2 className="h-3.5 w-3.5" />,
@@ -2424,6 +3019,23 @@ function TableNode({
         ]
           .filter(Boolean)
           .join(" · ") || undefined}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(
+            "application/x-basemaster-table",
+            table.name,
+          );
+          e.dataTransfer.setData(
+            "application/x-basemaster-table-conn",
+            conn.id,
+          );
+          e.dataTransfer.setData(
+            "application/x-basemaster-table-schema",
+            table.schema,
+          );
+          e.dataTransfer.setData("text/plain", table.name);
+          e.dataTransfer.effectAllowed = "move";
+        }}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onDoubleClick={openTable}

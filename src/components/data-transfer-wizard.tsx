@@ -26,6 +26,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
 import { useSchemaCache } from "@/state/schema-cache";
+import { useTableFolders } from "@/state/folder-stores";
 import { appConfirm } from "@/state/app-dialog";
 import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
@@ -49,6 +50,9 @@ interface Props {
   initialTables?: string[];
   /** If true, jumps straight to the options step. */
   initialAutoAdvance?: boolean;
+  /** When pasting a folder: after a successful transfer, recreate the
+   *  folder on the target schema and assign the transferred tables. */
+  initialTargetFolderName?: string;
 }
 
 export function DataTransferWizard({
@@ -59,6 +63,7 @@ export function DataTransferWizard({
   initialTargetSchema,
   initialTables,
   initialAutoAdvance,
+  initialTargetFolderName,
 }: Props) {
   const t = useT();
   const patchTab = useTabs((s) => s.patch);
@@ -423,6 +428,42 @@ export function DataTransferWizard({
             .catch((err) =>
               console.warn("[transfer] re-index target failed:", err),
             );
+        }
+      }
+      // Folder paste: recreate the folder on the target schema and
+      // assign the transferred tables. Best-effort — failures here
+      // shouldn't block the wizard's success state.
+      if (
+        targetConn &&
+        targetSchema &&
+        initialTargetFolderName &&
+        e.payload.failed === 0
+      ) {
+        const tableNames = Array.from(selectedTables);
+        if (tableNames.length > 0) {
+          (async () => {
+            const tfState = useTableFolders.getState();
+            await tfState.ensure(targetConn, targetSchema);
+            // Reuse an existing folder of the same name when possible,
+            // otherwise create a new one.
+            const existing = (
+              tfState.folders[`${targetConn}:${targetSchema}`] ?? []
+            ).find((f) => f.name === initialTargetFolderName);
+            const folder =
+              existing ??
+              (await tfState.create(
+                targetConn,
+                targetSchema,
+                initialTargetFolderName,
+              ));
+            for (const tn of tableNames) {
+              await tfState
+                .move(targetConn, targetSchema, tn, folder.id)
+                .catch(() => {});
+            }
+          })().catch((err) =>
+            console.warn("[transfer] folder assign failed:", err),
+          );
         }
       }
     });

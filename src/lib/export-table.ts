@@ -175,3 +175,68 @@ export async function startTableExport(
     alert(`Falha ao ler estrutura: ${e}`);
   }
 }
+
+/**
+ * Bulk export: streams each table sequentially to a temp file and bundles
+ * them into a ZIP. Format choice + ZIP path come from the global export
+ * dialog (multi-stream mode).
+ */
+export async function startMultiTableExport(
+  connectionId: Uuid,
+  schema: string,
+  tables: string[],
+): Promise<void> {
+  if (tables.length === 0) return;
+  useExport.getState().open({
+    mode: "multi-stream",
+    defaultName: `${schema}-tables`,
+    multiContext: { connectionId, schema, tables },
+  });
+}
+
+/** Generates a per-table file name + extension that's safe inside a ZIP. */
+function safeArchiveName(table: string, format: ExportFormat): string {
+  const ext = format === "xlsx" ? "xlsx" : format === "json" ? "json" : "csv";
+  const base = table.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return `${base}.${ext}`;
+}
+
+/** Used by the global export dialog when running a multi-stream request. */
+export async function streamMultiTablesToZip(
+  connectionId: Uuid,
+  schema: string,
+  tables: readonly string[],
+  format: ExportFormat,
+  outputZipPath: string,
+  setProgress: (p: ExportProgress | null) => void,
+): Promise<void> {
+  // Per-table temp file beside the output ZIP, prefixed so they're easy
+  // to identify (and `make_zip_archive` cleans them up on success).
+  const stamp = Date.now();
+  const entries: { sourcePath: string; archiveName: string }[] = [];
+  let i = 0;
+  for (const table of tables) {
+    setProgress({
+      done: i,
+      total: tables.length,
+      message: `Exportando ${table} (${i + 1}/${tables.length})…`,
+    });
+    const archiveName = safeArchiveName(table, format);
+    const sourcePath = `${outputZipPath}.${stamp}.${i}.${archiveName}`;
+    const cols = await ipc.db.describeTable(connectionId, schema, table);
+    await streamTableToFile(
+      connectionId,
+      schema,
+      table,
+      cols.map((c) => c.name),
+      format,
+      sourcePath,
+      // Use a no-op inner progress; outer progress tracks per-table.
+      () => {},
+    );
+    entries.push({ sourcePath, archiveName });
+    i++;
+  }
+  setProgress({ done: i, total: tables.length, message: "Compactando ZIP…" });
+  await ipc.archive.makeZip(entries, outputZipPath, true);
+}

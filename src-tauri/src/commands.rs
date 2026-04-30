@@ -15,7 +15,8 @@ use basemaster_core::{
 use basemaster_store::{
     secrets, ConnectionDraft, ConnectionFolder, ConnectionFolderDraft,
     ConnectionProfile, QueryHistoryDraft, QueryHistoryEntry, SavedQuery,
-    SavedQueryDraft,
+    SavedQueryDraft, SchemaFolder, SchemaFolderAssignment, TableFolder,
+    TableFolderAssignment,
 };
 use chrono::Utc;
 use serde::Serialize;
@@ -1708,6 +1709,209 @@ pub async fn connection_folders_move(
         .move_connection(connection_id, folder_id)
         .await
         .map_err(err)
+}
+
+// -------------------------------------------------------- schema folders
+
+#[tauri::command]
+pub async fn schema_folders_list(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> R<Vec<SchemaFolder>> {
+    state
+        .store
+        .schema_folders()
+        .list(connection_id)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn schema_folders_assignments(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> R<Vec<SchemaFolderAssignment>> {
+    state
+        .store
+        .schema_folders()
+        .assignments(connection_id)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn schema_folders_create(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    name: String,
+) -> R<SchemaFolder> {
+    state
+        .store
+        .schema_folders()
+        .create(connection_id, name)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn schema_folders_rename(
+    state: State<'_, AppState>,
+    id: Uuid,
+    name: String,
+) -> R<()> {
+    state
+        .store
+        .schema_folders()
+        .rename(id, name)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn schema_folders_delete(
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<()> {
+    state.store.schema_folders().delete(id).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn schema_folders_move(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    folder_id: Option<Uuid>,
+) -> R<()> {
+    state
+        .store
+        .schema_folders()
+        .move_schema(connection_id, &schema, folder_id)
+        .await
+        .map_err(err)
+}
+
+// -------------------------------------------------------- table folders
+
+#[tauri::command]
+pub async fn table_folders_list(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+) -> R<Vec<TableFolder>> {
+    state
+        .store
+        .table_folders()
+        .list(connection_id, &schema)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn table_folders_assignments(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+) -> R<Vec<TableFolderAssignment>> {
+    state
+        .store
+        .table_folders()
+        .assignments(connection_id, &schema)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn table_folders_create(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    name: String,
+) -> R<TableFolder> {
+    state
+        .store
+        .table_folders()
+        .create(connection_id, schema, name)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn table_folders_rename(
+    state: State<'_, AppState>,
+    id: Uuid,
+    name: String,
+) -> R<()> {
+    state
+        .store
+        .table_folders()
+        .rename(id, name)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn table_folders_delete(
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<()> {
+    state.store.table_folders().delete(id).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn table_folders_move(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: String,
+    table: String,
+    folder_id: Option<Uuid>,
+) -> R<()> {
+    state
+        .store
+        .table_folders()
+        .move_table(connection_id, &schema, &table, folder_id)
+        .await
+        .map_err(err)
+}
+
+// -------------------------------------------------------- zip helper
+
+#[derive(serde::Deserialize)]
+pub struct ZipEntry {
+    pub source_path: String,
+    pub archive_name: String,
+}
+
+/// Bundles a list of files into a single ZIP. Used by multi-table export
+/// to package per-table dumps without re-streaming through the frontend.
+#[tauri::command]
+pub async fn make_zip_archive(
+    entries: Vec<ZipEntry>,
+    output_path: String,
+    delete_sources: Option<bool>,
+) -> R<()> {
+    use std::fs::File;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    use zip::CompressionMethod;
+
+    let f = File::create(&output_path).map_err(err)?;
+    let mut zip = zip::ZipWriter::new(f);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    for e in &entries {
+        let bytes = std::fs::read(&e.source_path).map_err(err)?;
+        zip.start_file(&e.archive_name, opts)
+            .map_err(|e| format!("zip start_file: {}", e))?;
+        zip.write_all(&bytes).map_err(err)?;
+    }
+    zip.finish().map_err(|e| format!("zip finish: {}", e))?;
+
+    if delete_sources.unwrap_or(false) {
+        for e in &entries {
+            let _ = std::fs::remove_file(&e.source_path);
+        }
+    }
+    Ok(())
 }
 
 // -------------------------------------------------------- query history

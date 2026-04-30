@@ -453,6 +453,7 @@ function TabContent({ tab }: { tab: Tab }) {
           tabId={tab.id}
           targetConnectionId={tab.kind.targetConnectionId}
           schema={tab.kind.schema}
+          initialFilePath={tab.kind.initialFilePath}
         />
       );
     case "data-transfer":
@@ -465,6 +466,7 @@ function TabContent({ tab }: { tab: Tab }) {
           initialTargetSchema={tab.kind.targetSchema}
           initialTables={tab.kind.tables}
           initialAutoAdvance={tab.kind.autoAdvance}
+          initialTargetFolderName={tab.kind.targetFolderName}
         />
       );
     case "schema-rename":

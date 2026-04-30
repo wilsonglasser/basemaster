@@ -20,6 +20,7 @@ import type { Column, Uuid } from "@/lib/types";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { useSchemaCache } from "@/state/schema-cache";
+import { useTabs } from "@/state/tabs";
 
 const CHUNK = 500;
 
@@ -144,6 +145,8 @@ export function DataImportView({
     });
   };
 
+  const newTab = useTabs((s) => s.open);
+
   const pickFile = async () => {
     const path = await openDialog({
       multiple: false,
@@ -151,11 +154,31 @@ export function DataImportView({
       filters: [
         {
           name: "Dados",
-          extensions: ["csv", "tsv", "json", "xlsx", "xls"],
+          extensions: ["csv", "tsv", "json", "xlsx", "xls", "sql", "zip"],
         },
       ],
     });
     if (!path || Array.isArray(path)) return;
+    // If the user picked a .sql or .zip, route them to the SQL importer
+    // instead — pre-configured with the picked path and current target.
+    const lower = path.toLowerCase();
+    if (lower.endsWith(".sql") || lower.endsWith(".zip")) {
+      if (!connId) {
+        setParseErr("Selecione uma conexão antes de importar SQL.");
+        return;
+      }
+      newTab({
+        label: `SQL · ${path.replace(/\\/g, "/").split("/").pop() ?? path}`,
+        kind: {
+          kind: "sql-import",
+          targetConnectionId: connId,
+          schema: schema ?? undefined,
+          initialFilePath: path,
+        },
+        accentColor: connections.find((c) => c.id === connId)?.color ?? null,
+      });
+      return;
+    }
     setFilePath(path);
     setParseErr(null);
     setParsed(null);

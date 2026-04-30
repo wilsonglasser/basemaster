@@ -126,6 +126,36 @@ export interface ConnectionFolderDraft {
   color?: string | null;
 }
 
+export interface SchemaFolder {
+  id: Uuid;
+  connection_id: Uuid;
+  name: string;
+  sort_order: number;
+  created_at: number;
+}
+
+export interface SchemaFolderAssignment {
+  connection_id: Uuid;
+  schema_name: string;
+  folder_id: Uuid;
+}
+
+export interface TableFolder {
+  id: Uuid;
+  connection_id: Uuid;
+  schema_name: string;
+  name: string;
+  sort_order: number;
+  created_at: number;
+}
+
+export interface TableFolderAssignment {
+  connection_id: Uuid;
+  schema_name: string;
+  table_name: string;
+  folder_id: Uuid;
+}
+
 export interface ConnectionProfile {
   id: Uuid;
   name: string;

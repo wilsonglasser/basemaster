@@ -7,6 +7,9 @@ import {
   Copy,
   Download,
   Eye,
+  FileCode2,
+  FileText,
+  Folder as FolderIcon,
   LayoutGrid,
   List,
   Loader2,
@@ -21,7 +24,10 @@ import {
 } from "lucide-react";
 
 import { useContextMenu, type ContextEntry } from "@/hooks/use-context-menu";
-import { startTableExport } from "@/lib/export-table";
+import {
+  startMultiTableExport,
+  startTableExport,
+} from "@/lib/export-table";
 import {
   buildMaintenanceSql,
   type MaintenanceAction,
@@ -39,6 +45,7 @@ import { confirmDestructive } from "@/state/destructive-confirm";
 import { useT } from "@/state/i18n";
 import { useActiveInfo } from "@/state/active-info";
 import { useSchemaCache } from "@/state/schema-cache";
+import { useTableFolders } from "@/state/folder-stores";
 import { useTabs } from "@/state/tabs";
 
 interface Props {
@@ -213,6 +220,8 @@ export function TablesListView({
         setLoading(true);
         try {
           await ensureSnapshot(connectionId, schema);
+        } catch (e) {
+          console.warn("[tables-list] ensureSnapshot:", e);
         } finally {
           setLoading(false);
         }
@@ -345,8 +354,11 @@ export function TablesListView({
 
   const exportSelected = () => {
     const targets = Array.from(selected);
-    for (const name of targets) {
-      startTableExport(connectionId, schema, name);
+    if (targets.length === 0) return;
+    if (targets.length === 1) {
+      void startTableExport(connectionId, schema, targets[0]);
+    } else {
+      void startMultiTableExport(connectionId, schema, targets);
     }
   };
 
@@ -520,6 +532,7 @@ export function TablesListView({
         targetConnectionId: connectionId,
         targetSchema: schema,
         tables: payload.tables,
+        targetFolderName: payload.folderName,
       },
       accentColor: conn?.color ?? null,
     });
@@ -586,6 +599,8 @@ export function TablesListView({
     invalidateSchema(connectionId, schema);
     try {
       await ensureSnapshot(connectionId, schema);
+    } catch (e) {
+      console.warn("[tables-list] refresh:", e);
     } finally {
       setLoading(false);
     }
@@ -632,6 +647,62 @@ export function TablesListView({
     });
   };
 
+  const startInlineRename = (name: string) => {
+    setEditingName(name);
+    setEditingDraft(name);
+  };
+
+  const openSelectAllForTable = (name: string) => {
+    const isPg = conn?.driver === "postgres";
+    const qi = isPg
+      ? `"${name.replace(/"/g, '""')}"`
+      : `\`${name.replace(/`/g, "``")}\``;
+    newTab({
+      label: t("tree.queryLabel", { name }),
+      kind: {
+        kind: "query",
+        connectionId,
+        schema,
+        initialSql: `SELECT *\n  FROM ${qi}\n LIMIT 200;`,
+        autoRun: true,
+      },
+      accentColor: conn?.color,
+    });
+  };
+
+  const openEmptyQuery = () => {
+    newTab({
+      label: t("tree.queryLabel", { name: schema }),
+      kind: { kind: "query", connectionId, schema },
+      accentColor: conn?.color,
+    });
+  };
+
+  const openSqlDumpFor = (names: string[]) => {
+    newTab({
+      label: t("tree.dumpLabel", { name: schema }),
+      kind: {
+        kind: "sql-dump",
+        sourceConnectionId: connectionId,
+        scopes: [{ schema, tables: names }],
+      },
+      accentColor: conn?.color,
+    });
+  };
+
+  const openImportFor = (name: string) => {
+    newTab({
+      label: `Import · ${name}`,
+      kind: {
+        kind: "data-import",
+        connectionId,
+        schema,
+        table: name,
+      },
+      accentColor: conn?.color,
+    });
+  };
+
   const handleRowContextMenu = (name: string, e: React.MouseEvent) => {
     // Keep selection if already selected (for bulk ops); otherwise replace it.
     if (!selected.has(name)) {
@@ -647,6 +718,61 @@ export function TablesListView({
       copyCount > 1
         ? `${t("tablesList.design")} (${copyCount})`
         : t("tablesList.design");
+
+    const tfState = useTableFolders.getState();
+    const tableFolderList = tfState.folders[`${connectionId}:${schema}`] ?? [];
+    const tableAssignments =
+      tfState.assignments[`${connectionId}:${schema}`] ?? {};
+    const targets = bulkTargets(name);
+    const moveTableItems: ContextEntry[] = [
+      ...tableFolderList.map<ContextEntry>((f) => ({
+        icon: <FolderIcon className="h-3.5 w-3.5" />,
+        label: t("tree.moveToFolder", { name: f.name }),
+        onClick: async () => {
+          try {
+            for (const tn of targets) {
+              await tfState.move(connectionId, schema, tn, f.id);
+            }
+          } catch (err) {
+            void appAlert(t("tree.moveFailed", { error: String(err) }));
+          }
+        },
+        disabled: targets.every((tn) => tableAssignments[tn] === f.id),
+      })),
+      {
+        icon: <FolderIcon className="h-3.5 w-3.5" />,
+        label: t("tree.moveToNewFolder"),
+        onClick: async () => {
+          const fname = await appPrompt(t("tree.tableFolderPrompt"));
+          if (!fname || !fname.trim()) return;
+          try {
+            const f = await tfState.create(connectionId, schema, fname.trim());
+            for (const tn of targets) {
+              await tfState.move(connectionId, schema, tn, f.id);
+            }
+          } catch (err) {
+            void appAlert(t("tree.moveFailed", { error: String(err) }));
+          }
+        },
+      },
+      ...(targets.some((tn) => tableAssignments[tn])
+        ? [
+            {
+              icon: <FolderIcon className="h-3.5 w-3.5" />,
+              label: t("tree.removeFromFolder"),
+              onClick: async () => {
+                try {
+                  for (const tn of targets) {
+                    await tfState.move(connectionId, schema, tn, null);
+                  }
+                } catch (err) {
+                  void appAlert(t("tree.moveFailed", { error: String(err) }));
+                }
+              },
+            } as ContextEntry,
+          ]
+        : []),
+    ];
     setCtxItems([
       {
         icon: <TableIcon className="h-3.5 w-3.5" />,
@@ -658,6 +784,17 @@ export function TablesListView({
         label: designLabel,
         onClick: () => openSelected("structure", name),
       },
+      {
+        icon: <FileCode2 className="h-3.5 w-3.5" />,
+        label: t("tree.selectAll", { name }),
+        onClick: () => openSelectAllForTable(name),
+      },
+      {
+        icon: <FileCode2 className="h-3.5 w-3.5" />,
+        label: t("tree.emptyQuery"),
+        onClick: openEmptyQuery,
+      },
+      { separator: true },
       {
         icon: <Copy className="h-3.5 w-3.5" />,
         label:
@@ -677,9 +814,45 @@ export function TablesListView({
         onClick: () => duplicate(name),
       },
       {
+        icon: <Pencil className="h-3.5 w-3.5" />,
+        label: t("tree.rename"),
+        onClick: () => startInlineRename(name),
+      },
+      { separator: true },
+      {
+        submenu: true,
+        icon: <FolderIcon className="h-3.5 w-3.5" />,
+        label: t("tree.moveToFolderMenu"),
+        items: moveTableItems,
+      },
+      { separator: true },
+      {
         icon: <Download className="h-3.5 w-3.5" />,
-        label: t("tree.export"),
-        onClick: () => startTableExport(connectionId, schema, name),
+        label:
+          copyCount > 1
+            ? `${t("tree.export")} (${copyCount})`
+            : t("tree.export"),
+        onClick: () => {
+          const targs = bulkTargets(name);
+          if (targs.length === 1) {
+            void startTableExport(connectionId, schema, targs[0]);
+          } else {
+            void startMultiTableExport(connectionId, schema, targs);
+          }
+        },
+      },
+      {
+        icon: <Upload className="h-3.5 w-3.5" />,
+        label: t("tree.importData"),
+        onClick: () => openImportFor(name),
+      },
+      {
+        icon: <FileText className="h-3.5 w-3.5" />,
+        label:
+          copyCount > 1
+            ? `${t("tree.sqlDump")} (${copyCount})`
+            : t("tree.sqlDump"),
+        onClick: () => openSqlDumpFor(bulkTargets(name)),
       },
       { separator: true },
       {

@@ -65,6 +65,9 @@ export type TabKind =
       targetConnectionId: Uuid;
       /** Default schema (applied via USE before the import). */
       schema?: string;
+      /** Pre-fill the file path (e.g. when redirected from data-import
+       *  after the user picked a .sql or .zip). */
+      initialFilePath?: string;
     }
   | {
       kind: "schema-rename";
@@ -84,6 +87,9 @@ export type TabKind =
       tables?: string[];
       /** Jump straight to the options/execution step. */
       autoAdvance?: boolean;
+      /** When pasting a folder: after transfer, create a folder with this
+       *  name on the target schema and assign the transferred tables. */
+      targetFolderName?: string;
     };
 
 export interface Tab {

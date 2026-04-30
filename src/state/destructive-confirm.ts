@@ -19,6 +19,10 @@ export interface PendingDestructive {
   confirmLabel: string;
   /** Text of the checkbox that must be checked. */
   checkboxLabel: string;
+  /** Optional connection context: makes it clear which target the
+   *  destructive action will hit. The color tints the dialog accent. */
+  connectionName?: string;
+  connectionColor?: string | null;
   resolve: (confirmed: boolean) => void;
 }
 
