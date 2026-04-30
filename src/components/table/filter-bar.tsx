@@ -144,6 +144,40 @@ export function FilterBar({
   onReset,
 }: Props) {
   const t = useT();
+  const [rootJustAdded, setRootJustAdded] = useState<number | null>(null);
+
+  const rootChildren = tree.kind === "group" ? tree.children : [];
+  const rootOp = tree.kind === "group" ? tree.op : "and";
+
+  const addRootCondition = () => {
+    const newLeaf: FilterNode = {
+      kind: "leaf",
+      filter: {
+        column: columns[0] ?? "",
+        op: "eq",
+        value: { type: "string", value: "" },
+      },
+    };
+    setRootJustAdded(rootChildren.length);
+    onChange({
+      kind: "group",
+      op: rootOp,
+      children: [...rootChildren, newLeaf],
+    });
+  };
+  const addRootGroup = () => {
+    setRootJustAdded(null);
+    onChange({
+      kind: "group",
+      op: rootOp,
+      children: [...rootChildren, { kind: "group", op: "and", children: [] }],
+    });
+  };
+  const clearRoot = () => {
+    setRootJustAdded(null);
+    onChange(emptyRoot());
+  };
+
   return (
     <div className="flex shrink-0 flex-col border-b border-border bg-card/20">
       <div className="flex items-start gap-2 px-3 py-1.5">
@@ -155,6 +189,8 @@ export function FilterBar({
             columnMeta={columnMeta}
             onChange={onChange}
             isRoot
+            hideAddButtons
+            externalJustAddedIdx={rootJustAdded}
           />
         </div>
       </div>
@@ -185,6 +221,37 @@ export function FilterBar({
             {t("filters.reset")}
           </button>
         )}
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={addRootCondition}
+            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={t("filters.addCondition")}
+          >
+            <Plus className="h-3 w-3" />
+            {t("filters.addCondition")}
+          </button>
+          <button
+            type="button"
+            onClick={addRootGroup}
+            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={t("filters.addGroup")}
+          >
+            <FolderPlus className="h-3 w-3" />
+            {t("filters.addGroup")}
+          </button>
+          {rootChildren.length > 0 && (
+            <button
+              type="button"
+              onClick={clearRoot}
+              className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+              title={t("filters.clear")}
+            >
+              <X className="h-3 w-3" />
+              {t("filters.clear")}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -197,6 +264,8 @@ function GroupEditor({
   onChange,
   onRemove,
   isRoot,
+  hideAddButtons,
+  externalJustAddedIdx,
 }: {
   node: FilterNode;
   columns: readonly string[];
@@ -204,8 +273,16 @@ function GroupEditor({
   onChange: (next: FilterNode) => void;
   onRemove?: () => void;
   isRoot?: boolean;
+  /** When true, suppress the inline +/folder+/X/clear buttons (root group:
+   *  the FilterBar footer hosts them). */
+  hideAddButtons?: boolean;
+  /** Externally-controlled "just added" index — used by the root group so
+   *  FilterBar's footer "+ cond" button can open the new chip in edit mode. */
+  externalJustAddedIdx?: number | null;
 }) {
   const t = useT();
+  const [localJustAdded, setLocalJustAdded] = useState<number | null>(null);
+  const justAddedIdx = externalJustAddedIdx ?? localJustAdded;
   if (node.kind !== "group") {
     // Shouldn't happen (GroupEditor called with leaf)
     return null;
@@ -227,6 +304,7 @@ function GroupEditor({
         value: { type: "string", value: "" },
       },
     };
+    setLocalJustAdded(children.length);
     onChange({ ...node, children: [...children, newLeaf] });
   };
   const addGroup = () => {
@@ -235,6 +313,7 @@ function GroupEditor({
       op: "and",
       children: [],
     };
+    setLocalJustAdded(null);
     onChange({ ...node, children: [...children, newGroup] });
   };
   const toggleOp = (nextOp: GroupOp) => {
@@ -266,6 +345,7 @@ function GroupEditor({
                   filter={child.filter}
                   columns={columns}
                   columnMeta={columnMeta}
+                  autoEdit={i === justAddedIdx}
                   onChange={(f) =>
                     patchChild(i, { kind: "leaf", filter: f })
                   }
@@ -286,45 +366,46 @@ function GroupEditor({
             );
           })}
         </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={addCondition}
-            className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("filters.addCondition")}
-          >
-            <Plus className="h-3 w-3" />
-          </button>
-          <button
-            type="button"
-            onClick={addGroup}
-            className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("filters.addGroup")}
-          >
-            <FolderPlus className="h-3 w-3" />
-          </button>
-          {!isRoot && onRemove && (
+        {!hideAddButtons && (
+          <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={onRemove}
-              className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
-              title={t("filters.removeGroup")}
+              onClick={addCondition}
+              className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title={t("filters.addCondition")}
             >
-              <X className="h-3 w-3" />
+              <Plus className="h-3 w-3" />
             </button>
-          )}
-          {isRoot && children.length > 0 && (
             <button
               type="button"
-              onClick={() =>
-                onChange({ kind: "group", op: "and", children: [] })
-              }
-              className="inline-flex h-6 items-center px-1 text-[10px] text-muted-foreground hover:text-foreground"
+              onClick={addGroup}
+              className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title={t("filters.addGroup")}
             >
-              {t("filters.clear")}
+              <FolderPlus className="h-3 w-3" />
             </button>
-          )}
-        </div>
+            {!isRoot && onRemove && (
+              <button
+                type="button"
+                onClick={onRemove}
+                className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+                title={t("filters.removeGroup")}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        )}
+        {hideAddButtons && !isRoot && onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+            title={t("filters.removeGroup")}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -355,15 +436,19 @@ function LeafChip({
   columnMeta,
   onChange,
   onRemove,
+  autoEdit,
 }: {
   filter: Filter;
   columns: readonly string[];
   columnMeta?: readonly Column[];
   onChange: (f: Filter) => void;
   onRemove: () => void;
+  /** When true, the chip mounts already in edit mode (used for newly-added
+   *  rules so the user starts typing without an extra click). */
+  autoEdit?: boolean;
 }) {
   const t = useT();
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(autoEdit ?? false);
   const [col, setCol] = useState(filter.column);
   const [op, setOp] = useState<FilterOp>(filter.op);
   const [value, setValue] = useState(valueAsText(filter.value));
