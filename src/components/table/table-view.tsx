@@ -78,7 +78,7 @@ interface TableViewProps {
   connectionId: Uuid;
   schema: string;
   table: string;
-  /** View inicial — default "data". */
+  /** View inicial : default "data". */
   initialView?: "data" | "structure";
   /** Se true + initialView=structure → entra em edit mode direto. */
   initialEdit?: boolean;
@@ -167,7 +167,10 @@ export function TableView({
     (initialTabState?.filters
       ? leavesToTree(initialTabState.filters)
       : emptyRoot());
-  const [filterTree, setFilterTree] = useState<FilterNode>(initialFilterTree);
+  // Hydrate draft separately so an in-flight edit survives tab switches.
+  const initialFilterDraft =
+    initialTabState?.filterTreeDraft ?? initialFilterTree;
+  const [filterTree, setFilterTree] = useState<FilterNode>(initialFilterDraft);
   const [appliedFilterTree, setAppliedFilterTree] =
     useState<FilterNode>(initialFilterTree);
   const filterCount = countLeaves(filterTree);
@@ -176,6 +179,12 @@ export function TableView({
     [filterTree, appliedFilterTree],
   );
   const [filterBarOpen, setFilterBarOpen] = useState(filterCount > 0);
+  const [columnSizes, setColumnSizes] = useState<Record<string, number>>(
+    () => initialTabState?.columnSizes ?? {},
+  );
+  const [scrollOffset, setScrollOffset] = useState<{ col: number; row: number }>(
+    () => initialTabState?.scrollOffset ?? { col: 0, row: 0 },
+  );
   const [count, setCount] = useState<number | null>(null);
   const [data, setData] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -184,12 +193,12 @@ export function TableView({
   const [exportOpen, setExportOpen] = useState(false);
   const [search, setSearch] = useState<SearchState>(EMPTY_SEARCH);
 
-  // Edits pendentes — chave "row:col" → snapshot (linha original + texto novo).
+  // Edits pendentes : chave "row:col" → snapshot (linha original + texto novo).
   // Cleared when page/limit/sort/refresh changes.
   const [dirty, setDirty] = useState<Map<string, PendingEdit>>(new Map());
   // Rows marked for DELETE (row index on the current page).
   const [rowsToDelete, setRowsToDelete] = useState<Set<number>>(new Set());
-  // Novas linhas pendentes de INSERT — array de maps (colName → texto).
+  // Novas linhas pendentes de INSERT : array de maps (colName → texto).
   const [newRows, setNewRows] = useState<Array<Map<string, string>>>([]);
   // How many of them have at least 1 filled cell (= ready to INSERT).
   const filledNewRowsCount = useMemo(
@@ -282,9 +291,11 @@ export function TableView({
 
   // Keyboard: Ctrl/Cmd+Z → undo; Ctrl/Cmd+Shift+Z or Ctrl+Y → redo.
   // Skips when focus is inside a text input (CodeMirror etc. handle
-  // their own undo).
+  // their own undo). Tab stays mounted on switch: guard against acting
+  // on behalf of a hidden tab.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (useTabs.getState().activeId !== tabId) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       const isEditable =
         tag === "INPUT" ||
@@ -313,7 +324,7 @@ export function TableView({
   // canUndo/canRedo flip (the ref itself doesn't trigger re-render).
   void undoRedoTick;
 
-  // Hidden columns (names) — visual filter. Doesn't affect SELECT or dirty.
+  // Hidden columns (names) : visual filter. Doesn't affect SELECT or dirty.
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(
     new Set(initialTabState?.hiddenColumns ?? []),
   );
@@ -338,7 +349,7 @@ export function TableView({
   // confirm on Apply to know they're operating without a PK.
   const editable = true;
   const noPk = pkColumns.length === 0;
-  /** Columns usable in WHERE when there's no PK — avoids comparing BLOB/JSON. */
+  /** Columns usable in WHERE when there's no PK : avoids comparing BLOB/JSON. */
   const matchableColumns = useMemo(() => {
     if (!noPk || !cachedColumns) return null;
     return cachedColumns
@@ -356,7 +367,7 @@ export function TableView({
     });
   }, [tabId, table, conn?.color, patchTab]);
 
-  // Mark the tab as dirty whenever there are unapplied edits — triggers
+  // Mark the tab as dirty whenever there are unapplied edits : triggers
   // confirm on close. Covers cell edits, deletions, and new rows.
   const hasPendingChanges =
     dirty.size > 0 || rowsToDelete.size > 0 || filledNewRowsCount > 0;
@@ -651,7 +662,7 @@ export function TableView({
         const row = Number(rowStr);
         const oldCol = Number(colStr);
         const newCol = oldToNew[oldCol];
-        // originalRow na PendingEdit foi capturada em ordem antiga — reordena
+        // originalRow na PendingEdit foi capturada em ordem antiga : reordena
         // pra bater com a nova ordem de columns.
         const newOriginalRow = permutation.map((i) => edit.originalRow[i]);
         next.set(`${row}:${newCol}`, {
@@ -664,7 +675,7 @@ export function TableView({
     });
   };
 
-  /** Set literal empty string ("") — distinct from NULL. Only makes sense on
+  /** Set literal empty string ("") : distinct from NULL. Only makes sense on
    *  linhas existentes (em novas, ausente = NULL). */
   const handleSetEmpty = (col: number, row: number) => {
     if (!data) return;
@@ -691,7 +702,7 @@ export function TableView({
     });
   };
 
-  // Context menu (right-click em cell). Itens re-gerados por click — o hook
+  // Context menu (right-click em cell). Itens re-gerados por click : o hook
   // cuida do fechamento/tecla Esc. Os callbacks capturam col/row no fechamento
   // do handler abaixo.
   const [cellMenuItems, setCellMenuItems] = useState<ContextEntry[]>([]);
@@ -743,7 +754,7 @@ export function TableView({
     items.push({
       icon: <EyeOff className="h-3.5 w-3.5" />,
       label: t("table.headerMenu.hide"),
-      // Never allow hiding the last visible column — otherwise the grid becomes NaN.
+      // Never allow hiding the last visible column : otherwise the grid becomes NaN.
       disabled: hiddenColumns.size >= data.columns.length - 1,
       onClick: () => {
         setHiddenColumns((prev) => {
@@ -935,7 +946,7 @@ export function TableView({
     setApplyError(null);
     try {
       const errs: string[] = [];
-      // Collect the successes to apply locally (no refetch) —
+      // Collect the successes to apply locally (no refetch) :
       // INSERTs promote the newRow with last_insert_id, UPDATEs patch
       // the cell at the index, DELETEs remove it.
       const deletedRowSet = new Set<number>();
@@ -993,7 +1004,7 @@ export function TableView({
         });
       }
 
-      // 3. INSERT INTO ... VALUES — only rows with at least one value.
+      // 3. INSERT INTO ... VALUES : only rows with at least one value.
       const nonEmptyNewRows = newRows.filter((m) => m.size > 0);
       if (nonEmptyNewRows.length > 0) {
         const rowsPayload: PkEntry[][] = nonEmptyNewRows.map((m) =>
@@ -1036,7 +1047,7 @@ export function TableView({
         });
       }
 
-      // Apply changes LOCALLY — no refetch. Preserves scroll and keeps
+      // Apply changes LOCALLY : no refetch. Preserves scroll and keeps
       // new rows at their current position (Navicat-style).
       if (
         deletedRowSet.size > 0 ||
@@ -1079,7 +1090,7 @@ export function TableView({
       }
 
       // Clear pending state. Errors stay in the footer for the user to
-      // see, but dirty/newRows/delete are reset — we assume failures
+      // see, but dirty/newRows/delete are reset : we assume failures
       // are rare; if needed, the user can refresh or re-edit.
       if (errs.length > 0) {
         setApplyError(errs.join("\n"));
@@ -1111,22 +1122,40 @@ export function TableView({
   // Persiste runtime da tabela no tab-state store (sobrevive a
   // detach/reattach e restart do app). Debounced pelo effect do React.
   useEffect(() => {
+    const draftDirty =
+      JSON.stringify(filterTree) !== JSON.stringify(appliedFilterTree);
     patchTableState(tabId, {
       page,
       limit,
       orderBy,
       hiddenColumns: Array.from(hiddenColumns),
       columnOrder: data?.columns,
-      // Persist the *applied* tree, not the draft — restoring an open tab
-      // shouldn't auto-apply mid-edit changes the user hadn't committed.
+      columnSizes,
+      scrollOffset,
+      // Persist the *applied* tree as the source of truth for a query
+      // restart, plus the draft separately so a tab switch mid-edit
+      // doesn't lose the user's pending changes.
       filterTree: appliedFilterTree,
-      // V1 legacy — zeroed to avoid confusion on next read.
+      filterTreeDraft: draftDirty ? filterTree : undefined,
+      // V1 legacy : zeroed to avoid confusion on next read.
       filters: undefined,
     });
-  }, [tabId, page, limit, orderBy, hiddenColumns, data?.columns, appliedFilterTree, patchTableState]);
+  }, [
+    tabId,
+    page,
+    limit,
+    orderBy,
+    hiddenColumns,
+    data?.columns,
+    appliedFilterTree,
+    filterTree,
+    columnSizes,
+    scrollOffset,
+    patchTableState,
+  ]);
 
   const handleFilterTreeChange = (next: FilterNode) => {
-    setFilterTree(next); // draft only — query reruns on Apply
+    setFilterTree(next); // draft only : query reruns on Apply
   };
   const applyFilters = () => {
     setAppliedFilterTree(filterTree);
@@ -1143,6 +1172,7 @@ export function TableView({
   // Shortcuts: Ctrl+F (search), F5 (refresh).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (useTabs.getState().activeId !== tabId) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
         setSearchOpen(true);
@@ -1188,7 +1218,7 @@ export function TableView({
   const dirtyIntents = useMemo(() => {
     const m = new Map<string, "edit" | "null" | "new">();
     for (const [k, e] of dirty) {
-      // "empty" reuses "edit" color (yellow) — visually it doesn't break.
+      // "empty" reuses "edit" color (yellow) : visually it doesn't break.
       m.set(k, e.intent === "empty" ? "edit" : e.intent);
     }
     // New rows: mark ALL cells as "new" (green).
@@ -1281,7 +1311,7 @@ export function TableView({
   }, [dirtyIntents, hiddenColumns, fullToVisual]);
 
   // Wrappers that translate visual→full before calling handlers. Only
-  // used when something is hidden — otherwise reuse the originals
+  // used when something is hidden : otherwise reuse the originals
   // directly to avoid allocations.
   const v2f = (v: number) => visualToFull[v] ?? v;
   const visualCellEdit = (col: number, row: number, text: string) =>
@@ -1496,6 +1526,17 @@ export function TableView({
             onHeaderContextMenu={visualHeaderContextMenu}
             orderBy={orderBy}
             gridRef={gridRef}
+            columnSizes={columnSizes}
+            onColumnSizesChange={setColumnSizes}
+            scrollOffset={scrollOffset}
+            onScrollChange={setScrollOffset}
+            filterActive={countLeaves(appliedFilterTree) > 0}
+            onClearFilter={() => {
+              const empty = emptyRoot();
+              setFilterTree(empty);
+              setAppliedFilterTree(empty);
+              setPage(0);
+            }}
           />
         ) : (
           <StructurePane
@@ -1669,7 +1710,24 @@ function Toolbar({
 
       {view === "data" && (
         <>
-          <div className="ml-3 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onToggleFilters}
+            className={cn(
+              "relative grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors",
+              "hover:bg-accent hover:text-foreground",
+              filterCount > 0 && "text-conn-accent",
+            )}
+            title={t("table.toolbar.filters")}
+          >
+            <FilterIcon className="h-3.5 w-3.5" />
+            {filterCount > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 grid h-3 w-3 place-items-center rounded-full bg-conn-accent text-[8px] font-bold text-conn-accent-foreground">
+                {filterCount}
+              </span>
+            )}
+          </button>
+          <div className="ml-1 flex items-center gap-1.5">
             <span className="text-muted-foreground">{t("table.toolbar.limit")}</span>
             <select
               value={limit}
@@ -1770,25 +1828,6 @@ function Toolbar({
             title={t("table.toolbar.deleteSelected")}
           >
             <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        )}
-        {view === "data" && (
-          <button
-            type="button"
-            onClick={onToggleFilters}
-            className={cn(
-              "relative grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors",
-              "hover:bg-accent hover:text-foreground",
-              filterCount > 0 && "text-conn-accent",
-            )}
-            title={t("table.toolbar.filters")}
-          >
-            <FilterIcon className="h-3.5 w-3.5" />
-            {filterCount > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 grid h-3 w-3 place-items-center rounded-full bg-conn-accent text-[8px] font-bold text-conn-accent-foreground">
-                {filterCount}
-              </span>
-            )}
           </button>
         )}
         {view === "data" && (
@@ -1952,6 +1991,12 @@ function DataPane({
   onAppendRow,
   orderBy,
   gridRef,
+  columnSizes,
+  onColumnSizesChange,
+  scrollOffset,
+  onScrollChange,
+  filterActive,
+  onClearFilter,
 }: {
   data: QueryResult | null;
   displayColumns: string[];
@@ -1988,6 +2033,12 @@ function DataPane({
   onAppendRow?: () => void;
   orderBy: OrderBy | null;
   gridRef: React.RefObject<ResultGridHandle | null>;
+  columnSizes?: Record<string, number>;
+  onColumnSizesChange?: (next: Record<string, number>) => void;
+  scrollOffset?: { col: number; row: number };
+  onScrollChange?: (offset: { col: number; row: number }) => void;
+  filterActive?: boolean;
+  onClearFilter?: () => void;
 }) {
   if (error) {
     return (
@@ -2014,7 +2065,7 @@ function DataPane({
 
   const decoratedColumns = useDecoratedColumns(displayColumns, orderBy);
 
-  // Empty state when there are NO rows (existing or new) — Glide with
+  // Empty state when there are NO rows (existing or new) : Glide with
   // rows=0 doesn't render a useful visual, so we swap it for an
   // explanatory "empty" state. Clicking add updates state, displayRows
   // grows to 1, and the grid takes over normally.
@@ -2025,6 +2076,8 @@ function DataPane({
           columns={data.columns}
           canAppend={!!onAppendRow}
           onAppendRow={onAppendRow}
+          filterActive={filterActive}
+          onClearFilter={onClearFilter}
         />
         {loading && <LoadingOverlay />}
       </div>
@@ -2058,6 +2111,10 @@ function DataPane({
         onColumnMoved={onColumnMoved}
         onHeaderClick={onHeaderClick}
         onHeaderContextMenu={onHeaderContextMenu}
+        columnSizes={columnSizes}
+        onColumnSizesChange={onColumnSizesChange}
+        scrollOffset={scrollOffset}
+        onScrollChange={onScrollChange}
       />
       {loading && <LoadingOverlay />}
     </div>
@@ -2171,13 +2228,42 @@ function EmptyTableState({
   columns,
   canAppend,
   onAppendRow,
+  filterActive,
+  onClearFilter,
 }: {
   columns: string[];
   canAppend: boolean;
   onAppendRow?: () => void;
+  /** When true, the empty state explains that the filter hid all rows
+   *  (vs. the table being genuinely empty). */
+  filterActive?: boolean;
+  onClearFilter?: () => void;
 }) {
   const t = useT();
   const cols = `${columns.slice(0, 8).join(", ")}${columns.length > 8 ? "…" : ""}`;
+  if (filterActive) {
+    return (
+      <div className="grid h-full place-items-center p-6">
+        <div className="flex max-w-lg flex-col items-center text-center">
+          <div className="mb-2 text-sm font-medium text-foreground">
+            {t("table.empty.filteredTitle")}
+          </div>
+          <div className="mb-5 max-w-md text-xs text-muted-foreground">
+            {t("table.empty.filteredDesc")}
+          </div>
+          {onClearFilter && (
+            <button
+              type="button"
+              onClick={onClearFilter}
+              className="inline-flex items-center gap-1.5 rounded-md bg-conn-accent px-3 py-1.5 text-xs font-medium text-conn-accent-foreground shadow-sm hover:opacity-90"
+            >
+              {t("table.empty.clearFilter")}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="grid h-full place-items-center p-6">
       <div className="flex max-w-lg flex-col items-center text-center">
@@ -2310,7 +2396,7 @@ function formatValueForEdit(v: Value): string {
 }
 
 /** Converts user-typed text into a Value to send to the backend.
- *  Uses the column type (when available) to pick the correct variant —
+ *  Uses the column type (when available) to pick the correct variant :
  *  JSON gets parsed (or wrapped as a JSON string when not parseable),
  *  bool gets coerced from "true"/"false"/"0"/"1". Defaults to string. */
 function textToValue(text: string, column?: Column): Value {
@@ -2318,7 +2404,7 @@ function textToValue(text: string, column?: Column): Value {
   const kind = column?.column_type.kind;
   if (kind === "json") {
     // Try strict JSON first, then JSON5 (single quotes, trailing commas,
-    // unquoted keys) — most users typing `['teste']` mean an array of
+    // unquoted keys) : most users typing `['teste']` mean an array of
     // one string. Only fall back to wrapping when neither parses.
     try {
       return { type: "json", value: JSON.parse(text) };
@@ -2334,7 +2420,7 @@ function textToValue(text: string, column?: Column): Value {
     const t = text.trim().toLowerCase();
     if (t === "true" || t === "1") return { type: "bool", value: true };
     if (t === "false" || t === "0") return { type: "bool", value: false };
-    // Fall through — let the backend reject unrecognized text.
+    // Fall through : let the backend reject unrecognized text.
   }
   return { type: "string", value: text };
 }
@@ -2353,7 +2439,7 @@ function intentToValue(
 
 /** Applies the column order saved in tab-state (if it exists and matches
  *  the current schema) by permuting data.columns + each row. Fallback:
- *  returns r unchanged — the saved order is "soft", it doesn't break if
+ *  returns r unchanged : the saved order is "soft", it doesn't break if
  *  columns changed on the table (e.g. ALTER TABLE). */
 function applySavedColumnOrder(
   r: QueryResult,

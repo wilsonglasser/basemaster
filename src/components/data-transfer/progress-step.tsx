@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertCircle,
   Check,
   ChevronDown,
   ChevronRight,
+  Info,
   Loader2,
   Pause,
   Play,
@@ -84,7 +86,7 @@ export function ProgressStep({
       return next;
     });
 
-  // Active bucket — default "running" to follow execution. Switched
+  // Active bucket : default "running" to follow execution. Switched
   // via pill tabs. If the whole run ended without errors, jump to
   // "completed"; if there are errors, don't jump (let the user decide).
   const [activeBucket, setActiveBucket] = useState<Bucket>("running");
@@ -104,7 +106,7 @@ export function ProgressStep({
     }
   }, [doneTable]);
 
-  // Clock tick — forces re-render while any table is in the "hold period"
+  // Clock tick : forces re-render while any table is in the "hold period"
   // so the Date.now() - finishedAt < HOLD predicate re-evaluates. Stops
   // as soon as all finished tables have passed the hold.
   const [, setClock] = useState(0);
@@ -117,7 +119,7 @@ export function ProgressStep({
     return () => window.clearInterval(id);
   }, [doneTable]);
 
-  // Categorize each table — hold: still shown in "running" even though
+  // Categorize each table : hold: still shown in "running" even though
   // doneTable already has an entry (to give the 3s highlight before migrating).
   const { runningList, errorsList, completedList } = useMemo(() => {
     const now = Date.now();
@@ -127,7 +129,7 @@ export function ProgressStep({
     for (const tbl of tables) {
       const d = doneTable.get(tbl);
       if (!d) {
-        // pending or running — both live in "running"
+        // pending or running : both live in "running"
         runningList.push(tbl);
         continue;
       }
@@ -146,7 +148,7 @@ export function ProgressStep({
   }, [tables, doneTable]);
 
   // Auto-switch to the "completed" bucket when everything ended without errors.
-  // If there are errors, don't switch automatically — the user wants to see them.
+  // If there are errors, don't switch automatically : the user wants to see them.
   useEffect(() => {
     if (!finalSummary) return;
     if (runningList.length > 0) return;
@@ -217,7 +219,7 @@ export function ProgressStep({
         </div>
       )}
 
-      {/* Controls: pause/resume/stop — only during execution */}
+      {/* Controls: pause/resume/stop : only during execution */}
       {running && (
         <div className="flex items-center gap-2 rounded-md border border-border bg-card/40 p-3">
           {paused ? (
@@ -263,7 +265,7 @@ export function ProgressStep({
         </div>
       )}
 
-      {/* Overall progress — sticky at top to follow scroll.
+      {/* Overall progress : sticky at top to follow scroll.
        *  Hidden when there's only 1 table (redundant with the checklist). */}
       {showOverall && (
       <div className="sticky top-0 z-10 rounded-md border border-border bg-card/95 p-4 backdrop-blur">
@@ -298,7 +300,7 @@ export function ProgressStep({
           />
         </div>
 
-        {/* Pill tabs — running / errors / completed */}
+        {/* Pill tabs : running / errors / completed */}
         <div className="mt-3 flex items-center gap-1 text-[11px]">
           <BucketPill
             label={t("dataTransfer.bucketRunning")}
@@ -325,7 +327,7 @@ export function ProgressStep({
       </div>
       )}
 
-      {/* Per-table checklist — filtered by active bucket */}
+      {/* Per-table checklist : filtered by active bucket */}
       <div className="space-y-1">
         {visibleTables.length === 0 && (
           <div className="rounded-md border border-border/60 bg-card/30 px-3 py-6 text-center text-xs italic text-muted-foreground">
@@ -356,7 +358,7 @@ export function ProgressStep({
               })
             : p
               ? `${p.done.toLocaleString()}${p.total > 0 ? ` / ${p.total.toLocaleString()}` : ""}`
-              : "—";
+              : ":";
 
           const workers = workersByTable.get(tbl);
           const hasWorkers = workers && workers.size > 0;
@@ -401,6 +403,7 @@ export function ProgressStep({
                   <span className="h-4 w-4 shrink-0 rounded-full border border-muted-foreground/40" />
                 )}
                 <span className="flex-1 truncate font-mono font-medium">{tbl}</span>
+                <TableNotesBadge notes={notesByTable.get(tbl)} />
                 <span className="shrink-0 text-right tabular-nums text-muted-foreground">
                   {rowsLine}
                 </span>
@@ -432,7 +435,7 @@ export function ProgressStep({
                   />
                 </div>
               )}
-              {/* Error as full text — wraps so it doesn't overflow the card */}
+              {/* Error as full text : wraps so it doesn't overflow the card */}
               {d?.error && (
                 <div className="mt-2 rounded border border-destructive/30 bg-destructive/10 p-2">
                   <pre className="whitespace-pre-wrap break-all font-mono text-[10px] leading-snug text-destructive">
@@ -440,20 +443,6 @@ export function ProgressStep({
                   </pre>
                 </div>
               )}
-              {/* Backend notes (e.g. intra-parallel enabled/disabled) */}
-              {(notesByTable.get(tbl) ?? []).map((note, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    "mt-1 rounded border px-2 py-1 text-[10px]",
-                    note.level === "warn"
-                      ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                      : "border-conn-accent/30 bg-conn-accent/5 text-muted-foreground",
-                  )}
-                >
-                  {note.message}
-                </div>
-              ))}
               {/* Drill-down: intra-table parallelism workers */}
               {isExpanded && hasWorkers && (
                 <WorkerList workers={workers!} />
@@ -584,5 +573,25 @@ function WorkerList({
         );
       })}
     </div>
+  );
+}
+
+/** Compact badge: shows ! when there are notes for the table. Hovering
+ *  reveals all messages joined by newlines (native browser tooltip). */
+function TableNotesBadge({ notes }: { notes: TableNote[] | undefined }) {
+  if (!notes || notes.length === 0) return null;
+  const hasWarn = notes.some((n) => n.level === "warn");
+  const tooltip = notes.map((n) => n.message).join("\n");
+  const Icon = hasWarn ? AlertCircle : Info;
+  return (
+    <span
+      className={cn(
+        "grid h-4 w-4 shrink-0 place-items-center",
+        hasWarn ? "text-amber-400" : "text-muted-foreground",
+      )}
+      title={tooltip}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </span>
   );
 }

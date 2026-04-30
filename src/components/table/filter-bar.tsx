@@ -34,7 +34,7 @@ interface Props {
 type ValueKind = "none" | "single" | "double" | "csv" | "custom";
 
 
-/** Kinds per op — label comes from i18n. Stable list for the dropdown. */
+/** Kinds per op : label comes from i18n. Stable list for the dropdown. */
 const OPS: Array<{ value: FilterOp; kind: ValueKind }> = [
   { value: "eq", kind: "single" },
   { value: "not_eq", kind: "single" },
@@ -115,7 +115,7 @@ function valueAsText(v: Filter["value"]): string {
   }
 }
 
-/** How many filters (leaves) exist in the tree — used for the badge. */
+/** How many filters (leaves) exist in the tree : used for the badge. */
 export function countLeaves(n: FilterNode | null | undefined): number {
   if (!n) return 0;
   if (n.kind === "leaf") return 1;
@@ -145,28 +145,20 @@ export function FilterBar({
 }: Props) {
   const t = useT();
   return (
-    <div className="flex shrink-0 items-start gap-2 border-b border-border bg-card/20 px-3 py-1.5">
-      <FilterIcon className="mt-1.5 h-3 w-3 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <GroupEditor
-          node={tree}
-          columns={columns}
-          columnMeta={columnMeta}
-          onChange={onChange}
-          isRoot
-        />
+    <div className="flex shrink-0 flex-col border-b border-border bg-card/20">
+      <div className="flex items-start gap-2 px-3 py-1.5">
+        <FilterIcon className="mt-1.5 h-3 w-3 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <GroupEditor
+            node={tree}
+            columns={columns}
+            columnMeta={columnMeta}
+            onChange={onChange}
+            isRoot
+          />
+        </div>
       </div>
-      <div className="mt-0.5 flex shrink-0 items-center gap-1">
-        {dirty && (
-          <button
-            type="button"
-            onClick={onReset}
-            className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("filters.reset")}
-          >
-            <Undo2 className="h-3 w-3" />
-          </button>
-        )}
+      <div className="flex items-center gap-1 border-t border-border/40 px-3 py-1.5">
         <button
           type="button"
           onClick={onApply}
@@ -182,6 +174,17 @@ export function FilterBar({
           <Check className="h-3 w-3" />
           {t("filters.apply")}
         </button>
+        {dirty && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={t("filters.reset")}
+          >
+            <Undo2 className="h-3 w-3" />
+            {t("filters.reset")}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -287,7 +290,7 @@ function GroupEditor({
           <button
             type="button"
             onClick={addCondition}
-            className="grid h-5 w-5 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             title={t("filters.addCondition")}
           >
             <Plus className="h-3 w-3" />
@@ -295,7 +298,7 @@ function GroupEditor({
           <button
             type="button"
             onClick={addGroup}
-            className="grid h-5 w-5 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             title={t("filters.addGroup")}
           >
             <FolderPlus className="h-3 w-3" />
@@ -304,7 +307,7 @@ function GroupEditor({
             <button
               type="button"
               onClick={onRemove}
-              className="grid h-4 w-4 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+              className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
               title={t("filters.removeGroup")}
             >
               <X className="h-3 w-3" />
@@ -316,7 +319,7 @@ function GroupEditor({
               onClick={() =>
                 onChange({ kind: "group", op: "and", children: [] })
               }
-              className="text-[10px] text-muted-foreground hover:text-foreground"
+              className="inline-flex h-6 items-center px-1 text-[10px] text-muted-foreground hover:text-foreground"
             >
               {t("filters.clear")}
             </button>
@@ -415,7 +418,7 @@ function LeafChip({
         </span>
         {fKind === "double" ? (
           <span className="font-mono">
-            {valueAsText(filter.value)} — {valueAsText(filter.value2)}
+            {valueAsText(filter.value)} : {valueAsText(filter.value2)}
           </span>
         ) : fKind !== "none" ? (
           <span className="max-w-[160px] truncate font-mono">

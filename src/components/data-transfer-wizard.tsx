@@ -25,6 +25,7 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
+import { useSchemaCache } from "@/state/schema-cache";
 import { appConfirm } from "@/state/app-dialog";
 import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
@@ -92,7 +93,7 @@ export function DataTransferWizard({
   const [selectedTables, setSelectedTables] = useState<Set<string>>(
     new Set(initialTables ?? []),
   );
-  // Derive directly from the prop instead of capturing in useState — so if
+  // Derive directly from the prop instead of capturing in useState : so if
   // the wizard re-renders after session-restore rehydrate (initialTables
   // arrived after the first mount), we still catch the right preselection.
   const preseededTables = useMemo(
@@ -102,7 +103,7 @@ export function DataTransferWizard({
   const [tableFilter, setTableFilter] = useState("");
 
   // --- options
-  // Defaults persisted in localStorage — the last configuration used is
+  // Defaults persisted in localStorage : the last configuration used is
   // memorized and becomes the starting point next time. Individual missing
   // keys fall back to the structured default (for users who never ran a transfer).
   const persistedOpts = useMemo(() => readPersistedTransferOptions(), []);
@@ -132,7 +133,7 @@ export function DataTransferWizard({
   const [disableUniqueChecks, setDisableUniqueChecks] = useState(
     get("disableUniqueChecks"),
   );
-  // Default pending check — the wizard queries the target to decide:
+  // Default pending check : the wizard queries the target to decide:
   // log_bin=OFF → safe to enable (no-op). log_bin=ON → let the user decide.
   const [disableBinlog, setDisableBinlog] = useState(get("disableBinlog"));
   const [binlogCheckDone, setBinlogCheckDone] = useState(false);
@@ -163,7 +164,7 @@ export function DataTransferWizard({
     get("intraTableMinRows"),
   );
 
-  // Persist to localStorage on every change — native debouncing via React
+  // Persist to localStorage on every change : native debouncing via React
   // batching; to avoid slider thrash, saving on unmount is also unnecessary
   // (localStorage is sync + cheap at the scope of this blob).
   useEffect(() => {
@@ -288,7 +289,7 @@ export function DataTransferWizard({
             const enabled = await ipc.transfer.checkBinlogEnabled(targetConn);
             if (!enabled) setDisableBinlog(true);
           } catch {
-            // ignore — keep default
+            // ignore : keep default
           }
           setBinlogCheckDone(true);
         }
@@ -299,7 +300,7 @@ export function DataTransferWizard({
   }, [targetConn, activeSet, openConn, binlogCheckDone]);
 
   // --- load tables from source when schema changes.
-  // Ensure the connection is open before listing — on session restore the
+  // Ensure the connection is open before listing : on session restore the
   // wizard mounts with sourceConn/sourceSchema already set, but the
   // connection hasn't been reopened yet; we need to wait (or open here).
   useEffect(() => {
@@ -409,6 +410,21 @@ export function DataTransferWizard({
     }>("transfer:done", (e) => {
       setFinalSummary(e.payload);
       setRunning(false);
+      // Re-index target schema in the sidebar so newly-created/dropped
+      // tables show up. Only the *target* needs it (source is unchanged),
+      // and only when the connection is open : if the user hasn't opened
+      // it yet, the snapshot will be lazy-loaded on first expand anyway.
+      if (targetConn && targetSchema) {
+        const cache = useSchemaCache.getState();
+        cache.invalidateSchema(targetConn, targetSchema);
+        if (useConnections.getState().active.has(targetConn)) {
+          cache
+            .ensureSnapshot(targetConn, targetSchema)
+            .catch((err) =>
+              console.warn("[transfer] re-index target failed:", err),
+            );
+        }
+      }
     });
     return () => {
       void progressUnlisten.then((fn) => fn());
@@ -571,13 +587,30 @@ export function DataTransferWizard({
 
   const totalTables = selectedTables.size || 1;
   const tablesDone = doneTable.size;
-  const overallPct = overallRows.total > 0
-    ? Math.min(100, (overallRows.done / overallRows.total) * 100)
-    : totalTables > 0
-      ? (tablesDone / totalTables) * 100
-      : 0;
+  // Weighted-by-table: each table contributes 100/N% to the overall, and the
+  // partial fraction of a running table comes from done/total of *its own*
+  // rows. Avoids the percent dancing when new tables disclose their row totals
+  // mid-run (which used to inflate the global denominator).
+  const overallPct = useMemo(() => {
+    if (totalTables === 0) return 0;
+    const weight = 100 / totalTables;
+    let pct = 0;
+    for (const tbl of selectedTables) {
+      const d = doneTable.get(tbl);
+      if (d) {
+        if (!d.error) pct += weight;
+        // failed tables contribute 0; keep room for retry
+        continue;
+      }
+      const p = perTable.get(tbl);
+      if (p && p.total > 0) {
+        pct += Math.min(1, p.done / p.total) * weight;
+      }
+    }
+    return Math.min(100, pct);
+  }, [selectedTables, perTable, doneTable, totalTables]);
 
-  // Update the tab title with % while running — feedback even when
+  // Update the tab title with % while running : feedback even when
   // the tab is in the background.
   useEffect(() => {
     if (running) {
@@ -593,7 +626,7 @@ export function DataTransferWizard({
     }
   }, [running, finalSummary, overallPct, tabId, patchTab]);
 
-  // Progress bar on the taskbar icon — feedback even with the
+  // Progress bar on the taskbar icon : feedback even with the
   // window minimized. Clears when done (ok, error or stopped).
   useEffect(() => {
     if (running) {
@@ -615,7 +648,7 @@ export function DataTransferWizard({
   return (
     <div className="flex h-full flex-col">
       <StepperHeader step={step} onJump={running ? undefined : setStep} />
-      <div className="min-h-0 flex-1 overflow-auto p-6">
+      <div className="min-h-0 flex-1 overflow-auto px-6 pb-6">
         {step === "endpoints" && (
           <EndpointsStep
             connections={connections}
@@ -777,7 +810,7 @@ function StepperHeader({
       {steps.map((s, i) => {
         const done = i < activeIdx;
         const active = i === activeIdx;
-        // Direct jump only for already-visited (done) steps — avoids jumping
+        // Direct jump only for already-visited (done) steps : avoids jumping
         // ahead without filling in what's needed. "progress" is never clickable.
         const clickable = !!onJump && done && s.id !== "progress";
         return (
@@ -850,7 +883,7 @@ function EndpointsStep({
   targetConnInfo: ConnectionProfile | undefined;
 }) {
   return (
-    <div className="mx-auto grid max-w-5xl grid-cols-[1fr_auto_1fr] items-start gap-6">
+    <div className="mx-auto grid max-w-5xl grid-cols-[1fr_auto_1fr] items-start gap-6 pt-6">
       <EndpointCard
         title="Origem"
         connections={connections}
@@ -986,7 +1019,7 @@ function TablesStep({
 }) {
   const t = useT();
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-4xl pt-6">
       <div className="mb-3 flex items-center gap-3">
         <Database className="h-4 w-4 text-muted-foreground" />
         <div className="text-sm font-medium">

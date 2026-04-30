@@ -113,7 +113,7 @@ export function OptionsStep(props: {
   } = props;
   const t = useT();
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl pt-6">
       {crossDialect && (
         <div className="mb-4 rounded-md border border-conn-accent/30 bg-conn-accent/5 p-3 text-xs text-muted-foreground">
           {t("dataTransfer.crossDialectNote")}

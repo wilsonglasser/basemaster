@@ -1,4 +1,4 @@
-//! Data Transfer V1.0 — moves data between two connections.
+//! Data Transfer V1.0 : moves data between two connections.
 //!
 //! For each table:
 //!   1. (optional) DROP TABLE target
@@ -9,9 +9,9 @@
 //! Parallelism, FKs, triggers, fine-grained options (ignore/replace/hex BLOB) come in V1.1.
 //!
 //! Emits Tauri events:
-//!   `transfer:progress` — { table, done, total, rows_transferred }
-//!   `transfer:table_done` — { table, rows, elapsed_ms, error }
-//!   `transfer:done` — { total_rows, elapsed_ms }
+//!   `transfer:progress` : { table, done, total, rows_transferred }
+//!   `transfer:table_done` : { table, rows, elapsed_ms, error }
+//!   `transfer:done` : { total_rows, elapsed_ms }
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -74,12 +74,12 @@ impl Default for TransferControl {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InsertMode {
-    /// `INSERT INTO ... VALUES ...` — fails on duplicate PK.
+    /// `INSERT INTO ... VALUES ...` : fails on duplicate PK.
     #[default]
     Insert,
-    /// `INSERT IGNORE INTO ...` — skips rows with duplicate PK.
+    /// `INSERT IGNORE INTO ...` : skips rows with duplicate PK.
     InsertIgnore,
-    /// `REPLACE INTO ...` — replaces rows with duplicate PK.
+    /// `REPLACE INTO ...` : replaces rows with duplicate PK.
     Replace,
 }
 
@@ -109,17 +109,17 @@ pub struct TransferOptions {
     /// Limited by the pool's `max_connections` (currently = 8).
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
-    /// INSERT mode — allows ignoring/replacing duplicates.
+    /// INSERT mode : allows ignoring/replacing duplicates.
     #[serde(default)]
     pub insert_mode: InsertMode,
     // --- Optimizations ---
     /// SET FOREIGN_KEY_CHECKS=0 during inserts. Essential for speed.
     #[serde(default = "default_true")]
     pub disable_fk_checks: bool,
-    /// SET UNIQUE_CHECKS=0 — skips UNIQUE validation.
+    /// SET UNIQUE_CHECKS=0 : skips UNIQUE validation.
     #[serde(default = "default_true")]
     pub disable_unique_checks: bool,
-    /// SET SQL_LOG_BIN=0 — skips binlog. Opt-in (don't use on a master with replicas).
+    /// SET SQL_LOG_BIN=0 : skips binlog. Opt-in (don't use on a master with replicas).
     #[serde(default)]
     pub disable_binlog: bool,
     /// Wraps each table's INSERTs in BEGIN/COMMIT.
@@ -144,7 +144,7 @@ pub struct TransferOptions {
     #[serde(default = "default_true")]
     pub create_records: bool,
     /// INSERT INTO t (col1, col2, ...) VALUES vs INSERT INTO t VALUES.
-    /// Recommended ON — safer when column order differs.
+    /// Recommended ON : safer when column order differs.
     #[serde(default = "default_true")]
     pub complete_inserts: bool,
     /// Multi-row INSERT. If false, one INSERT per row (slower but may
@@ -159,7 +159,7 @@ pub struct TransferOptions {
     /// If false and use_transaction=true → one tx per table.
     #[serde(default)]
     pub single_transaction: bool,
-    /// LOCK TABLES source.* READ during load — consistent snapshot.
+    /// LOCK TABLES source.* READ during load : consistent snapshot.
     #[serde(default)]
     pub lock_source: bool,
     /// Adds NO_AUTO_VALUE_ON_ZERO to sql_mode. Without it, inserting 0 into
@@ -196,7 +196,7 @@ fn default_concurrency() -> u32 {
     1
 }
 fn default_stmt_kb() -> u64 {
-    1024 // 1 MB — comfortable margin below the default max_allowed_packet (4 MB).
+    1024 // 1 MB : comfortable margin below the default max_allowed_packet (4 MB).
 }
 fn default_intra_workers() -> u32 {
     1
@@ -221,7 +221,7 @@ pub struct TableDone {
     pub error: Option<String>,
 }
 
-/// Informational message about a table — e.g., "intra-parallel requested
+/// Informational message about a table : e.g., "intra-parallel requested
 /// but not activated because …". Lets the front explain decisions without
 /// replicating backend logic.
 #[derive(Clone, Debug, Serialize)]
@@ -293,7 +293,7 @@ pub async fn run_transfer(
     }
 
     // single_transaction: wrap the WHOLE transfer in a single tx on the target.
-    // Disabled — same problem as per-table tx (see eff_use_tx in
+    // Disabled : same problem as per-table tx (see eff_use_tx in
     // transfer_one): sqlx pool doesn't guarantee the same conn between START
     // and COMMIT, so the tx becomes orphan and pollutes the pool. To
     // reactivate, need to pin a connection via pool.acquire() for the whole
@@ -326,7 +326,7 @@ pub async fn run_transfer(
         .await
     };
 
-    // single_transaction disabled — see comment above. COMMIT/ROLLBACK here
+    // single_transaction disabled : see comment above. COMMIT/ROLLBACK here
     // would go to a different conn from START, so it was a no-op most of
     // the time and polluted the pool when the START happened to stick.
     // if opts.single_transaction { ... }
@@ -349,7 +349,7 @@ async fn run_parallel(
     for t in &opts.tables {
         let _ = tx.send(t.clone()).await;
     }
-    drop(tx); // close — workers exit when the queue drains.
+    drop(tx); // close : workers exit when the queue drains.
 
     let totals = Arc::new(tokio::sync::Mutex::new(RunTotals::default()));
     let opts = Arc::new(opts);
@@ -379,7 +379,7 @@ async fn run_parallel(
                 )
                 .await;
                 // `control` here is Arc<TransferControl>, transfer_one
-                // takes `&Arc<TransferControl>` — `&control` performs the
+                // takes `&Arc<TransferControl>` : `&control` performs the
                 // right coercion.
                 let (rows, error) = match result {
                     Ok(r) => (r, None),
@@ -400,7 +400,7 @@ async fn run_parallel(
                 if error.is_some() {
                     t.failed += 1;
                     if !opts.continue_on_error {
-                        // Signal abort — drain the channel.
+                        // Signal abort : drain the channel.
                         rx.close();
                     }
                 }
@@ -513,7 +513,7 @@ async fn transfer_one(
     let mut session_prelude = String::new();
     let mut session_restore = String::new();
     if target_is_mysql {
-        // COMMIT first — if the server has autocommit=0 by default (or the
+        // COMMIT first : if the server has autocommit=0 by default (or the
         // connection is already in an implicit tx), SET SQL_LOG_BIN fails
         // with 1694. COMMIT without an active tx is a no-op in MySQL.
         if opts.disable_binlog
@@ -524,7 +524,7 @@ async fn transfer_one(
             session_prelude.push_str("COMMIT; ");
         }
         if opts.disable_binlog {
-            // Binlog first — if it errors with ER_WRONG_VALUE_FOR_VAR
+            // Binlog first : if it errors with ER_WRONG_VALUE_FOR_VAR
             // (missing SUPER/REPLICATION CLIENT privilege), the query fails
             // before other SETs, making diagnosis easier.
             session_prelude.push_str("SET SQL_LOG_BIN=0; ");
@@ -651,9 +651,17 @@ async fn transfer_one(
     } else {
         None
     };
+    // Intra-table needs an integer PK so we can split [MIN, MAX] into ranges.
+    // Non-integer keysets still benefit single-thread keyset pagination but
+    // can't be partitioned numerically.
+    let keyset_is_integer = match keyset_col.as_deref() {
+        Some(c) => keyset_column_is_integer(&*source, &opts.source_schema, table, c).await,
+        None => false,
+    };
     let intra_workers = opts.intra_table_workers.clamp(1, 8) as usize;
     let use_intra = intra_workers > 1
         && keyset_col.is_some()
+        && keyset_is_integer
         && total >= opts.intra_table_min_rows.max(1);
 
     // Diagnostic for the front: if the user configured intra > 1, make
@@ -674,7 +682,15 @@ async fn transfer_one(
             (
                 "warn",
                 format!(
-                    "Intra-table parallelism desativado pra '{}': sem PK inteira de coluna única",
+                    "Intra-table parallelism desativado pra '{}': sem PK simples ordenável",
+                    table
+                ),
+            )
+        } else if !keyset_is_integer {
+            (
+                "warn",
+                format!(
+                    "Intra-table parallelism desativado pra '{}': PK não é inteira (split por range só funciona pra inteiros). Keyset single-thread continua ativo.",
                     table
                 ),
             )
@@ -704,13 +720,13 @@ async fn transfer_one(
     // Effective flags for prelude/postlude: when intra is active, turn off
     // lock_target and the orchestrated per-table tx.
     let eff_lock_target = opts.lock_target && !use_intra;
-    // `eff_use_tx` hard-disabled — the previous implementation wrapped
+    // `eff_use_tx` hard-disabled : the previous implementation wrapped
     // START/COMMIT via `Driver::execute()`, which goes through the sqlx pool
     // and may pick different connections for START, INSERTs, and COMMIT.
     // Without pinning, START left a pending tx on some pool conn (with no
     // atomic effect and potentially polluting the pool after errors, causing
     // hangs on subsequent operations). Until we refactor to pin via
-    // `pool.acquire()`, transfers run in autocommit — traditional bulk-load
+    // `pool.acquire()`, transfers run in autocommit : traditional bulk-load
     // behavior.
     let _ = opts.use_transaction; // opt still in the UI, but has no effect for now
     let _ = opts.single_transaction;
@@ -794,7 +810,7 @@ async fn transfer_one(
     let max_bytes = (opts.max_statement_size_kb as usize).saturating_mul(1024).max(1024);
     let started = Instant::now();
 
-    // Generated columns (STORED/VIRTUAL) can't appear in INSERT —
+    // Generated columns (STORED/VIRTUAL) can't appear in INSERT :
     // `SELECT *` from source includes them, so we build the set ONCE per
     // table and pass it to the copy loop to filter the column list.
     let generated_cols: std::collections::HashSet<String> = source
@@ -885,10 +901,10 @@ async fn transfer_one(
         let _ = target.execute(Some(&opts.target_schema), "UNLOCK TABLES").await;
     }
 
-    // Triggers — only if the table transfer didn't fail. Emitted AFTER the
+    // Triggers : only if the table transfer didn't fail. Emitted AFTER the
     // UNLOCK because CREATE TRIGGER is DDL and LOCK TABLES restricts it;
     // and AFTER the COMMIT to avoid firing during the load. Errors here are
-    // soft — they log but don't fail the table, since the data is already
+    // soft : they log but don't fail the table, since the data is already
     // saved.
     // Triggers are copied only in MySQL→MySQL. PG uses plpgsql, which has
     // different syntax and semantics; V1 doesn't translate trigger bodies.
@@ -906,10 +922,10 @@ async fn transfer_one(
 }
 
 /// Copies triggers associated with a table. Steps:
-///  1. SHOW TRIGGERS FROM src_schema LIKE 'table' — lists names.
-///  2. For each: SHOW CREATE TRIGGER src_schema.trg_name — full DDL.
+///  1. SHOW TRIGGERS FROM src_schema LIKE 'table' : lists names.
+///  2. For each: SHOW CREATE TRIGGER src_schema.trg_name : full DDL.
 ///  3. DROP TRIGGER IF EXISTS tgt_schema.trg_name.
-///  4. CREATE TRIGGER (with DEFINER stripped — the original definer may
+///  4. CREATE TRIGGER (with DEFINER stripped : the original definer may
 ///     not exist on the target).
 async fn copy_table_triggers(
     source: &dyn Driver,
@@ -1091,7 +1107,7 @@ async fn run_table_copy(
             break;
         }
 
-        // Mask of insertable columns — GENERATED cols must be dropped from
+        // Mask of insertable columns : GENERATED cols must be dropped from
         // the INSERT or MySQL rejects ("value specified for generated column
         // is not allowed"). `keep[i] = false` → skip index i in cols + rows.
         let keep: Vec<bool> = batch
@@ -1244,7 +1260,7 @@ async fn run_table_copy(
 /// lock_target and use_transaction are disabled in this mode by the
 /// caller (see `eff_lock_target`, `eff_use_tx` in `transfer_one`).
 ///
-/// Limitation: per-table atomicity is lost — each worker auto-commits its
+/// Limitation: per-table atomicity is lost : each worker auto-commits its
 /// INSERTs. Partial failure is partially visible on the target. This
 /// trade-off is explicitly what the user opts into when they set
 /// `intra_table_workers > 1`.
@@ -1312,7 +1328,7 @@ async fn run_table_copy_ranges(
         }
     };
     if min_i >= max_i {
-        // Only 1 value — not worth partitioning.
+        // Only 1 value : not worth partitioning.
         let first_select = format!(
             "SELECT * FROM {}.{} ORDER BY {} LIMIT {}",
             source.quote_ident(&opts.source_schema),
@@ -1340,7 +1356,7 @@ async fn run_table_copy_ranges(
     }
 
     // 2. Split [min, max+1) into N roughly equal ranges by value.
-    // (not by distribution — assumes uniformly-distributed PK)
+    // (not by distribution : assumes uniformly-distributed PK)
     let span = (max_i - min_i) + 1;
     let step = span.div_euclid(workers as i128).max(1);
     let mut ranges: Vec<(i128, i128)> = Vec::with_capacity(workers);
@@ -1397,7 +1413,7 @@ async fn run_table_copy_ranges(
                 &generated_cols,
             )
             .await;
-            // Final emit — finished=true with the worker's done/error.
+            // Final emit : finished=true with the worker's done/error.
             let (done_rows, err_str) = match &res {
                 Ok(n) => (*n, None),
                 Err(e) => (0, Some(e.clone())),
@@ -1483,7 +1499,7 @@ async fn copy_pk_range(
         InsertMode::Replace => "REPLACE INTO",
     };
 
-    // Initial emit — front paints the worker slot immediately.
+    // Initial emit : front paints the worker slot immediately.
     let _ = app.emit(
         "transfer:worker_progress",
         &TableWorkerProgress {
@@ -1635,7 +1651,7 @@ async fn copy_pk_range(
             },
         );
 
-        // Per-worker emit — enables drill-down in the UI by range.
+        // Per-worker emit : enables drill-down in the UI by range.
         let _ = app.emit(
             "transfer:worker_progress",
             &TableWorkerProgress {
@@ -1666,9 +1682,12 @@ async fn copy_pk_range(
     Ok(transferred)
 }
 
-/// Finds a single integer PK column for keyset pagination.
-/// Returns None if the table has no PK, a composite PK, or a non-integer PK
-/// (we fall back to OFFSET pagination in those cases).
+/// Finds a single PK column suitable for keyset pagination. Accepts any
+/// orderable type: integers stay the sweet spot (also used for intra-table
+/// partitioning), but strings/dates/uuids are good enough for sequential
+/// keyset (`WHERE col > last LIMIT N` benefits from any BTREE-indexed
+/// orderable column). Falls back to OFFSET only when the PK is composite,
+/// missing, or genuinely non-orderable (json/blob/set).
 async fn find_keyset_column(
     source: &dyn Driver,
     schema: &str,
@@ -1680,12 +1699,60 @@ async fn find_keyset_column(
         return None;
     }
     let pk = pks[0];
-    // Accepts common orderable types. Strings also work but are
-    // slower — for now only integers.
-    match &pk.column_type {
-        basemaster_core::ColumnType::Integer { .. } => Some(pk.name.clone()),
-        _ => None,
+    if is_orderable_keyset_type(&pk.column_type) {
+        Some(pk.name.clone())
+    } else {
+        None
     }
+}
+
+/// Whether a column type can serve as a keyset (`>`-comparable, indexable).
+fn is_orderable_keyset_type(t: &basemaster_core::ColumnType) -> bool {
+    use basemaster_core::ColumnType as CT;
+    match t {
+        CT::Integer { .. }
+        | CT::Decimal { .. }
+        | CT::Float
+        | CT::Double
+        | CT::Date
+        | CT::Time
+        | CT::DateTime
+        | CT::Timestamp
+        | CT::Text { .. } => true,
+        // UUID, ENUM and similar driver-specific types are usually orderable:
+        // accept by raw-name heuristic. Refuse boolean (cardinality of 2),
+        // json/blob/set (no useful order).
+        CT::Other { raw } => {
+            let r = raw.to_ascii_lowercase();
+            r.contains("uuid") || r.contains("char") || r.contains("varchar")
+        }
+        CT::Boolean | CT::Blob { .. } | CT::Json | CT::Enum { .. } | CT::Set { .. } => false,
+    }
+}
+
+/// Whether a column type can be partitioned via numeric range split: the
+/// pre-condition for intra-table parallelism (we need MIN/MAX as i128 to
+/// divide the range into N workers).
+fn is_partitionable_integer_type(t: &basemaster_core::ColumnType) -> bool {
+    matches!(t, basemaster_core::ColumnType::Integer { .. })
+}
+
+/// Returns true when the chosen keyset column for the table is integer-
+/// partitionable. Cheap re-fetch: describe_table is cached at the driver
+/// level for most backends.
+async fn keyset_column_is_integer(
+    source: &dyn Driver,
+    schema: &str,
+    table: &str,
+    col: &str,
+) -> bool {
+    let Ok(cols) = source.describe_table(schema, table).await else {
+        return false;
+    };
+    cols.iter()
+        .find(|c| c.name == col)
+        .map(|c| is_partitionable_integer_type(&c.column_type))
+        .unwrap_or(false)
 }
 
 /// Variant with a BLOB flag: true = hex (`0xFF...`, safe and canonical),
@@ -1702,7 +1769,7 @@ fn sql_literal_opts(v: &basemaster_core::Value, hex_blob: bool) -> String {
     sql_literal(v)
 }
 
-/// Formats a `Value` as a SQL literal. V1 — defers to V1.1 a version
+/// Formats a `Value` as a SQL literal. V1 : defers to V1.1 a version
 /// using parametrized driver bind (type precision, correct BLOBs).
 fn sql_literal(v: &basemaster_core::Value) -> String {
     use basemaster_core::Value;

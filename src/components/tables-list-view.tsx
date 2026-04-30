@@ -52,7 +52,7 @@ type SortKey = "name" | "kind" | "engine" | "rows" | "size";
 type SortDir = "asc" | "desc";
 
 function formatBytes(b: number | null | undefined): string {
-  if (b == null) return "—";
+  if (b == null) return ":";
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
   if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
@@ -79,6 +79,7 @@ export function TablesListView({
   const t = useT();
 
   const [filter, setFilter] = useState("");
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -127,7 +128,7 @@ export function TablesListView({
 
   const sortedRef = useRef<string[] | null>(null);
   const [loading, setLoading] = useState(false);
-  // Persisted view mode — "list" = table with columns,
+  // Persisted view mode : "list" = table with columns,
   // "grid" = cards with name only (file explorer icons view style).
   const [viewMode, setViewMode] = useState<"list" | "grid">(() => {
     if (typeof window === "undefined") return "list";
@@ -149,7 +150,7 @@ export function TablesListView({
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState("");
 
-  // F2 — renomeia item selecionado na lista (overrides o handler global).
+  // F2 : renomeia item selecionado na lista (overrides o handler global).
   useShortcut(
     "rename.selected",
     useCallback(() => {
@@ -545,9 +546,11 @@ export function TablesListView({
     }
   };
 
-  // Ctrl+C / Ctrl+V / Ctrl+A at the view level.
+  // Ctrl+C / Ctrl+V / Ctrl+A at the view level. Tab stays mounted on switch
+  // : guard against acting on behalf of a hidden tab.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (useTabs.getState().activeId !== tabId) return;
       // Ignore if focus is in an input/textarea.
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -563,6 +566,13 @@ export function TablesListView({
         if (all && all.length > 0) {
           setSelected(new Set(all));
           setLastSelected(all[all.length - 1]);
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        const input = filterInputRef.current;
+        if (input) {
+          input.focus();
+          input.select();
         }
       }
     };
@@ -597,7 +607,7 @@ export function TablesListView({
     action: MaintenanceAction,
     singleName?: string,
   ) => {
-    // Use the multi-selection if anything is checked — otherwise just
+    // Use the multi-selection if anything is checked : otherwise just
     // the context-menu row.
     const names =
       selected.size > 0 ? Array.from(selected) : singleName ? [singleName] : [];
@@ -736,7 +746,7 @@ export function TablesListView({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Toolbar — open / design / new / delete · import / export */}
+      {/* Toolbar : open / design / new / delete · import / export */}
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-card/30 px-3 text-xs">
         <div className="flex items-center gap-1">
           <ToolbarBtn
@@ -790,6 +800,7 @@ export function TablesListView({
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
             <input
+              ref={filterInputRef}
               type="text"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -869,7 +880,7 @@ export function TablesListView({
           <div
             onWheel={handleGridWheel}
             onClick={handleBackgroundClick}
-            className="grid h-full auto-cols-[180px] grid-flow-col grid-rows-[repeat(auto-fill,32px)] gap-1 overflow-x-auto overflow-y-hidden p-2"
+            className="grid h-full auto-cols-max grid-flow-col grid-rows-[repeat(auto-fill,32px)] gap-1 overflow-x-auto overflow-y-hidden p-2"
           >
             {sorted.map((tb) => {
               const isView =
@@ -906,7 +917,7 @@ export function TablesListView({
                       onCancel={cancelRename}
                     />
                   ) : (
-                    <span className="flex-1 truncate font-mono">
+                    <span className="whitespace-nowrap font-mono">
                       {tb.name}
                     </span>
                   )}
@@ -1001,12 +1012,12 @@ export function TablesListView({
                     </Td>
                   )}
                   <Td className="font-mono text-[11px] text-muted-foreground">
-                    {tb.engine ?? "—"}
+                    {tb.engine ?? ":"}
                   </Td>
                   <Td align="right" className="tabular-nums text-muted-foreground">
                     {tb.row_estimate != null
                       ? tb.row_estimate.toLocaleString()
-                      : "—"}
+                      : ":"}
                   </Td>
                   <Td align="right" className="tabular-nums text-muted-foreground">
                     {formatBytes(tb.size_bytes)}
