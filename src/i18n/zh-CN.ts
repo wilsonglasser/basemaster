@@ -114,6 +114,8 @@ export const zhCN: Dict = {
     newQuerySchema: "在此 schema 中新建查询",
     dataTransfer: "数据传输",
     disconnect: "断开",
+    disconnectCloseTabs:
+      '断开 "{name}" 将关闭 {count} 个相关标签页。是否继续？',
     connect: "连接",
     editConnection: "编辑连接",
     deleteConnection: "删除连接",

@@ -114,6 +114,8 @@ export const de: Dict = {
     newQuerySchema: "Neue Query in diesem Schema",
     dataTransfer: "Datenübertragung",
     disconnect: "Trennen",
+    disconnectCloseTabs:
+      'Das Trennen von "{name}" schließt {count} zugehörige(n) Tab(s). Fortfahren?',
     connect: "Verbinden",
     editConnection: "Verbindung bearbeiten",
     deleteConnection: "Verbindung löschen",

@@ -114,6 +114,8 @@ export const en: Dict = {
     newQuerySchema: "New query in this schema",
     dataTransfer: "Data transfer",
     disconnect: "Disconnect",
+    disconnectCloseTabs:
+      'Disconnecting from "{name}" will close {count} related tab(s). Continue?',
     connect: "Connect",
     editConnection: "Edit connection",
     deleteConnection: "Delete connection",

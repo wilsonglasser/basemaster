@@ -114,6 +114,8 @@ export const fr: Dict = {
     newQuerySchema: "Nouvelle requête dans ce schéma",
     dataTransfer: "Transfert de données",
     disconnect: "Déconnecter",
+    disconnectCloseTabs:
+      'Se déconnecter de "{name}" fermera {count} onglet(s) associé(s). Continuer ?',
     connect: "Connecter",
     editConnection: "Modifier la connexion",
     deleteConnection: "Supprimer la connexion",

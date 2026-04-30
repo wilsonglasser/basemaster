@@ -116,6 +116,8 @@ export const ptBR = {
     newQuerySchema: "Nova query neste schema",
     dataTransfer: "Transferência de dados",
     disconnect: "Desconectar",
+    disconnectCloseTabs:
+      'Desconectar de "{name}" vai fechar {count} aba(s) relacionada(s). Continuar?',
     connect: "Conectar",
     editConnection: "Editar conexão",
     deleteConnection: "Apagar conexão",

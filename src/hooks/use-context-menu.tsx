@@ -28,7 +28,7 @@ export interface ContextItem {
   icon?: ReactNode;
   label: string;
   onClick: () => void;
-  variant?: "default" | "destructive";
+  variant?: "default" | "destructive" | "warning";
   disabled?: boolean;
   shortcut?: string;
 }
@@ -233,10 +233,14 @@ function MenuPanel({
             className={cn(
               "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm",
               "transition-colors",
-              !entry.disabled && entry.variant !== "destructive" &&
+              !entry.disabled &&
+                entry.variant !== "destructive" &&
+                entry.variant !== "warning" &&
                 "hover:bg-accent hover:text-accent-foreground",
               !entry.disabled && entry.variant === "destructive" &&
                 "text-destructive hover:bg-destructive/10",
+              !entry.disabled && entry.variant === "warning" &&
+                "text-orange-500 hover:bg-orange-500/10",
               entry.disabled && "cursor-not-allowed opacity-50",
             )}
           >

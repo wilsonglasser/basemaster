@@ -114,6 +114,8 @@ export const ja: Dict = {
     newQuerySchema: "このスキーマで新規クエリ",
     dataTransfer: "データ転送",
     disconnect: "切断",
+    disconnectCloseTabs:
+      '"{name}" から切断すると、関連する {count} 個のタブが閉じられます。続行しますか？',
     connect: "接続",
     editConnection: "接続を編集",
     deleteConnection: "接続を削除",

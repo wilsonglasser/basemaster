@@ -608,6 +608,25 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   };
 
   const disconnect = async () => {
+    const tabsState = useTabs.getState();
+    const isRelated = (tab: { kind: Record<string, unknown> & { kind: string } }) => {
+      const k = tab.kind;
+      if ("connectionId" in k && k.connectionId === conn.id) return true;
+      if ("sourceConnectionId" in k && k.sourceConnectionId === conn.id) return true;
+      if ("targetConnectionId" in k && k.targetConnectionId === conn.id) return true;
+      return false;
+    };
+    const relatedCount = tabsState.tabs.filter(isRelated).length;
+    if (relatedCount > 0) {
+      const ok = await appConfirm(
+        t("tree.disconnectCloseTabs", {
+          name: conn.name,
+          count: relatedCount,
+        }),
+      );
+      if (!ok) return;
+      tabsState.closeMany(isRelated);
+    }
     setExpanded(false);
     setSchemas(null);
     invalidate(conn.id);
@@ -966,7 +985,7 @@ LIMIT 50;`;
         { icon: <Plug className="h-3.5 w-3.5" />, label: t("tree.users"), onClick: openUsers },
         { icon: <FolderIcon className="h-3.5 w-3.5" />, label: t("tree.newSchemaFolder"), onClick: createSchemaFolder },
         { icon: <RefreshCw className="h-3.5 w-3.5" />, label: t("common.refresh"), onClick: refresh },
-        { icon: <Unplug className="h-3.5 w-3.5" />, label: t("tree.disconnect"), onClick: disconnect },
+        { icon: <Unplug className="h-3.5 w-3.5" />, label: t("tree.disconnect"), onClick: disconnect, variant: "warning" },
         { separator: true },
         ...moveItems,
         { separator: true },
@@ -1078,7 +1097,7 @@ LIMIT 50;`;
               <IconBtn title={t("tree.newQuery")} onClick={newQuery}>
                 <FileCode2 className="h-3 w-3" />
               </IconBtn>
-              <IconBtn title={t("tree.disconnect")} onClick={disconnect}>
+              <IconBtn title={t("tree.disconnect")} onClick={disconnect} warning>
                 <Unplug className="h-3 w-3" />
               </IconBtn>
             </>
@@ -3315,11 +3334,13 @@ function IconBtn({
   onClick,
   children,
   destructive,
+  warning,
 }: {
   title: string;
   onClick: (e: React.MouseEvent) => void;
   children: React.ReactNode;
   destructive?: boolean;
+  warning?: boolean;
 }) {
   return (
     <button
@@ -3329,8 +3350,12 @@ function IconBtn({
         onClick(e);
       }}
       className={cn(
-        "grid h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-muted",
-        destructive ? "hover:text-destructive" : "hover:text-foreground",
+        "grid h-5 w-5 place-items-center rounded hover:bg-muted",
+        warning
+          ? "text-orange-500 hover:text-orange-400"
+          : destructive
+            ? "text-muted-foreground hover:text-destructive"
+            : "text-muted-foreground hover:text-foreground",
       )}
       title={title}
     >

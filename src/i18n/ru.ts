@@ -114,6 +114,8 @@ export const ru: Dict = {
     newQuerySchema: "Новый запрос в этой схеме",
     dataTransfer: "Передача данных",
     disconnect: "Отключить",
+    disconnectCloseTabs:
+      'Отключение от "{name}" закроет {count} связанных вкладок. Продолжить?',
     connect: "Подключить",
     editConnection: "Редактировать подключение",
     deleteConnection: "Удалить подключение",
