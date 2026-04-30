@@ -22,7 +22,7 @@ import type { GridTokens } from "@/lib/theme/presets";
 
 export interface SelectionInfo {
   hasSelection: boolean;
-  /** Distinct rows touched by the selection — single-cell, range, or
+  /** Distinct rows touched by the selection : single-cell, range, or
    *  row markers all collapse into a row set. Useful for "X linhas
    *  selecionadas" hints. */
   selectedRows: number;
@@ -42,7 +42,7 @@ interface ResultGridProps {
   rows: Value[][];
   /** Text for the yellow highlight (all occurrences). */
   searchValue?: string;
-  /** List of matches (col, row) — painted yellow. */
+  /** List of matches (col, row) : painted yellow. */
   searchResults?: ReadonlyArray<readonly [number, number]>;
   /** Cell with accent border (focused match, Data mode). */
   focusedCell?: readonly [number, number] | null;
@@ -54,25 +54,25 @@ interface ResultGridProps {
   dirtyValues?: ReadonlyMap<string, string>;
   /** Map "row:col" → intent: "null" red, "edit" yellow, "new" green. */
   dirtyIntents?: ReadonlyMap<string, "edit" | "null" | "new">;
-  /** Column metadata — used to pick typed editors (Number, DatePicker,
+  /** Column metadata : used to pick typed editors (Number, DatePicker,
    *  Dropdown, etc.). Without it, everything becomes Text. */
   columnMeta?: readonly Column[];
   /** Enables inline editing (overlay editor + onCellEdit). */
   editable?: boolean;
   /** Callback when a cell is edited (single or batched). */
   onCellEdit?: (col: number, row: number, newValue: string) => void;
-  /** Fired when the user presses Delete on N cells — marks them NULL. */
+  /** Fired when the user presses Delete on N cells : marks them NULL. */
   onDeleteCells?: (cells: Array<readonly [number, number]>) => void;
-  /** Fired by the trash button — marks rows for DELETE. */
+  /** Fired by the trash button : marks rows for DELETE. */
   onDeleteRows?: (rows: number[]) => void;
   /** Fired in batch (multi-cell paste). Parent handles spillover. */
   onBatchEdit?: (
     edits: Array<{ col: number; row: number; text: string }>,
   ) => void;
-  /** Arrow ArrowDown on the last row — `focusCol` is the current column,
+  /** Arrow ArrowDown on the last row : `focusCol` is the current column,
    *  so the parent can select the matching cell on the new row. */
   onAppendRow?: (focusCol?: number) => void;
-  /** Right-click on a cell — parent opens its own menu (copy, null, etc.). */
+  /** Right-click on a cell : parent opens its own menu (copy, null, etc.). */
   onCellContextMenu?: (
     col: number,
     row: number,
@@ -85,7 +85,7 @@ interface ResultGridProps {
    *  it spans (range height + row markers). Used to enable the trash
    *  button and to show a "X selected" hint in the footer. */
   onSelectionInfoChange?: (info: SelectionInfo) => void;
-  /** [col, row] when the manual cursor changes — for the status bar. */
+  /** [col, row] when the manual cursor changes : for the status bar. */
   onCellSelect?: (cell: readonly [number, number] | undefined) => void;
   /** Click on a column header (0-based index). */
   onHeaderClick?: (col: number) => void;
@@ -93,6 +93,15 @@ interface ResultGridProps {
   onHeaderContextMenu?: (col: number, clientX: number, clientY: number) => void;
   /** Drag & drop no header reordenou colunas (from → to). */
   onColumnMoved?: (from: number, to: number) => void;
+  /** Persisted column widths (column name → pixels). When provided, the
+   *  grid renders these instead of its internal default; resizes go through
+   *  `onColumnSizesChange`. Without it, the grid keeps a local-only map. */
+  columnSizes?: Record<string, number>;
+  onColumnSizesChange?: (next: Record<string, number>) => void;
+  /** Persisted top-left visible cell. Restored once after rows load on
+   *  this mount, so a tab switch returns to where the user was. */
+  scrollOffset?: { col: number; row: number };
+  onScrollChange?: (offset: { col: number; row: number }) => void;
 }
 
 export interface ResultGridHandle {
@@ -121,7 +130,7 @@ const EMPTY_SELECTION: GridSelection = {
 
 // rowMarkers="checkbox" → Glide reserva col 0 para o handler.
 // `searchResults` is internal coord (needs the +1).
-// `highlightRegions` is data coord (Glide applies the shift itself — do NOT add).
+// `highlightRegions` is data coord (Glide applies the shift itself : do NOT add).
 const ROW_MARKER_OFFSET = 1;
 
 interface HighlightRegion {
@@ -160,10 +169,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       onHeaderClick,
       onHeaderContextMenu,
       onColumnMoved,
+      columnSizes: columnSizesProp,
+      onColumnSizesChange,
+      scrollOffset,
+      onScrollChange,
     },
     ref,
   ) {
-    // Grid colors come from the active preset's `grid` token subset —
+    // Grid colors come from the active preset's `grid` token subset :
     // hex/rgba only (Glide's canvas parser doesn't accept oklch). Subscribes
     // to `useTheme` so changing preset live (settings panel) repaints.
     const gridTokens = useTheme((s) => s.effectivePreset().grid);
@@ -173,10 +186,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
     );
 
     const editorRef = useRef<DataEditorRef>(null);
-    // Capture clientX/Y from the native contextmenu to position the menu —
+    // Capture clientX/Y from the native contextmenu to position the menu :
     // Glide only gives bounds relative to the canvas, not the viewport.
     const ctxPosRef = useRef<{ x: number; y: number } | null>(null);
-    const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
+    const [internalColumnSizes, setInternalColumnSizes] = useState<
+      Record<string, number>
+    >({});
+    const columnSizes = columnSizesProp ?? internalColumnSizes;
+    const setColumnSizes = (
+      updater:
+        | Record<string, number>
+        | ((prev: Record<string, number>) => Record<string, number>),
+    ) => {
+      const next =
+        typeof updater === "function"
+          ? (updater as (p: Record<string, number>) => Record<string, number>)(
+              columnSizes,
+            )
+          : updater;
+      if (onColumnSizesChange) onColumnSizesChange(next);
+      else setInternalColumnSizes(next);
+    };
     const [selection, setSelection] = useState<GridSelection>(EMPTY_SELECTION);
 
     const expandSelectionToCells = (
@@ -191,7 +221,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           }
         }
       }
-      // Whole rows selected (via marker click) — ALL columns.
+      // Whole rows selected (via marker click) : ALL columns.
       sel.rows.toArray().forEach((row) => {
         for (let c = 0; c < columns.length; c++) {
           out.push([c, row]);
@@ -208,7 +238,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         editorRef.current?.scrollTo(col, 0, "horizontal", 0, 0);
       },
       scrollToCell(col, row, align) {
-        // `align` controls vAlign/hAlign — "end" keeps the cell at the
+        // `align` controls vAlign/hAlign : "end" keeps the cell at the
         // bottom of the viewport (useful to "stay at end" when footer appears).
         editorRef.current?.scrollTo(col, row, "both", 0, 0, {
           vAlign: align,
@@ -251,6 +281,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       setSelection(EMPTY_SELECTION);
     }, [rows]);
 
+    // Scroll restoration: this fires once per mount, as soon as we have
+    // rows to scroll over. Subsequent data changes (pagination, refresh,
+    // filter clear) keep the user wherever they had scrolled : we only
+    // restore on the *first* time the grid has data after mounting.
+    const initialScrollOffsetRef = useRef(scrollOffset);
+    const scrollRestoredRef = useRef(false);
+    useEffect(() => {
+      if (scrollRestoredRef.current) return;
+      if (rows.length === 0) return;
+      const off = initialScrollOffsetRef.current;
+      if (off && (off.col > 0 || off.row > 0)) {
+        // scrollTo with vAlign/hAlign "start" pins the cell to the top-left,
+        // matching what the user had before unmount.
+        editorRef.current?.scrollTo(off.col, off.row, "both", 0, 0, {
+          vAlign: "start",
+          hAlign: "start",
+        });
+      }
+      scrollRestoredRef.current = true;
+    }, [rows.length]);
+
     const gridColumns: GridColumn[] = useMemo(
       () =>
         columns.map((c) => ({
@@ -269,7 +320,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       [searchResults],
     );
 
-    // highlightRegions uses DATA coords — Glide applies the row-marker
+    // highlightRegions uses DATA coords : Glide applies the row-marker
     // shift internally. Do NOT add +1 here.
     const effectiveAccent = accentColor || "#3b82f6";
 
@@ -282,7 +333,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       [gridTokens],
     );
     // Rows marked for DELETE: translucent red across the whole row.
-    // Don't override textDark/textLight — doing so would make the row marker
+    // Don't override textDark/textLight : doing so would make the row marker
     // (which uses textDark: "transparent" in its own theme) show the number.
     const deleteRowTheme: Partial<Theme> = useMemo(
       () => ({
@@ -463,6 +514,21 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           }}
           height="100%"
           width="100%"
+          // Glide defaults to 500px : bumps the cap so users can size a wide
+          // column (long JSON, MEDIUMTEXT) without hitting an arbitrary wall.
+          maxColumnWidth={5000}
+          minColumnWidth={32}
+          onVisibleRegionChanged={
+            onScrollChange
+              ? (range) => {
+                  // Only bubble up after our one-shot restore has landed :
+                  // before that, the grid is still settling at (0,0) and
+                  // we don't want to overwrite the saved offset.
+                  if (!scrollRestoredRef.current) return;
+                  onScrollChange({ col: range.x, row: range.y });
+                }
+              : undefined
+          }
           theme={gridTheme}
           searchValue={searchValue ?? ""}
           searchResults={shiftedSearchResults}
@@ -474,7 +540,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
             onSelectionInfoChange?.(computeSelectionInfo(s));
           }}
           // Native fork prop: Enter commits the value but keeps the cursor
-          // on the edited cell — no setSelection/scroll dance needed. Tab
+          // on the edited cell : no setSelection/scroll dance needed. Tab
           // and Shift+Enter still move horizontally / upward as usual.
           keepFocusOnEnterAccept={true}
           onColumnResize={(_col, newSize, idx) => {
@@ -491,7 +557,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
               ? ([col, row], newCell) => {
                   const text = extractCellText(newCell);
                   // Multi-cell fill: if there are N selected cells, replicate
-                  // the value to all of them — Navicat-style behavior.
+                  // the value to all of them : Navicat-style behavior.
                   const cells = expandSelectionToCells(selection);
                   if (cells.length > 1) {
                     for (const [c, r] of cells) onCellEdit(c, r, text);

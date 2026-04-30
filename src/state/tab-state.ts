@@ -4,7 +4,7 @@ import { persist } from "zustand/middleware";
 import type { Filter, FilterNode, OrderBy } from "@/lib/types";
 
 /**
- * TAB runtime state — source of truth for "live" state that must
+ * TAB runtime state : source of truth for "live" state that must
  * survive detach/reattach and (eventually) app restart. Each tab
  * (keyed by tabId) writes here; the mounting component reads on mount
  * (via `snapshot`) to initialize.
@@ -16,13 +16,17 @@ import type { Filter, FilterNode, OrderBy } from "@/lib/types";
  * startup.
  *
  * Heads-up: DYNAMIC, heavy content (grid rows, dirty edits) does NOT go
- * here — config only. Dirty edits survive reattach through another
+ * here : config only. Dirty edits survive reattach through another
  * dedicated mechanism (separate, next iteration).
  */
 
 export interface QueryTabState {
   sql?: string;
   schema?: string;
+  /** Persisted column widths for the result grid, keyed by column name. */
+  columnSizes?: Record<string, number>;
+  /** Top-left visible cell of the grid, restored on tab remount. */
+  scrollOffset?: { col: number; row: number };
 }
 
 export interface TableTabState {
@@ -32,9 +36,16 @@ export interface TableTabState {
   hiddenColumns?: string[];
   /** Column names in the visual order chosen by the user (reorder). */
   columnOrder?: string[];
-  /** Filter tree (nested AND/OR). V1 stored flat `filters`; the loader
-   *  converts to `filterTree` automatically. */
+  /** Persisted column widths, keyed by column name. */
+  columnSizes?: Record<string, number>;
+  /** Top-left visible cell of the grid, restored on tab remount. */
+  scrollOffset?: { col: number; row: number };
+  /** Filter tree (nested AND/OR) that is currently APPLIED to the query. */
   filterTree?: FilterNode | null;
+  /** Uncommitted filter draft : survives tab switch/reattach so the user
+   *  doesn't lose mid-edit changes by switching away. Cleared on apply
+   *  (= equal to filterTree) or explicit reset. */
+  filterTreeDraft?: FilterNode | null;
   /** @deprecated V1. Converted to filterTree on mount. */
   filters?: Filter[];
 }
