@@ -13,6 +13,7 @@ import {
   Save,
   Search,
   Square,
+  TextCursorInput,
   Wand2,
 } from "lucide-react";
 import {
@@ -25,6 +26,7 @@ import {
 import type { SQLNamespace } from "@codemirror/lang-sql";
 
 import { detectDangerousStatements } from "@/lib/dangerous-query";
+import { statementAtCursor } from "@/lib/sql-statements";
 import { ipc } from "@/lib/ipc";
 import { ExportDialog } from "@/components/export-dialog";
 import { writeInMemory } from "@/lib/export";
@@ -45,7 +47,7 @@ import { useTabs } from "@/state/tabs";
 import { SearchBar, type SearchState } from "@/components/grid/search-bar";
 import { useGridSearch } from "@/lib/use-grid-search";
 
-import { QueryEditor } from "./query-editor";
+import { QueryEditor, type QueryEditorHandle } from "./query-editor";
 import { ResultGrid, type ResultGridHandle } from "./result-grid";
 import { ExplainView } from "./explain-view";
 
@@ -117,7 +119,7 @@ export function QueryTab({
   const createSaved = useSavedQueries((s) => s.create);
   const updateSaved = useSavedQueries((s) => s.update);
   // Current name of the linked saved query (lives in local state because
-  // the tab may have just created one — before refresh via tab kind).
+  // the tab may have just created one : before refresh via tab kind).
   const [currentSavedId, setCurrentSavedId] = useState<Uuid | null>(
     savedQueryId ?? null,
   );
@@ -126,7 +128,7 @@ export function QueryTab({
   );
   /** "Clean" SQL we compare against to detect dirty state. Initialized
    *  with the SQL at mount (restored snap, initialSql, or default) and
-   *  only advances when the user saves. CRITICAL: use lazy init — the
+   *  only advances when the user saves. CRITICAL: use lazy init : the
    *  snap changes on every keystroke (patchQueryState persists sql to
    *  tab-state), so we CAN'T recompute this on render. */
   const [savedSqlBaseline, setSavedSqlBaseline] = useState<string>(
@@ -136,8 +138,8 @@ export function QueryTab({
       "SELECT 1;",
   );
 
-  // Read the persisted snapshot from tab-state — survives detach/reattach
-  // and (later) app restart. `getState()` without subscribing — only used
+  // Read the persisted snapshot from tab-state : survives detach/reattach
+  // and (later) app restart. `getState()` without subscribing : only used
   // for initial seeding.
   const snap = useTabState.getState().queryOf(tabId);
   const [sql, setSql] = useState(
@@ -146,7 +148,7 @@ export function QueryTab({
   const [schema, setSchema] = useState<string | null>(
     snap?.schema ?? initialSchema ?? conn?.default_database ?? null,
   );
-  // Simple dirty check: current sql differs from the baseline (stable —
+  // Simple dirty check: current sql differs from the baseline (stable :
   // only changes on save). Works for both ad-hoc and linked saved_query.
   const dirty = sql !== savedSqlBaseline;
   const [run, setRun] = useState<RunState>({ kind: "idle" });
@@ -159,8 +161,15 @@ export function QueryTab({
   });
   const [editorCollapsed, setEditorCollapsed] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [columnSizes, setColumnSizes] = useState<Record<string, number>>(
+    () => snap?.columnSizes ?? {},
+  );
+  const [scrollOffset, setScrollOffset] = useState<{ col: number; row: number }>(
+    () => snap?.scrollOffset ?? { col: 0, row: 0 },
+  );
 
   const editorPanelRef = useRef<PanelImperativeHandle | null>(null);
+  const queryEditorRef = useRef<QueryEditorHandle | null>(null);
   const gridRef = useRef<ResultGridHandle | null>(null);
 
   // Expose setSql to the AI agent (via bridge) while this tab is
@@ -188,6 +197,10 @@ export function QueryTab({
     patchQueryState(tabId, { sql, schema: schema ?? undefined });
   }, [tabId, sql, schema, setLive, patchQueryState]);
 
+  useEffect(() => {
+    patchQueryState(tabId, { columnSizes, scrollOffset });
+  }, [tabId, columnSizes, scrollOffset, patchQueryState]);
+
   const handleFormat = () => {
     const formatted = formatSqlText(sql, conn?.driver);
     if (formatted !== sql) setSql(formatted);
@@ -195,7 +208,7 @@ export function QueryTab({
 
   /** Incremental token to invalidate old runs when the user clicks Stop
    *  or triggers a new Run. The backend also gets a cancel signal via
-   *  `ipc.db.cancelQuery` — it drops the sqlx future so the pool slot
+   *  `ipc.db.cancelQuery` : it drops the sqlx future so the pool slot
    *  is freed immediately (server keeps running the statement until it
    *  completes naturally, which we can't prevent without KILL). */
   const runTokenRef = useRef(0);
@@ -271,6 +284,26 @@ export function QueryTab({
 
   const handleRun = () => runSql(sqlRef.current, schemaRef.current);
 
+  /** Run only the statement under the editor cursor. The cursor offset
+   *  comes from the editor (Mod-Shift-Enter or context menu) : for the
+   *  toolbar button we ask the editor for it via ref. */
+  const handleRunStatement = (cursor?: number) => {
+    const c = cursor ?? queryEditorRef.current?.getCursor() ?? 0;
+    const seg = statementAtCursor(sqlRef.current, c);
+    if (!seg || !seg.sql.trim()) {
+      // No discernible statement : fall back to running everything so the
+      // user isn't left wondering why nothing happened.
+      void runSql(sqlRef.current, schemaRef.current);
+      return;
+    }
+    void runSql(seg.sql, schemaRef.current);
+  };
+
+  const handleRunStatementRef = useRef(handleRunStatement);
+  useEffect(() => {
+    handleRunStatementRef.current = handleRunStatement;
+  });
+
   const handleStop = () => {
     const rid = runRequestIdRef.current;
     if (rid) {
@@ -278,7 +311,7 @@ export function QueryTab({
         .cancelQuery(rid)
         .catch((err) => console.warn("cancel_query:", err));
     }
-    // Invalidate the in-flight run — UI recovers immediately. The
+    // Invalidate the in-flight run : UI recovers immediately. The
     // backend drops its side of the sqlx future so the pool is freed.
     runTokenRef.current++;
     runRequestIdRef.current = null;
@@ -342,7 +375,7 @@ export function QueryTab({
         setRun({
           kind: "error",
           message:
-            "EXPLAIN não retornou JSON — driver pode não suportar FORMAT JSON.",
+            "EXPLAIN não retornou JSON : driver pode não suportar FORMAT JSON.",
         });
         return;
       }
@@ -375,7 +408,7 @@ export function QueryTab({
         sql: sqlNow,
         elapsedMs: Math.round(performance.now() - started),
         schema: schemaRef.current,
-        connectionName: conn?.name ?? "—",
+        connectionName: conn?.name ?? ":",
         timestamp: Date.now(),
       });
     } catch (e) {
@@ -494,13 +527,15 @@ export function QueryTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Global shortcuts (capture phase) — only fire while the tab is mounted (key=active.id).
+  // Global shortcuts (capture phase). Tabs stay mounted on switch (display:none),
+  // so the listener stays attached: guard against firing for an inactive tab.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (useTabs.getState().activeId !== tabId) return;
       const target = e.target as HTMLElement | null;
       const inEditor = target?.closest(".cm-editor");
       // If focus is in an input/textarea/contenteditable OUTSIDE the
-      // query editor, don't swallow shortcuts — prevents the agent input's
+      // query editor, don't swallow shortcuts : prevents the agent input's
       // Ctrl+Enter from running the query, for example.
       const inOtherEditable =
         target &&
@@ -601,6 +636,21 @@ export function QueryTab({
     return { [schema]: tablesNs } as SQLNamespace;
   }, [cache, schema]);
 
+  /** Lowercase table-name → column names. Feeds the editor's alias-aware
+   *  autocomplete (`l.` → tracker_log columns when `FROM tracker_log AS l`).
+   *  Built from the same schema cache used above; lowercase keys so the
+   *  alias parser can do a case-insensitive lookup. */
+  const tableColumnsLc = useMemo(() => {
+    if (!cache || !schema) return {};
+    const tables = cache.tables[schema] ?? [];
+    const cols = cache.columns[schema] ?? {};
+    const map: Record<string, string[]> = {};
+    for (const t of tables) {
+      map[t.name.toLowerCase()] = (cols[t.name] ?? []).map((c) => c.name);
+    }
+    return map;
+  }, [cache, schema]);
+
   const toggleEditor = () => {
     const panel = editorPanelRef.current;
     if (!panel) return;
@@ -616,6 +666,7 @@ export function QueryTab({
         onSchema={setSchema}
         running={run.kind === "running"}
         onRun={handleRun}
+        onRunStatement={() => handleRunStatementRef.current()}
         onStop={handleStop}
         onExplain={handleExplain}
         onFormat={handleFormat}
@@ -665,12 +716,15 @@ export function QueryTab({
           >
             <div className="h-full bg-card/20">
               <QueryEditor
+                ref={queryEditorRef}
                 value={sql}
                 onChange={setSql}
                 onRun={handleRun}
+                onRunStatement={(c) => handleRunStatementRef.current(c)}
                 onFormat={handleFormat}
                 schema={sqlSchema}
                 defaultSchema={schema ?? undefined}
+                tableColumns={tableColumnsLc}
               />
             </div>
           </Panel>
@@ -700,6 +754,10 @@ export function QueryTab({
                   focusedColumn={focusedColumn}
                   accentColor={conn?.color ?? null}
                   gridRef={gridRef}
+                  columnSizes={columnSizes}
+                  onColumnSizesChange={setColumnSizes}
+                  scrollOffset={scrollOffset}
+                  onScrollChange={setScrollOffset}
                   onSelectView={(view) =>
                     setRun((s) => (s.kind === "results" ? { ...s, view } : s))
                   }
@@ -725,6 +783,7 @@ function Toolbar({
   onSchema,
   running,
   onRun,
+  onRunStatement,
   onStop,
   onExplain,
   onFormat,
@@ -741,6 +800,7 @@ function Toolbar({
   onSchema: (s: string | null) => void;
   running: boolean;
   onRun: () => void;
+  onRunStatement: () => void;
   onStop: () => void;
   onExplain: () => void;
   onFormat: () => void;
@@ -750,7 +810,7 @@ function Toolbar({
   onSave: () => void;
   dirty: boolean;
   isLinkedSavedQuery: boolean;
-  /** Triggers the export flow — undefined = no exportable result-set. */
+  /** Triggers the export flow : undefined = no exportable result-set. */
   onExport?: () => void;
 }) {
   const t = useT();
@@ -861,6 +921,15 @@ function Toolbar({
           <div className="w-px bg-black/20" />
           <button
             type="button"
+            onClick={onRunStatement}
+            className="inline-flex items-center px-2 py-1 transition-opacity hover:opacity-90"
+            title={t("query.toolbarRunAtCursor")}
+          >
+            <TextCursorInput className="h-3.5 w-3.5" />
+          </button>
+          <div className="w-px bg-black/20" />
+          <button
+            type="button"
             onClick={onExplain}
             className="inline-flex items-center gap-1 rounded-r-md px-2 py-1 text-xs font-medium transition-opacity hover:opacity-90"
             title={t("query.toolbarExplainTitle")}
@@ -882,6 +951,10 @@ function ResultArea({
   focusedColumn,
   accentColor,
   gridRef,
+  columnSizes,
+  onColumnSizesChange,
+  scrollOffset,
+  onScrollChange,
   onSelectView,
   onCellSelect,
 }: {
@@ -892,6 +965,10 @@ function ResultArea({
   focusedColumn?: number | null;
   accentColor?: string | null;
   gridRef: React.RefObject<ResultGridHandle | null>;
+  columnSizes?: Record<string, number>;
+  onColumnSizesChange?: (next: Record<string, number>) => void;
+  scrollOffset?: { col: number; row: number };
+  onScrollChange?: (offset: { col: number; row: number }) => void;
   onSelectView: (view: ResultView) => void;
   onCellSelect: (cell: readonly [number, number] | undefined) => void;
 }) {
@@ -962,6 +1039,10 @@ function ResultArea({
             focusedColumn={focusedColumn}
             accentColor={accentColor}
             gridRef={gridRef}
+            columnSizes={columnSizes}
+            onColumnSizesChange={onColumnSizesChange}
+            scrollOffset={scrollOffset}
+            onScrollChange={onScrollChange}
             onCellSelect={onCellSelect}
           />
         ) : view === "messages" ? (
@@ -1091,6 +1172,10 @@ function ResultPane({
   focusedColumn,
   accentColor,
   gridRef,
+  columnSizes,
+  onColumnSizesChange,
+  scrollOffset,
+  onScrollChange,
   onCellSelect,
 }: {
   result: QueryRunResult;
@@ -1100,6 +1185,10 @@ function ResultPane({
   focusedColumn?: number | null;
   accentColor?: string | null;
   gridRef: React.RefObject<ResultGridHandle | null>;
+  columnSizes?: Record<string, number>;
+  onColumnSizesChange?: (next: Record<string, number>) => void;
+  scrollOffset?: { col: number; row: number };
+  onScrollChange?: (offset: { col: number; row: number }) => void;
   onCellSelect: (cell: readonly [number, number] | undefined) => void;
 }) {
   const t = useT();
@@ -1152,6 +1241,10 @@ function ResultPane({
       focusedColumn={focusedColumn}
       accentColor={accentColor}
       onCellSelect={onCellSelect}
+      columnSizes={columnSizes}
+      onColumnSizesChange={onColumnSizesChange}
+      scrollOffset={scrollOffset}
+      onScrollChange={onScrollChange}
     />
   );
 }

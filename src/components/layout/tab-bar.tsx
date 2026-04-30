@@ -9,6 +9,7 @@ import {
   History,
   MoreHorizontal,
   Plug,
+  Pencil,
   Plus,
   Save,
   Search as SearchIcon,
@@ -127,7 +128,7 @@ export function TabBar({ className }: TabBarProps) {
 }
 
 /** Scrollable container for the tabs + navigation chrome (`<` `>` `…`).
- *  Native scrollbar is hidden — wheel and the arrow buttons drive
+ *  Native scrollbar is hidden : wheel and the arrow buttons drive
  *  horizontal scroll. Tabs shrink to a small min-width when overflow,
  *  so the user always sees *something* of every tab in view. */
 function TabsScroller({
@@ -174,7 +175,7 @@ function TabsScroller({
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // Target scroll position accumulator — lets multiple wheel events in
+  // Target scroll position accumulator : lets multiple wheel events in
   // quick succession compose into a single smooth animation instead of
   // each one fighting the previous.
   const targetLeftRef = useRef<number | null>(null);
@@ -254,7 +255,7 @@ function TabsScroller({
   );
 }
 
-/** Searchable centered modal listing every open tab — equivalent to
+/** Searchable centered modal listing every open tab : equivalent to
  *  Termius' "Jump to" panel. Filter by typing, navigate with arrows,
  *  Enter activates, Esc closes. Also bound to Ctrl+J globally. */
 function JumpTabsDialog({
@@ -618,6 +619,8 @@ function iconFor(kind: TabKind) {
       return Plus;
     case "users":
       return Database;
+    case "schema-rename":
+      return Pencil;
   }
 }
 
@@ -747,7 +750,7 @@ function TabItem({
       data-tab-id={tab.id}
       className={cn(
         "group relative flex cursor-pointer items-center gap-2 border-r border-border px-3 text-sm transition-colors",
-        // Active tab keeps its natural size — never shrunk so the
+        // Active tab keeps its natural size : never shrunk so the
         // user always sees the full label of where they're at.
         active
           ? "min-w-[160px] max-w-[260px] shrink-0 bg-conn-accent/15 text-foreground"

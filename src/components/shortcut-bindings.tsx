@@ -11,9 +11,9 @@ import { useTableViewBridge } from "@/state/table-view-bridge";
 import { useTabs } from "@/state/tabs";
 import { useUiZoom } from "@/state/ui-zoom";
 
-/** Registers global handlers for the shortcuts. Nothing rendered — hooks only. */
+/** Registers global handlers for the shortcuts. Nothing rendered : hooks only. */
 export function ShortcutBindings() {
-  // --- Ctrl+D — abrir/focar estrutura da tabela ---
+  // --- Ctrl+D : abrir/focar estrutura da tabela ---
   useShortcut(
     "table.openStructure",
     useCallback(() => {
@@ -62,7 +62,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- Ctrl+T — new query (on the focused connection, if any) ---
+  // --- Ctrl+T : new query (on the focused connection, if any) ---
   useShortcut(
     "tab.newQuery",
     useCallback(() => {
@@ -86,7 +86,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- Ctrl+W — fechar aba ativa ---
+  // --- Ctrl+W : fechar aba ativa ---
   useShortcut(
     "tab.close",
     useCallback(() => {
@@ -95,7 +95,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- Ctrl+Tab / Ctrl+Shift+Tab — navigation ---
+  // --- Ctrl+Tab / Ctrl+Shift+Tab : navigation ---
   useShortcut(
     "tab.next",
     useCallback(() => {
@@ -117,7 +117,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- Ctrl+J — toggle sidebar IA ---
+  // --- Ctrl+J : toggle sidebar IA ---
   useShortcut(
     "layout.toggleAi",
     useCallback(() => {
@@ -125,7 +125,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- F2 — rename the current selection (sidebar) ---
+  // --- F2 : rename the current selection (sidebar) ---
   useShortcut(
     "rename.selected",
     useCallback(async () => {
@@ -159,7 +159,17 @@ export function ShortcutBindings() {
             { defaultValue: sel.schema },
           );
           if (!next || !next.trim() || next === sel.schema) return;
-          await ipc.db.renameSchema(sel.connectionId, sel.schema, next.trim());
+          // Open a progress tab: schema rename is a serial table-by-table
+          // operation and may take long; the tab subscribes to the events.
+          useTabs.getState().open({
+            label: t("schemaRename.tabLabel", { name: sel.schema }),
+            kind: {
+              kind: "schema-rename",
+              connectionId: sel.connectionId,
+              from: sel.schema,
+              to: next.trim(),
+            },
+          });
         } else if (sel.kind === "connection") {
           // Open the connection's edit tab.
           useTabs.getState().openOrFocus(
@@ -194,7 +204,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // --- Ctrl+, — abrir Settings ---
+  // --- Ctrl+, : abrir Settings ---
   useShortcut(
     "global.settings",
     useCallback(() => {
@@ -262,7 +272,7 @@ export function ShortcutBindings() {
     }, []),
   );
 
-  // Aplica o zoom sempre que muda — tenta via API nativa do webview
+  // Aplica o zoom sempre que muda : tenta via API nativa do webview
   // first; if it fails (e.g., permission not granted because the user
   // reiniciou), cai no CSS zoom como fallback.
   const zoom = useUiZoom((s) => s.zoom);
@@ -275,7 +285,7 @@ export function ShortcutBindings() {
         document.documentElement.style.zoom = "";
       })
       .catch((e) => {
-        console.warn("webview.setZoom falhou — usando CSS fallback:", e);
+        console.warn("webview.setZoom falhou : usando CSS fallback:", e);
         document.documentElement.style.zoom = zoom === 1 ? "" : String(zoom);
       });
   }, [zoom]);

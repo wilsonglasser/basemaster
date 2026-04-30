@@ -91,7 +91,7 @@ function ddlTemplate(
       return `-- CREATE PROCEDURE (MySQL)\nDELIMITER //\nCREATE PROCEDURE ${q(schema)}.${q("nome_da_procedure")}(\n  IN p_arg INT\n)\nBEGIN\n  -- lógica aqui\n  SELECT p_arg;\nEND//\nDELIMITER ;`;
     case "trigger":
       if (isPg) {
-        return `-- CREATE TRIGGER (PostgreSQL) — requer FUNCTION primeiro\nCREATE OR REPLACE FUNCTION ${q(schema)}.${q("trg_fn")}()\nRETURNS trigger\nLANGUAGE plpgsql\nAS $$\nBEGIN\n  -- manipulação\n  RETURN NEW;\nEND;\n$$;\n\nCREATE TRIGGER ${q("nome_do_trigger")}\nBEFORE INSERT ON ${q(schema)}.${q("tabela")}\nFOR EACH ROW\nEXECUTE FUNCTION ${q(schema)}.${q("trg_fn")}();`;
+        return `-- CREATE TRIGGER (PostgreSQL) : requer FUNCTION primeiro\nCREATE OR REPLACE FUNCTION ${q(schema)}.${q("trg_fn")}()\nRETURNS trigger\nLANGUAGE plpgsql\nAS $$\nBEGIN\n  -- manipulação\n  RETURN NEW;\nEND;\n$$;\n\nCREATE TRIGGER ${q("nome_do_trigger")}\nBEFORE INSERT ON ${q(schema)}.${q("tabela")}\nFOR EACH ROW\nEXECUTE FUNCTION ${q(schema)}.${q("trg_fn")}();`;
       }
       return `-- CREATE TRIGGER (MySQL)\nDELIMITER //\nCREATE TRIGGER ${q("nome_do_trigger")}\nBEFORE INSERT ON ${q(schema)}.${q("tabela")}\nFOR EACH ROW\nBEGIN\n  -- manipulação\nEND//\nDELIMITER ;`;
   }
@@ -140,7 +140,7 @@ export function ConnTree() {
           connections={byFolder.get(f.id) ?? []}
         />
       ))}
-      {/* Root drop zone (only appears if there are folders — otherwise
+      {/* Root drop zone (only appears if there are folders : otherwise
            it makes no sense to "move to root" since it's already there). */}
       {folders.length > 0 && <RootDropZone />}
       {/* Connections at the root. */}
@@ -151,7 +151,7 @@ export function ConnTree() {
   );
 }
 
-/** Invisible drop zone between folders and root connections — only
+/** Invisible drop zone between folders and root connections : only
  *  appears visually when being dragged over. */
 /** Official driver icon (simple-icons). Lights up in the connection color
  *  when active; goes dim/muted when disconnected. */
@@ -246,7 +246,7 @@ function FolderNode({
       }
       return;
     }
-    // Has connections: 3 options — cancel, move to root, delete together.
+    // Has connections: 3 options : cancel, move to root, delete together.
     const choice = await appConfirm(
       t("tree.deleteFolderWithConnsConfirm", {
         name: folder.name,
@@ -408,14 +408,14 @@ function useSidebarShortcuts() {
         ) {
           return;
         }
-        // Skip if focus is in the main panel (active tab content — grid,
+        // Skip if focus is in the main panel (active tab content : grid,
         // query editor, etc.). The sidebar shortcut is exclusive to the
         // sidebar tree; otherwise Ctrl+C in a table grid would stomp the
         // grid's own copy.
         if (tgt.closest("main")) return;
       }
       // If the user has a text selection (e.g. inside a <pre> SQL preview),
-      // let the native copy run — this shortcut is only for "no selection,
+      // let the native copy run : this shortcut is only for "no selection,
       // sidebar item focused" cases.
       if (key === "c" && (window.getSelection()?.toString().length ?? 0) > 0) {
         return;
@@ -546,7 +546,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   };
 
   // Auto-reload when someone (e.g. create/drop schema) bumps the tick.
-  // Only refetch if the connection is active — otherwise the next connect handles it.
+  // Only refetch if the connection is active : otherwise the next connect handles it.
   useEffect(() => {
     if (schemaListTick === 0) return;
     if (!active) return;
@@ -583,7 +583,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
         tab.kind.kind === "edit-connection" &&
         tab.kind.connectionId === conn.id,
       () => ({
-        label: `${t("common.edit")} — ${conn.name}`,
+        label: `${t("common.edit")} : ${conn.name}`,
         kind: { kind: "edit-connection", connectionId: conn.id },
         accentColor: conn.color,
       }),
@@ -861,7 +861,7 @@ LIMIT 50;`;
     });
   };
 
-  // "Move to folder" items — one per existing folder + option to
+  // "Move to folder" items : one per existing folder + option to
   // create a new folder + option to remove from folder (go to root).
   const moveItems: ContextEntry[] = [
     ...folders.map<ContextEntry>((f) => ({
@@ -1076,7 +1076,7 @@ LIMIT 50;`;
 
       {menu.element}
 
-      {/* Erro de conexão — sempre visível sob o item, mesmo colapsado.
+      {/* Erro de conexão : sempre visível sob o item, mesmo colapsado.
           Senão o usuário só vê o spinner rodando e depois parar em silêncio. */}
       {error && !expanded && (
         <div className="ml-6 mr-1.5 my-1 flex items-start gap-1.5 rounded border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
@@ -1339,8 +1339,6 @@ function SchemaNode({
     });
   };
 
-  const closeMany = useTabs((s) => s.closeMany);
-  const invalidateConn = useSchemaCache((s) => s.invalidate);
   const renameSchema = async () => {
     const next = await appPrompt(t("tree.renameSchemaPrompt"), {
       defaultValue: schema.name,
@@ -1351,15 +1349,21 @@ function SchemaNode({
     );
     if (!ok) return;
     try {
-      await ipc.db.renameSchema(conn.id, schema.name, next.trim());
-      // Close tabs tied to the old schema.
-      closeMany(
-        (tab) =>
-          (tab.kind.kind === "table" || tab.kind.kind === "tables-list") &&
-          tab.kind.connectionId === conn.id &&
-          tab.kind.schema === schema.name,
-      );
-      invalidateConn(conn.id);
+      // Open a progress tab: the operation is a serial table-by-table
+      // RENAME and may take long. The tab subscribes to schema_rename:*
+      // events and starts the rename on mount.
+      useTabs.getState().open({
+        label: t("schemaRename.tabLabel", { name: schema.name }),
+        kind: {
+          kind: "schema-rename",
+          connectionId: conn.id,
+          from: schema.name,
+          to: next.trim(),
+        },
+        accentColor: conn.color ?? null,
+      });
+      // The view itself will close pre-existing tabs and invalidate the cache
+      // when the rename completes; keep this catch only for surface errors.
     } catch (e) {
       await appAlert(t("tree.renameTableErr", { error: String(e) }));
     }
@@ -1445,7 +1449,7 @@ function SchemaNode({
     }
   };
 
-  // Copy ALL tables in the schema to the clipboard — shortcut for
+  // Copy ALL tables in the schema to the clipboard : shortcut for
   // transfer/paste to another connection without opening the listing.
   const copyAllTables = async () => {
     try {
@@ -1654,7 +1658,7 @@ function CategoryGroup({
     return { tableList: tL, viewList: v };
   }, [tables, query, schemaMatches]);
 
-  // Keep the multi-select store in sync with the visible list —
+  // Keep the multi-select store in sync with the visible list :
   // shift+click needs the ordered range to work.
   useEffect(() => {
     setOrderedList(
@@ -1793,9 +1797,9 @@ function Category({
   children: React.ReactNode;
   defaultExpanded?: boolean;
   empty: string;
-  /** Click on the label (not the chevron) — e.g., open tables-list. */
+  /** Click on the label (not the chevron) : e.g., open tables-list. */
   onClick?: () => void;
-  /** If true, onClick fires even without items — useful for "Queries"
+  /** If true, onClick fires even without items : useful for "Queries"
    *  where the empty screen has meaning (button to create the first query). */
   clickableWhenEmpty?: boolean;
   /** If true, paints the header with the selection highlight. */
@@ -1819,7 +1823,7 @@ function Category({
         onClick={() => canClick && onClick?.()}
         title={onClick ? t("tree.clickToList") : undefined}
       >
-        {/* Chevron é clicável independente do resto — toggle da árvore */}
+        {/* Chevron é clicável independente do resto : toggle da árvore */}
         <span
           className="grid h-4 w-4 cursor-pointer place-items-center rounded hover:bg-accent/50"
           onClick={(e) => {
@@ -1964,7 +1968,7 @@ function TableNode({
         table.name,
         next.trim(),
       );
-      // Close tabs for the old table — kind references the old name.
+      // Close tabs for the old table : kind references the old name.
       closeTabsForTable(
         (tab) =>
           tab.kind.kind === "table" &&
@@ -2192,7 +2196,7 @@ function TableNode({
         table.schema,
         targets,
       );
-      // Don't close tabs — rows only; the user keeps editing structure.
+      // Don't close tabs : rows only; the user keeps editing structure.
       invalidateSchema(conn.id, table.schema);
       ensureSnapshot(conn.id, table.schema).catch(() => {});
       reportFailures(results);
@@ -2444,7 +2448,7 @@ function TableNode({
             {t("tree.view")}
           </span>
         )}
-        {/* Approx row count badge — hides on hover to make room for the
+        {/* Approx row count badge : hides on hover to make room for the
             action buttons. */}
         {table.row_estimate != null && (
           <span className="text-[10px] tabular-nums text-muted-foreground/60 group-hover:hidden">
@@ -2479,7 +2483,7 @@ function TableNode({
   );
 }
 
-/** "Saved queries" category under each schema — lists queries
+/** "Saved queries" category under each schema : lists queries
  *  persisted in local SQLite (via saved_queries repo). */
 function SavedQueriesCategory({
   conn,

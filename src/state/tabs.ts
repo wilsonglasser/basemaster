@@ -67,8 +67,14 @@ export type TabKind =
       schema?: string;
     }
   | {
+      kind: "schema-rename";
+      connectionId: Uuid;
+      from: string;
+      to: string;
+    }
+  | {
       kind: "data-transfer";
-      /** Pre-selected source (optional — comes from the sidebar context). */
+      /** Pre-selected source (optional : comes from the sidebar context). */
       sourceConnectionId?: Uuid;
       sourceSchema?: string;
       /** Pre-selected target (when coming from a paste). */
@@ -104,7 +110,7 @@ interface TabsState {
   closeMany: (predicate: (t: Tab) => boolean) => number;
   setActive: (id: string) => void;
   patch: (id: string, patch: Partial<Omit<Tab, "id">>) => void;
-  /** Reserves an id without creating a tab yet — useful to pre-seed external
+  /** Reserves an id without creating a tab yet : useful to pre-seed external
    *  structures (tab-state) before calling `open` with that id. */
   reserveId: () => string;
 }
@@ -118,11 +124,12 @@ const initialTab: Tab = {
   kind: { kind: "welcome" },
 };
 
-/** Kinds that do NOT survive restart — in-progress forms and views
+/** Kinds that do NOT survive restart : in-progress forms and views
  *  with ephemeral state can cause confusion if restored. */
 const EPHEMERAL_KINDS: TabKind["kind"][] = [
   "new-connection",
   "edit-connection",
+  "schema-rename",
 ];
 
 /** Filter invalid tabs after rehydrate and recalculate counter. */
@@ -223,7 +230,7 @@ export const useTabs = create<TabsState>()(
     }),
     {
       name: "basemaster.tabs",
-      // Don't persist functions — only primitive state.
+      // Don't persist functions : only primitive state.
       partialize: (s) => ({ tabs: s.tabs, activeId: s.activeId }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;

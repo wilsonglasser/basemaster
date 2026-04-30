@@ -1,4 +1,6 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { cn } from "@/lib/utils";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ArrowLeftToLine } from "lucide-react";
@@ -21,6 +23,7 @@ import { QueryTab } from "@/components/query/query-tab";
 import { TableView } from "@/components/table/table-view";
 import { TabErrorBoundary } from "@/components/tab-error-boundary";
 import { DataTransferWizard } from "@/components/data-transfer-wizard";
+import { SchemaRenameView } from "@/components/schema-rename-view";
 import { CreateTableDialog } from "@/components/create-table-dialog";
 import { DataImportView } from "@/components/data-import-view";
 import { NewTableView } from "@/components/new-table-view";
@@ -119,7 +122,7 @@ function MainApp() {
     void (async () => {
       await refresh();
       // Auto-reopen connections referenced by restored tabs.
-      // Fire-and-forget in parallel — each TableView/QueryTab has its
+      // Fire-and-forget in parallel : each TableView/QueryTab has its
       // own loading/retry once the connection becomes active.
       const { connections, active, open } = useConnections.getState();
       const existingIds = new Set(connections.map((c) => c.id));
@@ -196,6 +199,40 @@ function MainApp() {
 
   const active = tabs.find((t) => t.id === activeId) ?? tabs[0] ?? null;
 
+  // Keep-mounted set: once a tab is activated, it stays in the DOM (just
+  // hidden) so that long-running work (data transfer, query running,
+  // schema rename) keeps its event listeners and component state alive
+  // while the user switches tabs. Mounting is lazy (only on first
+  // activation), so app startup doesn't open every persisted tab.
+  const [mountedIds, setMountedIds] = useState<Set<string>>(() => {
+    const init = new Set<string>();
+    if (activeId) init.add(activeId);
+    return init;
+  });
+  useEffect(() => {
+    if (!activeId) return;
+    setMountedIds((prev) => {
+      if (prev.has(activeId)) return prev;
+      const next = new Set(prev);
+      next.add(activeId);
+      return next;
+    });
+  }, [activeId]);
+  // Drop ids that no longer correspond to an open tab: cleans up after close.
+  useEffect(() => {
+    setMountedIds((prev) => {
+      const existing = new Set(tabs.map((t) => t.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (existing.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [tabs]);
+  const mountedTabs = tabs.filter((t) => mountedIds.has(t.id));
+
   return (
     <div
       className="flex h-screen w-screen overflow-hidden"
@@ -208,14 +245,21 @@ function MainApp() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar />
-        <main className="min-h-0 flex-1 overflow-hidden bg-background">
-          {active ? (
-            <TabErrorBoundary key={active.id}>
-              <TabContent tab={active} />
-            </TabErrorBoundary>
-          ) : (
-            <EmptyMain />
-          )}
+        <main className="relative min-h-0 flex-1 overflow-hidden bg-background">
+          {mountedTabs.length === 0 && <EmptyMain />}
+          {mountedTabs.map((tab) => (
+            <div
+              key={tab.id}
+              className={cn(
+                "absolute inset-0",
+                tab.id !== active?.id && "hidden",
+              )}
+            >
+              <TabErrorBoundary key={tab.id}>
+                <TabContent tab={tab} />
+              </TabErrorBoundary>
+            </div>
+          ))}
         </main>
         <StatusBar />
       </div>
@@ -236,7 +280,7 @@ function MainApp() {
   );
 }
 
-/** Version without sidebar / tab bar — used in detached windows.
+/** Version without sidebar / tab bar : used in detached windows.
  *  Thin header with "Return" that emits the payload back to the main
  *  window and closes via Rust command (avoids JS-side permissions). */
 function DetachedApp({ payload }: { payload: DetachedPayload }) {
@@ -248,7 +292,7 @@ function DetachedApp({ payload }: { payload: DetachedPayload }) {
 
   const reattach = async () => {
     try {
-      // Rebuild the payload with current state — for query, use the
+      // Rebuild the payload with current state : for query, use the
       // latest SQL and schema from the editor (tab-state). Also
       // ensures the tab-state was flushed to localStorage before
       // the main window rehydrates.
@@ -421,6 +465,15 @@ function TabContent({ tab }: { tab: Tab }) {
           initialTargetSchema={tab.kind.targetSchema}
           initialTables={tab.kind.tables}
           initialAutoAdvance={tab.kind.autoAdvance}
+        />
+      );
+    case "schema-rename":
+      return (
+        <SchemaRenameView
+          tabId={tab.id}
+          connectionId={tab.kind.connectionId}
+          from={tab.kind.from}
+          to={tab.kind.to}
         />
       );
   }
