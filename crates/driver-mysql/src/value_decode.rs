@@ -81,9 +81,20 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
             None => Value::Null,
         },
         "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT" | "ENUM" | "SET" => {
-            match tg!(String) {
-                Some(v) => Value::String(v),
-                None => Value::Null,
+            // Columns with `_bin` collation set the BINARY flag, which makes
+            // sqlx's `String` decode reject the column as incompatible. Fall
+            // back to raw bytes and decode as UTF-8 before treating as binary.
+            match row.try_get::<Option<String>, _>(i) {
+                Ok(Some(v)) => Value::String(v),
+                Ok(None) => Value::Null,
+                Err(_) => match row.try_get::<Option<Vec<u8>>, _>(i) {
+                    Ok(Some(b)) => match String::from_utf8(b) {
+                        Ok(s) => Value::String(s),
+                        Err(e) => Value::Bytes(e.into_bytes()),
+                    },
+                    Ok(None) => Value::Null,
+                    Err(_) => Value::Null,
+                },
             }
         }
         "JSON" => match tg!(serde_json::Value) {

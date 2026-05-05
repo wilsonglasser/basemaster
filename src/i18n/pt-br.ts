@@ -278,6 +278,8 @@ export const ptBR = {
       clearOrder: "Remover ordenação",
       viewGrid: "Grid",
       viewForm: "Form (1 registro por vez)",
+      editQuery: "Editar query",
+      editQueryLabel: "Query · {name}",
     },
     pagination: {
       allRows: "Tudo · {count} linhas",
@@ -377,6 +379,7 @@ export const ptBR = {
       choose: "(escolha)",
     },
     customTitle: "Fragmento SQL após o nome da coluna (não parametrizado)",
+    caseInsensitive: "Comparação case-insensitive (sem usar índice)",
   },
   structure: {
     tabs: {

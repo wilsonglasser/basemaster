@@ -276,6 +276,8 @@ export const en: Dict = {
       clearOrder: "Clear sort",
       viewGrid: "Grid",
       viewForm: "Form (one record at a time)",
+      editQuery: "Edit query",
+      editQueryLabel: "Query · {name}",
     },
     pagination: {
       allRows: "All · {count} rows",
@@ -375,6 +377,7 @@ export const en: Dict = {
       choose: "(choose)",
     },
     customTitle: "SQL fragment after the column name (not parameterized)",
+    caseInsensitive: "Case-insensitive comparison (skips index)",
   },
   structure: {
     tabs: {

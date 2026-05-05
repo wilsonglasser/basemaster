@@ -869,35 +869,48 @@ fn produces_clause(node: &FilterNode) -> bool {
 /// Renders ONE filter expression (column + op + `?` placeholders).
 /// Caller is responsible for binding values via `bind_filter`.
 fn render_filter_clause(driver: &MysqlDriver, f: &Filter) -> String {
-    let col = driver.quote_ident(&f.column);
+    let col_raw = driver.quote_ident(&f.column);
+    let ci = f.case_insensitive;
+    // Wrap col and value placeholder with LOWER() when case-insensitive
+    // mode is on. Note: MySQL collations ending in `_ci` already are
+    // case-insensitive; this is the explicit override so it works on
+    // `_bin`/`_cs` columns too.
+    let col = if ci {
+        format!("LOWER({})", col_raw)
+    } else {
+        col_raw.clone()
+    };
+    let ph = if ci { "LOWER(?)" } else { "?" };
     match f.op {
-        FilterOp::Eq => format!("{} = ?", col),
-        FilterOp::NotEq => format!("{} <> ?", col),
-        FilterOp::Gt => format!("{} > ?", col),
-        FilterOp::Lt => format!("{} < ?", col),
-        FilterOp::Gte => format!("{} >= ?", col),
-        FilterOp::Lte => format!("{} <= ?", col),
+        FilterOp::Eq => format!("{} = {}", col, ph),
+        FilterOp::NotEq => format!("{} <> {}", col, ph),
+        // Numeric/order comparisons keep raw column even on CI to preserve
+        // typed comparison semantics on numeric columns.
+        FilterOp::Gt => format!("{} > ?", col_raw),
+        FilterOp::Lt => format!("{} < ?", col_raw),
+        FilterOp::Gte => format!("{} >= ?", col_raw),
+        FilterOp::Lte => format!("{} <= ?", col_raw),
         FilterOp::Contains
         | FilterOp::BeginsWith
-        | FilterOp::EndsWith => format!("{} LIKE ?", col),
+        | FilterOp::EndsWith => format!("{} LIKE {}", col, ph),
         FilterOp::NotContains
         | FilterOp::NotBeginsWith
-        | FilterOp::NotEndsWith => format!("{} NOT LIKE ?", col),
-        FilterOp::IsNull => format!("{} IS NULL", col),
-        FilterOp::IsNotNull => format!("{} IS NOT NULL", col),
-        FilterOp::IsEmpty => format!("{} = ''", col),
-        FilterOp::IsNotEmpty => format!("{} <> ''", col),
-        FilterOp::Between => format!("{} BETWEEN ? AND ?", col),
-        FilterOp::NotBetween => format!("{} NOT BETWEEN ? AND ?", col),
-        FilterOp::In => in_list_clause(&col, f, false),
-        FilterOp::NotIn => in_list_clause(&col, f, true),
+        | FilterOp::NotEndsWith => format!("{} NOT LIKE {}", col, ph),
+        FilterOp::IsNull => format!("{} IS NULL", col_raw),
+        FilterOp::IsNotNull => format!("{} IS NOT NULL", col_raw),
+        FilterOp::IsEmpty => format!("{} = ''", col_raw),
+        FilterOp::IsNotEmpty => format!("{} <> ''", col_raw),
+        FilterOp::Between => format!("{} BETWEEN ? AND ?", col_raw),
+        FilterOp::NotBetween => format!("{} NOT BETWEEN ? AND ?", col_raw),
+        FilterOp::In => in_list_clause(&col, ph, f, false),
+        FilterOp::NotIn => in_list_clause(&col, ph, f, true),
         FilterOp::Custom => {
             // `value` carries the raw fragment. No binding.
             let frag = match &f.value {
                 Some(Value::String(s)) => s.as_str(),
                 _ => "",
             };
-            format!("{} {}", col, frag)
+            format!("{} {}", col_raw, frag)
         }
     }
 }
@@ -923,13 +936,14 @@ fn like_pattern(v: &Value, op: FilterOp) -> String {
 
 /// For IN/NOT IN: generates `col IN (?, ?, ?)` with N placeholders. N =
 /// number of items in the value (CSV). Zero items becomes `1=0` (NOT IN → 1=1).
-fn in_list_clause(col: &str, f: &Filter, not: bool) -> String {
+/// `placeholder` is `?` normally, `LOWER(?)` when case-insensitive.
+fn in_list_clause(col: &str, placeholder: &str, f: &Filter, not: bool) -> String {
     let items = split_in_csv(f.value.as_ref());
     let n = items.len();
     if n == 0 {
         return if not { "1=1".into() } else { "1=0".into() };
     }
-    let placeholders = std::iter::repeat_n("?", n).collect::<Vec<_>>().join(", ");
+    let placeholders = std::iter::repeat_n(placeholder, n).collect::<Vec<_>>().join(", ");
     let kw = if not { "NOT IN" } else { "IN" };
     format!("{} {} ({})", col, kw, placeholders)
 }

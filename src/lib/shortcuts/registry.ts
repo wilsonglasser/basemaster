@@ -151,6 +151,15 @@ export const SHORTCUTS: ShortcutAction[] = [
     defaultBinding: "F2",
     scope: "global",
   },
+  {
+    id: "delete.selected",
+    category: "Geral",
+    label: "Deletar item selecionado",
+    description:
+      "Abre o prompt de remoção da tabela/schema/conexão/saved-query selecionado",
+    defaultBinding: "Delete",
+    scope: "global",
+  },
 
   // --- Global ---
   {

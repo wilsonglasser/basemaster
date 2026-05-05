@@ -276,6 +276,8 @@ export const zhCN: Dict = {
       clearOrder: "清除排序",
       viewGrid: "网格",
       viewForm: "表单（一次一条记录）",
+      editQuery: "编辑查询",
+      editQueryLabel: "Query · {name}",
     },
     pagination: {
       allRows: "全部 · {count} 行",
@@ -375,6 +377,7 @@ export const zhCN: Dict = {
       choose: "(选择)",
     },
     customTitle: "列名后的 SQL 片段（未参数化）",
+    caseInsensitive: "不区分大小写的比较（不使用索引）",
   },
   structure: {
     tabs: {

@@ -3,9 +3,12 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { useShortcut } from "@/lib/shortcuts/use-shortcuts";
 import { useAiAgent } from "@/state/ai-agent";
-import { appPrompt } from "@/state/app-dialog";
+import { appAlert, appConfirm, appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
+import { confirmDestructive } from "@/state/destructive-confirm";
 import { useI18n } from "@/state/i18n";
+import { useSchemaCache } from "@/state/schema-cache";
+import { useSidebarMultiSelect } from "@/state/sidebar-multi-select";
 import { useSidebarSelection } from "@/state/sidebar-selection";
 import { useTableViewBridge } from "@/state/table-view-bridge";
 import { useTabs } from "@/state/tabs";
@@ -200,6 +203,182 @@ export function ShortcutBindings() {
         }
       } catch (e) {
         alert(t("shortcuts.renameFailed", { error: String(e) }));
+      }
+    }, []),
+  );
+
+  // --- Delete : remove the sidebar-selected item ---
+  useShortcut(
+    "delete.selected",
+    useCallback(async () => {
+      const sel = useSidebarSelection.getState().selected;
+      if (!sel) return;
+      const t = useI18n.getState().t;
+      const { ipc } = await import("@/lib/ipc");
+      const cache = useSchemaCache.getState();
+      const tabsSt = useTabs.getState();
+
+      try {
+        if (sel.kind === "connection") {
+          const conn = useConnections
+            .getState()
+            .connections.find((c) => c.id === sel.connectionId);
+          if (!conn) return;
+          const ok = await appConfirm(
+            t("tree.deleteConfirm", { name: conn.name }),
+          );
+          if (!ok) return;
+          cache.invalidate(conn.id);
+          await useConnections.getState().remove(conn.id);
+          return;
+        }
+
+        if (sel.kind === "schema") {
+          const conn = useConnections
+            .getState()
+            .connections.find((c) => c.id === sel.connectionId);
+          if (!conn) return;
+          const dbLabel =
+            conn.driver === "postgres"
+              ? t("tree.dbLabelSchema")
+              : t("tree.dbLabelDatabase");
+          const ok = await confirmDestructive({
+            title: t("tree.dropDbTitle", { kind: dbLabel, name: sel.schema }),
+            description: t("tree.dropDbBody"),
+            items: [sel.schema],
+            confirmLabel: t("tree.dropDbConfirmLabel", { kind: dbLabel }),
+            checkboxLabel: t("tree.destructiveAck"),
+            connectionName: conn.name,
+            connectionColor: conn.color ?? null,
+          });
+          if (!ok) return;
+          const isPg = conn.driver === "postgres";
+          const quoted = isPg
+            ? `"${sel.schema.replace(/"/g, '""')}"`
+            : `\`${sel.schema.replace(/`/g, "``")}\``;
+          const keyword = isPg ? "SCHEMA" : "DATABASE";
+          const cascade = isPg ? " CASCADE" : "";
+          const sql = `DROP ${keyword} ${quoted}${cascade};`;
+          try {
+            await ipc.db.runQuery(conn.id, sql, null);
+            cache.markSchemaDropped(conn.id, sel.schema);
+            cache.invalidateSchema(conn.id, sel.schema);
+            cache.bumpSchemaList(conn.id);
+          } catch (e) {
+            await appAlert(t("tree.dropDbFailed", { error: String(e) }));
+          }
+          return;
+        }
+
+        if (sel.kind === "table") {
+          // Respect multi-select if the selected table is part of it.
+          const multi = useSidebarMultiSelect.getState();
+          const sameScope =
+            multi.scope?.connectionId === sel.connectionId &&
+            multi.scope?.schema === sel.schema;
+          const targets =
+            sameScope && multi.selected.has(sel.table) && multi.selected.size > 1
+              ? Array.from(multi.selected)
+              : [sel.table];
+
+          // Detect "view-only" so we DROP VIEW instead of DROP TABLE.
+          const cached = cache.caches[sel.connectionId]?.tables[sel.schema];
+          const allViews = targets.every((name) => {
+            const info = cached?.find((x) => x.name === name);
+            return info?.kind === "view" || info?.kind === "materialized_view";
+          });
+
+          const many = targets.length > 1;
+          const ok = await confirmDestructive({
+            title: many
+              ? t("tree.dropTableTitleMany", { count: targets.length })
+              : t("tree.dropTableTitleOne"),
+            description: t("tree.dropTableBody"),
+            items: targets,
+            confirmLabel: many
+              ? t("tree.dropTableConfirmMany", { count: targets.length })
+              : t("tree.dropTableConfirmOne"),
+            checkboxLabel: t("tree.destructiveAck"),
+          });
+          if (!ok) return;
+
+          const conn = useConnections
+            .getState()
+            .connections.find((c) => c.id === sel.connectionId);
+          const isPg = conn?.driver === "postgres";
+
+          let results: { table: string; error: string | null }[];
+          if (allViews) {
+            results = [];
+            for (const name of targets) {
+              const qi = isPg
+                ? `"${name.replace(/"/g, '""')}"`
+                : `\`${name.replace(/`/g, "``")}\``;
+              try {
+                await ipc.db.runQuery(
+                  sel.connectionId,
+                  `DROP VIEW ${qi}`,
+                  sel.schema,
+                );
+                results.push({ table: name, error: null });
+              } catch (e) {
+                results.push({ table: name, error: String(e) });
+              }
+            }
+          } else {
+            results = await ipc.db.dropTables(
+              sel.connectionId,
+              sel.schema,
+              targets,
+            );
+          }
+
+          // Close tabs of successfully dropped tables.
+          const droppedOk = new Set(
+            results.filter((r) => r.error === null).map((r) => r.table),
+          );
+          tabsSt.closeMany(
+            (tab) =>
+              tab.kind.kind === "table" &&
+              tab.kind.connectionId === sel.connectionId &&
+              tab.kind.schema === sel.schema &&
+              droppedOk.has(tab.kind.table),
+          );
+          if (droppedOk.size > 0) {
+            cache.removeTablesFromCache(
+              sel.connectionId,
+              sel.schema,
+              Array.from(droppedOk),
+            );
+          }
+          useSidebarMultiSelect.getState().clear();
+
+          const failed = results.filter((r) => r.error);
+          if (failed.length > 0) {
+            const list = failed.map((r) => `${r.table}: ${r.error}`).join("\n");
+            await appAlert(t("tree.bulkOpFailures", { list }));
+          }
+          return;
+        }
+
+        if (sel.kind === "saved_query") {
+          const { useSavedQueries } = await import("@/state/saved-queries");
+          const cacheArr = useSavedQueries.getState().cache[sel.connectionId];
+          const q = cacheArr?.find((x) => x.id === sel.savedQueryId);
+          if (!q) return;
+          const ok = await appConfirm(
+            t("tree.deleteSavedQueryConfirm", { name: q.name }),
+          );
+          if (!ok) return;
+          try {
+            await useSavedQueries.getState().delete(sel.connectionId, q.id);
+          } catch (e) {
+            await appAlert(`${t("tree.deleteFailed")}: ${e}`);
+          }
+          return;
+        }
+      } catch (e) {
+        await appAlert(`${t("tree.deleteFailed")}: ${e}`);
       }
     }, []),
   );

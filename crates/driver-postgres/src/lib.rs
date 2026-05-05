@@ -14,8 +14,9 @@ use tokio::sync::RwLock;
 
 use basemaster_core::{
     Column as BmColumn, ColumnType, ConnectionConfig, Driver, Error, ExecuteResult,
-    ForeignKeyInfo, IndexInfo, PageOptions, QueryResult, Result, SchemaInfo, SortDir,
-    TableInfo, TableKind, TableOptions, TlsMode, Value,
+    Filter, FilterNode, FilterOp, ForeignKeyInfo, GroupOp, IndexInfo, PageOptions,
+    QueryResult, Result, SchemaInfo, SortDir, TableInfo, TableKind, TableOptions, TlsMode,
+    Value,
 };
 
 mod value_decode;
@@ -620,7 +621,15 @@ impl Driver for PostgresDriver {
         opts: &PageOptions,
     ) -> Result<QueryResult> {
         let qi = |s: &str| quote_ident_raw(s);
+        let pool = self.pool().await?;
         let mut sql = format!("SELECT * FROM {}.{}", qi(schema), qi(table));
+        let mut idx: usize = 0;
+        if let Some(tree) = &opts.filter_tree {
+            if let Some(clause) = render_node(tree, &mut idx) {
+                sql.push_str(" WHERE ");
+                sql.push_str(&clause);
+            }
+        }
         if let Some(ob) = &opts.order_by {
             let dir = match ob.direction {
                 SortDir::Asc => "ASC",
@@ -631,12 +640,66 @@ impl Driver for PostgresDriver {
         if opts.limit > 0 {
             sql.push_str(&format!(" LIMIT {} OFFSET {}", opts.limit, opts.offset));
         }
-        let mut q = self.query(Some(schema), &sql).await?;
-        if q.columns.is_empty() {
-            let cols = self.describe_table(schema, table).await?;
-            q.columns = cols.into_iter().map(|c| c.name).collect();
+
+        // Scope to schema (search_path) so unqualified refs in the table
+        // resolve, matching the behavior of `query()`.
+        set_search_path(&pool, schema).await?;
+        let started = Instant::now();
+        let mut q = sqlx::query(&sql);
+        if let Some(tree) = &opts.filter_tree {
+            q = bind_node(q, tree);
         }
-        Ok(q)
+        let rows = q
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| Error::Sql(e.to_string()))?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let mut columns: Vec<String> = rows
+            .first()
+            .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
+            .unwrap_or_default();
+        if columns.is_empty() {
+            let cols = self.describe_table(schema, table).await?;
+            columns = cols.into_iter().map(|c| c.name).collect();
+        }
+        let decoded_rows: Vec<Vec<Value>> = rows.iter().map(decode_row).collect();
+        Ok(QueryResult {
+            columns,
+            rows: decoded_rows,
+            source_table: None,
+            elapsed_ms,
+            truncated: false,
+        })
+    }
+
+    async fn count_table_rows(
+        &self,
+        schema: &str,
+        table: &str,
+        filter_tree: Option<&FilterNode>,
+    ) -> Result<u64> {
+        let qi = |s: &str| quote_ident_raw(s);
+        let pool = self.pool().await?;
+        let mut sql = format!("SELECT COUNT(*) FROM {}.{}", qi(schema), qi(table));
+        let mut idx: usize = 0;
+        if let Some(tree) = filter_tree {
+            if let Some(clause) = render_node(tree, &mut idx) {
+                sql.push_str(" WHERE ");
+                sql.push_str(&clause);
+            }
+        }
+        set_search_path(&pool, schema).await?;
+        let mut q = sqlx::query(&sql);
+        if let Some(tree) = filter_tree {
+            q = bind_node(q, tree);
+        }
+        let row = q
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| Error::Sql(e.to_string()))?;
+        let total: i64 = row.try_get(0).map_err(|e| Error::Sql(e.to_string()))?;
+        Ok(total.max(0) as u64)
     }
 }
 
@@ -658,6 +721,220 @@ fn bind_value<'a>(
         Value::Time(t) => q.bind(*t),
         Value::DateTime(dt) => q.bind(*dt),
         Value::Timestamp(ts) => q.bind(*ts),
+    }
+}
+
+/// Returns the next placeholder string (`$N`) and bumps the counter.
+fn next_placeholder(idx: &mut usize) -> String {
+    *idx += 1;
+    format!("${}", idx)
+}
+
+fn produces_clause(node: &FilterNode) -> bool {
+    match node {
+        FilterNode::Leaf { .. } => true,
+        FilterNode::Group { children, .. } => children.iter().any(produces_clause),
+    }
+}
+
+fn render_node(node: &FilterNode, idx: &mut usize) -> Option<String> {
+    match node {
+        FilterNode::Leaf { filter } => Some(render_filter_clause(filter, idx)),
+        FilterNode::Group { op, children } => {
+            let parts: Vec<String> = children
+                .iter()
+                .filter_map(|c| render_node(c, idx))
+                .collect();
+            if parts.is_empty() {
+                return None;
+            }
+            if parts.len() == 1 {
+                return parts.into_iter().next();
+            }
+            let joiner = match op {
+                GroupOp::And => " AND ",
+                GroupOp::Or => " OR ",
+            };
+            Some(format!("({})", parts.join(joiner)))
+        }
+    }
+}
+
+fn render_filter_clause(f: &Filter, idx: &mut usize) -> String {
+    let col_raw = quote_ident_raw(&f.column);
+    let ci = f.case_insensitive;
+    // For PG, ILIKE handles case-insensitive LIKE without LOWER() (and may
+    // use trigram indexes). For =/<>/IN we wrap col + value in LOWER().
+    let col_lower = if ci {
+        format!("LOWER({})", col_raw)
+    } else {
+        col_raw.clone()
+    };
+    let ph_lower = |i: &mut usize| {
+        if ci {
+            format!("LOWER({})", next_placeholder(i))
+        } else {
+            next_placeholder(i)
+        }
+    };
+    match f.op {
+        FilterOp::Eq => format!("{} = {}", col_lower, ph_lower(idx)),
+        FilterOp::NotEq => format!("{} <> {}", col_lower, ph_lower(idx)),
+        FilterOp::Gt => format!("{} > {}", col_raw, next_placeholder(idx)),
+        FilterOp::Lt => format!("{} < {}", col_raw, next_placeholder(idx)),
+        FilterOp::Gte => format!("{} >= {}", col_raw, next_placeholder(idx)),
+        FilterOp::Lte => format!("{} <= {}", col_raw, next_placeholder(idx)),
+        FilterOp::Contains | FilterOp::BeginsWith | FilterOp::EndsWith => {
+            let kw = if ci { "ILIKE" } else { "LIKE" };
+            format!("{} {} {}", col_raw, kw, next_placeholder(idx))
+        }
+        FilterOp::NotContains | FilterOp::NotBeginsWith | FilterOp::NotEndsWith => {
+            let kw = if ci { "NOT ILIKE" } else { "NOT LIKE" };
+            format!("{} {} {}", col_raw, kw, next_placeholder(idx))
+        }
+        FilterOp::IsNull => format!("{} IS NULL", col_raw),
+        FilterOp::IsNotNull => format!("{} IS NOT NULL", col_raw),
+        FilterOp::IsEmpty => format!("{} = ''", col_raw),
+        FilterOp::IsNotEmpty => format!("{} <> ''", col_raw),
+        FilterOp::Between => format!(
+            "{} BETWEEN {} AND {}",
+            col_raw,
+            next_placeholder(idx),
+            next_placeholder(idx),
+        ),
+        FilterOp::NotBetween => format!(
+            "{} NOT BETWEEN {} AND {}",
+            col_raw,
+            next_placeholder(idx),
+            next_placeholder(idx),
+        ),
+        FilterOp::In => in_list_clause(&col_lower, ci, f, idx, false),
+        FilterOp::NotIn => in_list_clause(&col_lower, ci, f, idx, true),
+        FilterOp::Custom => {
+            let frag = match &f.value {
+                Some(Value::String(s)) => s.as_str(),
+                _ => "",
+            };
+            format!("{} {}", col_raw, frag)
+        }
+    }
+}
+
+fn in_list_clause(col: &str, ci: bool, f: &Filter, idx: &mut usize, not: bool) -> String {
+    let items = split_in_csv(f.value.as_ref());
+    let n = items.len();
+    if n == 0 {
+        return if not { "1=1".into() } else { "1=0".into() };
+    }
+    let placeholders: Vec<String> = (0..n)
+        .map(|_| {
+            let p = next_placeholder(idx);
+            if ci {
+                format!("LOWER({})", p)
+            } else {
+                p
+            }
+        })
+        .collect();
+    let kw = if not { "NOT IN" } else { "IN" };
+    format!("{} {} ({})", col, kw, placeholders.join(", "))
+}
+
+fn split_in_csv(v: Option<&Value>) -> Vec<String> {
+    let Some(Value::String(s)) = v else {
+        return Vec::new();
+    };
+    s.split(',')
+        .map(|p| p.trim().trim_matches('\'').trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Builds the LIKE pattern with wildcards, escaping user-typed `_`/`%`/`\`.
+fn like_pattern(v: &Value, op: FilterOp) -> String {
+    let raw = match v {
+        Value::String(s) => s.clone(),
+        _ => format!("{:?}", v),
+    };
+    let escaped = raw
+        .replace('\\', "\\\\")
+        .replace('_', "\\_")
+        .replace('%', "\\%");
+    match op {
+        FilterOp::Contains | FilterOp::NotContains => format!("%{}%", escaped),
+        FilterOp::BeginsWith | FilterOp::NotBeginsWith => format!("{}%", escaped),
+        FilterOp::EndsWith | FilterOp::NotEndsWith => format!("%{}", escaped),
+        _ => escaped,
+    }
+}
+
+fn bind_filter<'q>(
+    mut q: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    f: &'q Filter,
+) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
+    match f.op {
+        FilterOp::IsNull
+        | FilterOp::IsNotNull
+        | FilterOp::IsEmpty
+        | FilterOp::IsNotEmpty
+        | FilterOp::Custom => q,
+        FilterOp::In | FilterOp::NotIn => {
+            for item in split_in_csv(f.value.as_ref()) {
+                q = q.bind(item);
+            }
+            q
+        }
+        FilterOp::Contains
+        | FilterOp::NotContains
+        | FilterOp::BeginsWith
+        | FilterOp::NotBeginsWith
+        | FilterOp::EndsWith
+        | FilterOp::NotEndsWith => {
+            let pat = f
+                .value
+                .as_ref()
+                .map(|v| like_pattern(v, f.op))
+                .unwrap_or_default();
+            q.bind(pat)
+        }
+        FilterOp::Between | FilterOp::NotBetween => {
+            if let Some(v) = &f.value {
+                q = bind_value(q, v);
+            } else {
+                q = q.bind::<Option<String>>(None);
+            }
+            if let Some(v2) = &f.value2 {
+                q = bind_value(q, v2);
+            } else {
+                q = q.bind::<Option<String>>(None);
+            }
+            q
+        }
+        _ => {
+            if let Some(v) = &f.value {
+                q = bind_value(q, v);
+            } else {
+                q = q.bind::<Option<String>>(None);
+            }
+            q
+        }
+    }
+}
+
+fn bind_node<'q>(
+    mut q: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    node: &'q FilterNode,
+) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
+    match node {
+        FilterNode::Leaf { filter } => bind_filter(q, filter),
+        FilterNode::Group { children, .. } => {
+            for c in children {
+                if produces_clause(c) {
+                    q = bind_node(q, c);
+                }
+            }
+            q
+        }
     }
 }
 

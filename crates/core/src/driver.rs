@@ -107,6 +107,12 @@ pub struct Filter {
     /// Second value (used only in Between/NotBetween).
     #[serde(default)]
     pub value2: Option<Value>,
+    /// When true, force case-insensitive comparison for textual ops
+    /// (eq/not_eq/contains/begins_with/ends_with/in). MySQL/SQLite wrap with
+    /// LOWER(); Postgres uses ILIKE for LIKE-class ops and LOWER() for the
+    /// rest. Off by default since it disables index usage on the column.
+    #[serde(default)]
+    pub case_insensitive: bool,
 }
 
 /// Combining operator for filter groups.

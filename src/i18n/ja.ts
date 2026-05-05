@@ -276,6 +276,8 @@ export const ja: Dict = {
       clearOrder: "ソートクリア",
       viewGrid: "グリッド",
       viewForm: "フォーム（1レコードずつ）",
+      editQuery: "クエリを編集",
+      editQueryLabel: "Query · {name}",
     },
     pagination: {
       allRows: "すべて · {count}行",
@@ -375,6 +377,7 @@ export const ja: Dict = {
       choose: "(選択)",
     },
     customTitle: "カラム名の後のSQLフラグメント（パラメータ化されていない）",
+    caseInsensitive: "大文字小文字を無視して比較（インデックスは使用しません）",
   },
   structure: {
     tabs: {

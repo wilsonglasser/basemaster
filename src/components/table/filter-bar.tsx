@@ -71,6 +71,26 @@ function hintFor(op: FilterOp): "between" | "csv" | "custom" | undefined {
   return undefined;
 }
 
+/** Ops where a case-insensitive comparison can change behavior.
+ *  Numeric/null/empty/between/custom are excluded. */
+function supportsCaseInsensitive(op: FilterOp): boolean {
+  switch (op) {
+    case "eq":
+    case "not_eq":
+    case "contains":
+    case "not_contains":
+    case "begins_with":
+    case "not_begins_with":
+    case "ends_with":
+    case "not_ends_with":
+    case "in":
+    case "not_in":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function findMeta(
   meta: readonly Column[] | undefined,
   name: string,
@@ -194,63 +214,64 @@ export function FilterBar({
           />
         </div>
       </div>
-      <div className="flex items-center gap-1 border-t border-border/40 px-3 py-1.5">
+      <div className="flex items-center gap-2 border-t border-border/40 px-3 py-1.5">
+        <FilterIcon className="h-3 w-3 shrink-0 text-muted-foreground/50" />
         <button
           type="button"
-          onClick={onApply}
-          disabled={!dirty}
-          className={cn(
-            "inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium transition-colors",
-            dirty
-              ? "bg-conn-accent text-conn-accent-foreground hover:opacity-90"
-              : "border border-border text-muted-foreground/60",
-          )}
-          title={t("filters.apply")}
+          onClick={addRootCondition}
+          className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title={t("filters.addCondition")}
         >
-          <Check className="h-3 w-3" />
-          {t("filters.apply")}
+          <Plus className="h-3 w-3" />
+          {t("filters.addCondition")}
         </button>
-        {dirty && (
+        <button
+          type="button"
+          onClick={addRootGroup}
+          className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title={t("filters.addGroup")}
+        >
+          <FolderPlus className="h-3 w-3" />
+          {t("filters.addGroup")}
+        </button>
+        {rootChildren.length > 0 && (
           <button
             type="button"
-            onClick={onReset}
-            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("filters.reset")}
+            onClick={clearRoot}
+            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+            title={t("filters.clear")}
           >
-            <Undo2 className="h-3 w-3" />
-            {t("filters.reset")}
+            <X className="h-3 w-3" />
+            {t("filters.clear")}
           </button>
         )}
         <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            onClick={addRootCondition}
-            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("filters.addCondition")}
-          >
-            <Plus className="h-3 w-3" />
-            {t("filters.addCondition")}
-          </button>
-          <button
-            type="button"
-            onClick={addRootGroup}
-            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title={t("filters.addGroup")}
-          >
-            <FolderPlus className="h-3 w-3" />
-            {t("filters.addGroup")}
-          </button>
-          {rootChildren.length > 0 && (
+          {dirty && (
             <button
               type="button"
-              onClick={clearRoot}
-              className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
-              title={t("filters.clear")}
+              onClick={onReset}
+              className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title={t("filters.reset")}
             >
-              <X className="h-3 w-3" />
-              {t("filters.clear")}
+              <Undo2 className="h-3 w-3" />
+              {t("filters.reset")}
             </button>
           )}
+          <button
+            type="button"
+            onClick={onApply}
+            disabled={!dirty}
+            className={cn(
+              "inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium transition-colors",
+              dirty
+                ? "bg-conn-accent text-conn-accent-foreground hover:opacity-90"
+                : "border border-border text-muted-foreground/60",
+            )}
+            title={t("filters.apply")}
+          >
+            <Check className="h-3 w-3" />
+            {t("filters.apply")}
+          </button>
         </div>
       </div>
     </div>
@@ -453,6 +474,9 @@ function LeafChip({
   const [op, setOp] = useState<FilterOp>(filter.op);
   const [value, setValue] = useState(valueAsText(filter.value));
   const [value2, setValue2] = useState(valueAsText(filter.value2));
+  const [caseInsensitive, setCaseInsensitive] = useState(
+    filter.case_insensitive ?? false,
+  );
 
   const currentMeta = findMeta(columnMeta, col);
   const enumValues = enumValuesOf(currentMeta);
@@ -461,10 +485,14 @@ function LeafChip({
   const hintKey = hintFor(op);
   const simpleOp = op === "eq" || op === "not_eq";
   const valueOptions = simpleOp ? enumValues ?? boolOptions : undefined;
+  const ciSupported = supportsCaseInsensitive(op);
+  // Effective flag: only relevant when the op supports it. Stored even if
+  // not currently relevant so it persists when the user switches ops back.
+  const ciEffective = ciSupported && caseInsensitive;
 
   const commit = () => {
     if (!col) return;
-    const next: Filter =
+    const base: Filter =
       kind === "none"
         ? { column: col, op, value: null }
         : kind === "double"
@@ -475,6 +503,9 @@ function LeafChip({
               value2: strValue(value2),
             }
           : { column: col, op, value: strValue(value) };
+    const next: Filter = caseInsensitive
+      ? { ...base, case_insensitive: true }
+      : base;
     onChange(next);
     setEditing(false);
   };
@@ -483,11 +514,15 @@ function LeafChip({
     setOp(filter.op);
     setValue(valueAsText(filter.value));
     setValue2(valueAsText(filter.value2));
+    setCaseInsensitive(filter.case_insensitive ?? false);
     setEditing(false);
   };
 
   if (!editing) {
     const fKind = opKind(filter.op);
+    const fCi =
+      (filter.case_insensitive ?? false) &&
+      supportsCaseInsensitive(filter.op);
     return (
       <button
         type="button"
@@ -510,6 +545,14 @@ function LeafChip({
             {valueAsText(filter.value)}
           </span>
         ) : null}
+        {fCi && (
+          <span
+            className="rounded bg-conn-accent/20 px-1 text-[9px] font-semibold text-conn-accent"
+            title={t("filters.caseInsensitive")}
+          >
+            Aa
+          </span>
+        )}
         <span
           onClick={(e) => {
             e.stopPropagation();
@@ -657,6 +700,21 @@ function LeafChip({
             <option key={v} value={v} />
           ))}
         </datalist>
+      )}
+      {ciSupported && (
+        <button
+          type="button"
+          onClick={() => setCaseInsensitive((v) => !v)}
+          className={cn(
+            "rounded px-1 text-[10px] font-semibold transition-colors",
+            ciEffective
+              ? "bg-conn-accent text-conn-accent-foreground"
+              : "border border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
+          title={t("filters.caseInsensitive")}
+        >
+          Aa
+        </button>
       )}
       <button
         type="button"

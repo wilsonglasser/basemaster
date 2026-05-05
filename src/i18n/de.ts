@@ -276,6 +276,8 @@ export const de: Dict = {
       clearOrder: "Sortierung löschen",
       viewGrid: "Grid",
       viewForm: "Formular (ein Datensatz)",
+      editQuery: "Query bearbeiten",
+      editQueryLabel: "Query · {name}",
     },
     pagination: {
       allRows: "Alle · {count} Zeilen",
@@ -375,6 +377,7 @@ export const de: Dict = {
       choose: "(wählen)",
     },
     customTitle: "SQL-Fragment nach dem Spaltennamen (nicht parametrisiert)",
+    caseInsensitive: "Vergleich ohne Berücksichtigung der Groß-/Kleinschreibung (nutzt keinen Index)",
   },
   structure: {
     tabs: {

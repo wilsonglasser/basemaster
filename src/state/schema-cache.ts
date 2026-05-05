@@ -17,6 +17,10 @@ interface SchemaCacheState {
    *  (CREATE/DROP/RENAME SCHEMA). Components holding a local copy of the
    *  list observe this and refetch. */
   schemaListTick: Record<Uuid, number>;
+  /** Schema names that the user just dropped, before the listSchemas
+   *  refetch confirms removal. Consumers filter these out of their visible
+   *  list to avoid the "ghost" lingering during the IPC round-trip. */
+  pendingSchemaDrops: Record<Uuid, string[]>;
   ensureSchemas: (id: Uuid) => Promise<SchemaInfo[]>;
   ensureTables: (id: Uuid, schema: string) => Promise<TableInfo[]>;
   ensureColumns: (id: Uuid, schema: string, table: string) => Promise<Column[]>;
@@ -24,6 +28,14 @@ interface SchemaCacheState {
   ensureSnapshot: (id: Uuid, schema: string) => Promise<TableInfo[]>;
   invalidate: (id: Uuid) => void;
   invalidateSchema: (id: Uuid, schema: string) => void;
+  /** Optimistically removes the given table names from the cached snapshot
+   *  of `schema` (without re-fetching the whole schema). Used right after
+   *  a successful DROP TABLE so the tree updates immediately. */
+  removeTablesFromCache: (id: Uuid, schema: string, names: string[]) => void;
+  /** Tombstone for a just-dropped schema so any tree node that holds a
+   *  local list filters it out until the next listSchemas returns. */
+  markSchemaDropped: (id: Uuid, schema: string) => void;
+  clearPendingSchemaDrops: (id: Uuid) => void;
   /** Marks that the LIST of schemas changed. */
   bumpSchemaList: (id: Uuid) => void;
 }
@@ -37,6 +49,7 @@ const emptyCache = (): ConnectionCache => ({
 export const useSchemaCache = create<SchemaCacheState>((set, get) => ({
   caches: {},
   schemaListTick: {},
+  pendingSchemaDrops: {},
 
   async ensureSchemas(id) {
     const c = get().caches[id] ?? emptyCache();
@@ -134,6 +147,53 @@ export const useSchemaCache = create<SchemaCacheState>((set, get) => ({
       return {
         caches: { ...s.caches, [id]: { ...cur, tables, columns } },
       };
+    });
+  },
+
+  removeTablesFromCache(id, schema, names) {
+    if (names.length === 0) return;
+    const drop = new Set(names);
+    set((s) => {
+      const cur = s.caches[id];
+      if (!cur) return s;
+      const cachedTables = cur.tables[schema];
+      if (!cachedTables) return s;
+      const nextTables = cachedTables.filter((t) => !drop.has(t.name));
+      const cols = cur.columns[schema] ?? {};
+      const nextCols = { ...cols };
+      for (const n of drop) delete nextCols[n];
+      return {
+        caches: {
+          ...s.caches,
+          [id]: {
+            ...cur,
+            tables: { ...cur.tables, [schema]: nextTables },
+            columns: { ...cur.columns, [schema]: nextCols },
+          },
+        },
+      };
+    });
+  },
+
+  markSchemaDropped(id, schema) {
+    set((s) => {
+      const cur = s.pendingSchemaDrops[id] ?? [];
+      if (cur.includes(schema)) return s;
+      return {
+        pendingSchemaDrops: {
+          ...s.pendingSchemaDrops,
+          [id]: [...cur, schema],
+        },
+      };
+    });
+  },
+
+  clearPendingSchemaDrops(id) {
+    set((s) => {
+      if (!s.pendingSchemaDrops[id]) return s;
+      const next = { ...s.pendingSchemaDrops };
+      delete next[id];
+      return { pendingSchemaDrops: next };
     });
   },
 

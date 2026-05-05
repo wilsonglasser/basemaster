@@ -493,6 +493,8 @@ export interface Filter {
   value?: Value | null;
   /** Second value, only for between/not_between. */
   value2?: Value | null;
+  /** Force case-insensitive comparison for textual ops. */
+  case_insensitive?: boolean;
 }
 
 export type GroupOp = "and" | "or";

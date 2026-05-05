@@ -33,6 +33,7 @@ import {
 } from "@/hooks/use-context-menu";
 import { ExportDialog } from "@/components/export-dialog";
 import { RecordFormView } from "@/components/table/record-form-view";
+import { buildTablePageSql } from "@/lib/build-table-sql";
 import { writeInMemory } from "@/lib/export";
 import { formatValue, isNullish } from "@/lib/format-value";
 import { ipc } from "@/lib/ipc";
@@ -425,6 +426,10 @@ export function TableView({
     setLoading(true);
     setError(null);
     const myReq = ++reqIdRef.current;
+    // Snapshot horizontal scroll BEFORE issuing the request so a sort/page
+    // refresh keeps the user on the same column set. Vertical resets to the
+    // top because the row ordering may have changed.
+    const keepCol = scrollOffset.col;
     try {
       const appliedCount = countLeaves(appliedFilterTree);
       const r = await ipc.db.tablePage(connectionId, schema, table, {
@@ -439,7 +444,13 @@ export function TableView({
       setRowsToDelete(new Set());
       setNewRows([]);
       setApplyError(null);
-      requestAnimationFrame(() => gridRef.current?.scrollToTop());
+      requestAnimationFrame(() => {
+        if (keepCol > 0) {
+          gridRef.current?.scrollToCell(keepCol, 0, "start");
+        } else {
+          gridRef.current?.scrollToTop();
+        }
+      });
     } catch (e) {
       if (myReq !== reqIdRef.current) return;
       setError(String(e));
@@ -1371,6 +1382,35 @@ export function TableView({
     await Promise.all([loadCount(), loadPage()]);
   };
 
+  const openEditQuery = () => {
+    const dialect =
+      conn?.driver === "mysql" ||
+      conn?.driver === "postgres" ||
+      conn?.driver === "sqlite"
+        ? conn.driver
+        : "mysql";
+    const filterCountApplied = countLeaves(appliedFilterTree);
+    const sql = buildTablePageSql({
+      dialect,
+      schema,
+      table,
+      filterTree: filterCountApplied > 0 ? appliedFilterTree : null,
+      orderBy,
+      limit,
+      offset: limit > 0 ? page * limit : 0,
+    });
+    useTabs.getState().open({
+      label: t("table.toolbar.editQueryLabel", { name: table }),
+      kind: {
+        kind: "query",
+        connectionId,
+        schema,
+        initialSql: sql,
+      },
+      accentColor: conn?.color ?? null,
+    });
+  };
+
   return (
     <div className="flex h-full flex-col">
       <Toolbar
@@ -1419,6 +1459,7 @@ export function TableView({
           setFilterBarOpen((o) => !o);
         }}
         filterCount={filterCount}
+        onEditQuery={openEditQuery}
         onDeleteSelected={
           editable && selectionInfo.hasSelection
             ? () => gridRef.current?.deleteSelected()
@@ -1640,6 +1681,7 @@ function Toolbar({
   columnsHidden,
   onToggleFilters,
   filterCount,
+  onEditQuery,
   onDeleteSelected,
   onAppendRow,
   onExport,
@@ -1668,6 +1710,7 @@ function Toolbar({
   columnsHidden: number;
   onToggleFilters: () => void;
   filterCount: number;
+  onEditQuery?: () => void;
   onDeleteSelected?: () => void;
   onAppendRow?: () => void;
   onExport?: () => void;
@@ -1741,6 +1784,16 @@ function Toolbar({
               ))}
             </select>
           </div>
+          {onEditQuery && (
+            <button
+              type="button"
+              onClick={onEditQuery}
+              className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title={t("table.toolbar.editQuery")}
+            >
+              <FileCode2 className="h-3.5 w-3.5" />
+            </button>
+          )}
 
           {showPagination && (
             <div className="flex items-center gap-1">

@@ -15,8 +15,8 @@ use tokio::sync::RwLock;
 
 use basemaster_core::{
     Column as BmColumn, ColumnType, ConnectionConfig, Driver, Error, ExecuteResult,
-    ForeignKeyInfo, IndexInfo, QueryResult, Result, SchemaInfo, TableInfo, TableKind,
-    Value,
+    Filter, FilterNode, FilterOp, ForeignKeyInfo, GroupOp, IndexInfo, PageOptions,
+    QueryResult, Result, SchemaInfo, SortDir, TableInfo, TableKind, Value,
 };
 
 pub struct SqliteDriver {
@@ -405,6 +405,89 @@ impl Driver for SqliteDriver {
         let sql: Option<String> = row.and_then(|r| r.try_get("sql").ok());
         Ok(sql.unwrap_or_default())
     }
+
+    async fn select_table_page(
+        &self,
+        _schema: &str,
+        table: &str,
+        opts: &PageOptions,
+    ) -> Result<QueryResult> {
+        let pool = self.pool().await?;
+        let mut sql = format!("SELECT * FROM {}", self.quote_ident(table));
+        if let Some(tree) = &opts.filter_tree {
+            if let Some(clause) = render_node(self, tree) {
+                sql.push_str(" WHERE ");
+                sql.push_str(&clause);
+            }
+        }
+        if let Some(ob) = &opts.order_by {
+            let dir = match ob.direction {
+                SortDir::Asc => "ASC",
+                SortDir::Desc => "DESC",
+            };
+            sql.push_str(&format!(
+                " ORDER BY {} {}",
+                self.quote_ident(&ob.column),
+                dir,
+            ));
+        }
+        if opts.limit > 0 {
+            sql.push_str(&format!(" LIMIT {} OFFSET {}", opts.limit, opts.offset));
+        }
+        let started = Instant::now();
+        let mut q = sqlx::query(&sql);
+        if let Some(tree) = &opts.filter_tree {
+            q = bind_node(q, tree);
+        }
+        let rows = q
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| Error::Sql(e.to_string()))?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let mut columns: Vec<String> = rows
+            .first()
+            .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
+            .unwrap_or_default();
+        if columns.is_empty() {
+            let cols = self.describe_table(_schema, table).await?;
+            columns = cols.into_iter().map(|c| c.name).collect();
+        }
+        let decoded_rows: Vec<Vec<Value>> = rows.iter().map(decode_row).collect();
+        Ok(QueryResult {
+            columns,
+            rows: decoded_rows,
+            source_table: None,
+            elapsed_ms,
+            truncated: false,
+        })
+    }
+
+    async fn count_table_rows(
+        &self,
+        _schema: &str,
+        table: &str,
+        filter_tree: Option<&FilterNode>,
+    ) -> Result<u64> {
+        let pool = self.pool().await?;
+        let mut sql = format!("SELECT COUNT(*) FROM {}", self.quote_ident(table));
+        if let Some(tree) = filter_tree {
+            if let Some(clause) = render_node(self, tree) {
+                sql.push_str(" WHERE ");
+                sql.push_str(&clause);
+            }
+        }
+        let mut q = sqlx::query(&sql);
+        if let Some(tree) = filter_tree {
+            q = bind_node(q, tree);
+        }
+        let row = q
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| Error::Sql(e.to_string()))?;
+        let total: i64 = row.try_get(0).map_err(|e| Error::Sql(e.to_string()))?;
+        Ok(total.max(0) as u64)
+    }
 }
 
 fn build_where_clause<D: Driver + ?Sized>(
@@ -422,6 +505,188 @@ fn build_where_clause<D: Driver + ?Sized>(
         })
         .collect::<Vec<_>>()
         .join(" AND ")
+}
+
+fn produces_clause(node: &FilterNode) -> bool {
+    match node {
+        FilterNode::Leaf { .. } => true,
+        FilterNode::Group { children, .. } => children.iter().any(produces_clause),
+    }
+}
+
+fn render_node(driver: &SqliteDriver, node: &FilterNode) -> Option<String> {
+    match node {
+        FilterNode::Leaf { filter } => Some(render_filter_clause(driver, filter)),
+        FilterNode::Group { op, children } => {
+            let parts: Vec<String> = children
+                .iter()
+                .filter_map(|c| render_node(driver, c))
+                .collect();
+            if parts.is_empty() {
+                return None;
+            }
+            if parts.len() == 1 {
+                return parts.into_iter().next();
+            }
+            let joiner = match op {
+                GroupOp::And => " AND ",
+                GroupOp::Or => " OR ",
+            };
+            Some(format!("({})", parts.join(joiner)))
+        }
+    }
+}
+
+fn render_filter_clause(driver: &SqliteDriver, f: &Filter) -> String {
+    let col_raw = driver.quote_ident(&f.column);
+    // SQLite's default LIKE is already ASCII case-insensitive, but Unicode
+    // strings stay case-sensitive. LOWER() normalizes both for ASCII; Unicode
+    // case-folding requires the ICU extension which we don't load. Good
+    // enough for the common case.
+    let ci = f.case_insensitive;
+    let col = if ci {
+        format!("LOWER({})", col_raw)
+    } else {
+        col_raw.clone()
+    };
+    let ph = if ci { "LOWER(?)" } else { "?" };
+    match f.op {
+        FilterOp::Eq => format!("{} = {}", col, ph),
+        FilterOp::NotEq => format!("{} <> {}", col, ph),
+        FilterOp::Gt => format!("{} > ?", col_raw),
+        FilterOp::Lt => format!("{} < ?", col_raw),
+        FilterOp::Gte => format!("{} >= ?", col_raw),
+        FilterOp::Lte => format!("{} <= ?", col_raw),
+        FilterOp::Contains | FilterOp::BeginsWith | FilterOp::EndsWith => {
+            format!("{} LIKE {}", col, ph)
+        }
+        FilterOp::NotContains | FilterOp::NotBeginsWith | FilterOp::NotEndsWith => {
+            format!("{} NOT LIKE {}", col, ph)
+        }
+        FilterOp::IsNull => format!("{} IS NULL", col_raw),
+        FilterOp::IsNotNull => format!("{} IS NOT NULL", col_raw),
+        FilterOp::IsEmpty => format!("{} = ''", col_raw),
+        FilterOp::IsNotEmpty => format!("{} <> ''", col_raw),
+        FilterOp::Between => format!("{} BETWEEN ? AND ?", col_raw),
+        FilterOp::NotBetween => format!("{} NOT BETWEEN ? AND ?", col_raw),
+        FilterOp::In => in_list_clause(&col, ph, f, false),
+        FilterOp::NotIn => in_list_clause(&col, ph, f, true),
+        FilterOp::Custom => {
+            let frag = match &f.value {
+                Some(Value::String(s)) => s.as_str(),
+                _ => "",
+            };
+            format!("{} {}", col_raw, frag)
+        }
+    }
+}
+
+fn in_list_clause(col: &str, placeholder: &str, f: &Filter, not: bool) -> String {
+    let items = split_in_csv(f.value.as_ref());
+    let n = items.len();
+    if n == 0 {
+        return if not { "1=1".into() } else { "1=0".into() };
+    }
+    let placeholders = std::iter::repeat_n(placeholder, n).collect::<Vec<_>>().join(", ");
+    let kw = if not { "NOT IN" } else { "IN" };
+    format!("{} {} ({})", col, kw, placeholders)
+}
+
+fn split_in_csv(v: Option<&Value>) -> Vec<String> {
+    let Some(Value::String(s)) = v else {
+        return Vec::new();
+    };
+    s.split(',')
+        .map(|p| p.trim().trim_matches('\'').trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn like_pattern(v: &Value, op: FilterOp) -> String {
+    let raw = match v {
+        Value::String(s) => s.clone(),
+        _ => format!("{:?}", v),
+    };
+    let escaped = raw
+        .replace('\\', "\\\\")
+        .replace('_', "\\_")
+        .replace('%', "\\%");
+    match op {
+        FilterOp::Contains | FilterOp::NotContains => format!("%{}%", escaped),
+        FilterOp::BeginsWith | FilterOp::NotBeginsWith => format!("{}%", escaped),
+        FilterOp::EndsWith | FilterOp::NotEndsWith => format!("%{}", escaped),
+        _ => escaped,
+    }
+}
+
+fn bind_filter<'q>(
+    mut q: Query<'q, Sqlite, SqliteArguments<'q>>,
+    f: &'q Filter,
+) -> Query<'q, Sqlite, SqliteArguments<'q>> {
+    match f.op {
+        FilterOp::IsNull
+        | FilterOp::IsNotNull
+        | FilterOp::IsEmpty
+        | FilterOp::IsNotEmpty
+        | FilterOp::Custom => q,
+        FilterOp::In | FilterOp::NotIn => {
+            for item in split_in_csv(f.value.as_ref()) {
+                q = q.bind(item);
+            }
+            q
+        }
+        FilterOp::Contains
+        | FilterOp::NotContains
+        | FilterOp::BeginsWith
+        | FilterOp::NotBeginsWith
+        | FilterOp::EndsWith
+        | FilterOp::NotEndsWith => {
+            let pat = f
+                .value
+                .as_ref()
+                .map(|v| like_pattern(v, f.op))
+                .unwrap_or_default();
+            q.bind(pat)
+        }
+        FilterOp::Between | FilterOp::NotBetween => {
+            if let Some(v) = &f.value {
+                q = bind_value(q, v);
+            } else {
+                q = q.bind(None::<String>);
+            }
+            if let Some(v2) = &f.value2 {
+                q = bind_value(q, v2);
+            } else {
+                q = q.bind(None::<String>);
+            }
+            q
+        }
+        _ => {
+            if let Some(v) = &f.value {
+                q = bind_value(q, v);
+            } else {
+                q = q.bind(None::<String>);
+            }
+            q
+        }
+    }
+}
+
+fn bind_node<'q>(
+    mut q: Query<'q, Sqlite, SqliteArguments<'q>>,
+    node: &'q FilterNode,
+) -> Query<'q, Sqlite, SqliteArguments<'q>> {
+    match node {
+        FilterNode::Leaf { filter } => bind_filter(q, filter),
+        FilterNode::Group { children, .. } => {
+            for c in children {
+                if produces_clause(c) {
+                    q = bind_node(q, c);
+                }
+            }
+            q
+        }
+    }
 }
 
 fn bind_value<'q>(

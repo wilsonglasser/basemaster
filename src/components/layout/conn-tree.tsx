@@ -490,7 +490,13 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
   const newTab = useTabs((s) => s.open);
   const invalidate = useSchemaCache((s) => s.invalidate);
   const bumpSchemaList = useSchemaCache((s) => s.bumpSchemaList);
+  const clearPendingSchemaDrops = useSchemaCache(
+    (s) => s.clearPendingSchemaDrops,
+  );
   const schemaListTick = useSchemaCache((s) => s.schemaListTick[conn.id] ?? 0);
+  const pendingSchemaDrops = useSchemaCache(
+    (s) => s.pendingSchemaDrops[conn.id],
+  );
   const t = useT();
   const sidebarSelected = useSidebarSelection((s) => s.selected);
   const setSidebarSelected = useSidebarSelection((s) => s.setSelected);
@@ -543,6 +549,7 @@ function ConnectionNode({ conn }: { conn: ConnectionProfile }) {
     try {
       const s = await ipc.db.listSchemas(conn.id);
       setSchemas(s);
+      clearPendingSchemaDrops(conn.id);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -1183,7 +1190,16 @@ LIMIT 50;`;
             <li className="px-1.5 py-1 text-xs text-destructive">{error}</li>
           )}
           {!error && schemas && (
-            <SchemasList conn={conn} schemas={schemas} />
+            <SchemasList
+              conn={conn}
+              schemas={
+                pendingSchemaDrops && pendingSchemaDrops.length > 0
+                  ? schemas.filter(
+                      (s) => !pendingSchemaDrops.includes(s.name),
+                    )
+                  : schemas
+              }
+            />
           )}
           {!error && !schemas && (
             <li className="flex items-center gap-1.5 px-1.5 py-1 text-xs text-muted-foreground">
@@ -1544,6 +1560,9 @@ function SchemaNode({
     const sql = `DROP ${keyword} ${quoted}${cascade};`;
     try {
       await ipc.db.runQuery(conn.id, sql, null);
+      // Optimistic remove: tombstone hides the row immediately while
+      // refreshSchemas (triggered via bumpSchemaList) is in flight.
+      useSchemaCache.getState().markSchemaDropped(conn.id, schema.name);
       invalidateSchema(conn.id, schema.name);
       bumpSchemaList(conn.id);
     } catch (e) {
@@ -2457,6 +2476,7 @@ function TableNode({
   );
   const invalidateSchema = useSchemaCache((s) => s.invalidateSchema);
   const ensureSnapshot = useSchemaCache((s) => s.ensureSnapshot);
+  const removeTablesFromCache = useSchemaCache((s) => s.removeTablesFromCache);
   const t = useT();
   const sidebarSelected = useSidebarSelection((s) => s.selected);
   const setSidebarSelected = useSidebarSelection((s) => s.setSelected);
@@ -2713,8 +2733,14 @@ function TableNode({
           ]
         : await ipc.db.dropTables(conn.id, table.schema, targets);
       closeTabsForTables(new Set(targets));
-      invalidateSchema(conn.id, table.schema);
-      ensureSnapshot(conn.id, table.schema).catch(() => {});
+      // Optimistic remove of successfully-dropped names so the tree updates
+      // instantly; failed drops stay visible.
+      const droppedOk = results
+        .filter((r) => r.error === null)
+        .map((r) => r.table);
+      if (droppedOk.length > 0) {
+        removeTablesFromCache(conn.id, table.schema, droppedOk);
+      }
       clearMulti();
       reportFailures(results);
     } catch (e) {

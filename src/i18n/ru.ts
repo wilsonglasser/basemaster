@@ -276,6 +276,8 @@ export const ru: Dict = {
       clearOrder: "Очистить сортировку",
       viewGrid: "Сетка",
       viewForm: "Форма (одна запись)",
+      editQuery: "Редактировать запрос",
+      editQueryLabel: "Query · {name}",
     },
     pagination: {
       allRows: "Все · {count} строк",
@@ -375,6 +377,7 @@ export const ru: Dict = {
       choose: "(выбрать)",
     },
     customTitle: "SQL-фрагмент после имени столбца (без параметризации)",
+    caseInsensitive: "Сравнение без учета регистра (без индекса)",
   },
   structure: {
     tabs: {

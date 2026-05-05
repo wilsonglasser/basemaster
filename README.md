@@ -221,6 +221,7 @@ Code signing details (SignPath Foundation for Windows, Apple Developer for macOS
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo pending grid edits |
 | `Ctrl+D` | Structure of the active table |
 | `F2` | Rename (column, table, connection) |
+| `Delete` | Drop the sidebar-selected connection / schema / table / query |
 | `Ctrl+/` | Full cheat-sheet |
 
 ## Roadmap
@@ -230,7 +231,8 @@ Code signing details (SignPath Foundation for Windows, Apple Developer for macOS
 | **v0.1** | Released | MySQL/MariaDB/Postgres/SQLite drivers, SQL editor, editable grid, schema editor, data transfer V1.2, import/export, AI chat, MCP server, Docker discovery, custom `EXPLAIN` visualizer |
 | **v0.2** | Released | Chained SSH jump hosts, HTTP CONNECT proxy tunnel |
 | **v0.3** | Released | Server-side query cancel, SSH `known_hosts` (TOFU + mismatch block), UPDATE/DELETE WHERE guard, top slow queries shortcut, query history filters, undo/redo on grid edits, 6 new languages (ES, zh-CN, JA, DE, FR, RU), enriched welcome with feature highlights and recent connections, importers for DBeaver / HeidiSQL / DataGrip, redesigned tab bar (jump dialog, smooth wheel scroll, floating close, active full-width) |
-| **v0.4** | Planned | P2P sync across installs (QUIC) |
+| **v0.4** | Released | Keep-mounted tabs, grid cursor pinning + glide-data-grid fork, SQL alias autocomplete, persisted result grid state, schema/table folders + multi-table ZIP export, drop-schema flow parity, sidebar `Delete` shortcut, per-rule case-insensitive filters, "Edit query" toolbar action, fix for `_bin`-collated MySQL VARCHAR rendering as `[N bytes]` |
+| **v0.5** | Planned | P2P sync across installs (QUIC) |
 
 For the detailed change list see [CHANGELOG.md](CHANGELOG.md).
 
