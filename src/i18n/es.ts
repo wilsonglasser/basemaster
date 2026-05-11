@@ -327,6 +327,7 @@ export const es: Dict = {
       desc: "Ordenar DESC",
       clearOrder: "Limpiar orden",
       hide: "Ocultar columna",
+      copyJoinComma: "Copiar valores (separados por coma)",
     },
     columnsPopover: {
       title: "Columnas visibles",

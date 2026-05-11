@@ -25,13 +25,20 @@ import {
 
 import type { SQLNamespace } from "@codemirror/lang-sql";
 
+import { Copy } from "lucide-react";
+
 import { detectDangerousStatements } from "@/lib/dangerous-query";
 import { statementAtCursor } from "@/lib/sql-statements";
+import { formatValue, isNullish } from "@/lib/format-value";
 import { ipc } from "@/lib/ipc";
 import { ExportDialog } from "@/components/export-dialog";
 import { writeInMemory } from "@/lib/export";
 import { formatSqlText } from "@/lib/sql-format";
-import type { QueryRunBatch, QueryRunResult, Uuid } from "@/lib/types";
+import {
+  useContextMenu,
+  type ContextEntry,
+} from "@/hooks/use-context-menu";
+import type { QueryRunBatch, QueryRunResult, Uuid, Value } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { appPrompt } from "@/state/app-dialog";
 import { useDangerousQuery } from "@/state/dangerous-query";
@@ -1231,8 +1238,8 @@ function ResultPane({
     );
   }
   return (
-    <ResultGrid
-      ref={gridRef}
+    <ResultGridPane
+      gridRef={gridRef}
       columns={result.columns}
       rows={result.rows}
       searchValue={searchValue}
@@ -1246,6 +1253,80 @@ function ResultPane({
       scrollOffset={scrollOffset}
       onScrollChange={onScrollChange}
     />
+  );
+}
+
+function ResultGridPane({
+  gridRef,
+  columns,
+  rows,
+  searchValue,
+  searchResults,
+  focusedCell,
+  focusedColumn,
+  accentColor,
+  onCellSelect,
+  columnSizes,
+  onColumnSizesChange,
+  scrollOffset,
+  onScrollChange,
+}: {
+  gridRef: React.RefObject<ResultGridHandle | null>;
+  columns: string[];
+  rows: Value[][];
+  searchValue: string;
+  searchResults?: ReadonlyArray<readonly [number, number]>;
+  focusedCell?: readonly [number, number] | null;
+  focusedColumn?: number | null;
+  accentColor?: string | null;
+  onCellSelect: (cell: readonly [number, number] | undefined) => void;
+  columnSizes?: Record<string, number>;
+  onColumnSizesChange?: (next: Record<string, number>) => void;
+  scrollOffset?: { col: number; row: number };
+  onScrollChange?: (offset: { col: number; row: number }) => void;
+}) {
+  const t = useT();
+  const [headerMenuItems, setHeaderMenuItems] = useState<ContextEntry[]>([]);
+  const headerMenu = useContextMenu(headerMenuItems);
+  const handleHeaderContextMenu = (col: number, x: number, y: number) => {
+    const items: ContextEntry[] = [
+      {
+        icon: <Copy className="h-3.5 w-3.5" />,
+        label: t("table.headerMenu.copyJoinComma"),
+        onClick: () => {
+          const parts: string[] = [];
+          for (const r of rows) {
+            const v = r[col];
+            if (isNullish(v)) continue;
+            parts.push(formatValue(v));
+          }
+          void navigator.clipboard.writeText(parts.join(","));
+        },
+      },
+    ];
+    setHeaderMenuItems(items);
+    headerMenu.openAtPos(x, y);
+  };
+  return (
+    <>
+      <ResultGrid
+        ref={gridRef}
+        columns={columns}
+        rows={rows}
+        searchValue={searchValue}
+        searchResults={searchResults}
+        focusedCell={focusedCell}
+        focusedColumn={focusedColumn}
+        accentColor={accentColor}
+        onCellSelect={onCellSelect}
+        columnSizes={columnSizes}
+        onColumnSizesChange={onColumnSizesChange}
+        scrollOffset={scrollOffset}
+        onScrollChange={onScrollChange}
+        onHeaderContextMenu={handleHeaderContextMenu}
+      />
+      {headerMenu.element}
+    </>
   );
 }
 

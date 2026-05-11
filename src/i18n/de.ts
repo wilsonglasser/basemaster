@@ -327,6 +327,7 @@ export const de: Dict = {
       desc: "Absteigend sortieren",
       clearOrder: "Sortierung löschen",
       hide: "Spalte ausblenden",
+      copyJoinComma: "Werte kopieren (kommagetrennt)",
     },
     columnsPopover: {
       title: "Sichtbare Spalten",

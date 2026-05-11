@@ -69,6 +69,15 @@ export type DetachedPayload =
       accentColor: string | null;
       label: string;
       displayLabel: string;
+    }
+  | {
+      kind: "tables-list";
+      connectionId: string;
+      schema: string;
+      category: "all" | "tables" | "views";
+      accentColor: string | null;
+      label: string;
+      displayLabel: string;
     };
 
 function readDetachedPayload(): DetachedPayload | null {
@@ -130,7 +139,9 @@ function MainApp() {
       for (const tab of useTabs.getState().tabs) {
         const k = tab.kind;
         if (
-          (k.kind === "table" || k.kind === "query") &&
+          (k.kind === "table" ||
+            k.kind === "query" ||
+            k.kind === "tables-list") &&
           k.connectionId &&
           existingIds.has(k.connectionId) &&
           !active.has(k.connectionId)
@@ -159,6 +170,24 @@ function MainApp() {
       } catch (err) {
         console.error("tab-state rehydrate:", err);
       }
+      // Dedup: if main already has a tab for the same table identity,
+      // just focus it and drop the detached state. Avoids two tabs of
+      // the same table living side-by-side after reattach.
+      if (p.kind === "table") {
+        const existing = useTabs.getState().tabs.find(
+          (t) =>
+            t.kind.kind === "table" &&
+            t.kind.connectionId === p.connectionId &&
+            t.kind.schema === p.schema &&
+            t.kind.table === p.table,
+        );
+        if (existing) {
+          useTabs.getState().setActive(existing.id);
+          useTabState.getState().remove(p.label);
+          void getCurrentWebviewWindow().setFocus();
+          return;
+        }
+      }
       const newTabId = reserveId();
       useTabState.getState().move(p.label, newTabId, true);
       if (p.kind === "table") {
@@ -184,6 +213,20 @@ function MainApp() {
               connectionId: p.connectionId,
               schema: p.schema,
               initialSql: p.initialSql,
+            },
+            accentColor: p.accentColor ?? null,
+          },
+          newTabId,
+        );
+      } else if (p.kind === "tables-list") {
+        openTab(
+          {
+            label: p.displayLabel,
+            kind: {
+              kind: "tables-list",
+              connectionId: p.connectionId,
+              schema: p.schema,
+              category: p.category,
             },
             accentColor: p.accentColor ?? null,
           },
@@ -353,6 +396,13 @@ function DetachedApp({ payload }: { payload: DetachedPayload }) {
               connectionId={payload.connectionId}
               schema={payload.schema}
               table={payload.table}
+            />
+          ) : payload.kind === "tables-list" ? (
+            <TablesListView
+              tabId={payload.label}
+              connectionId={payload.connectionId}
+              schema={payload.schema}
+              category={payload.category}
             />
           ) : (
             <QueryTab

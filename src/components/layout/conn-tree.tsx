@@ -1098,7 +1098,7 @@ LIMIT 50;`;
 
         <span className="flex-1 truncate">{conn.name}</span>
 
-        <div className="hidden items-center gap-0.5 group-hover:flex">
+        <div className="absolute right-1 top-1/2 z-10 hidden -translate-y-1/2 items-center gap-0.5 rounded-md bg-popover/95 px-1 py-0.5 shadow-md ring-1 ring-border backdrop-blur-sm group-hover:flex">
           {active && (
             <>
               <IconBtn title={t("tree.newQuery")} onClick={newQuery}>
@@ -1739,7 +1739,7 @@ function SchemaNode({
     <li>
       <div
         className={cn(
-          "group flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs transition-colors",
+          "group relative flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs transition-colors",
           isSelected
             ? "bg-conn-accent/25 text-foreground ring-1 ring-conn-accent/60"
             : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
@@ -3045,7 +3045,7 @@ function TableNode({
     <li>
       <div
         className={cn(
-          "group flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs transition-colors",
+          "group relative flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs transition-colors",
           isSelected
             ? "bg-conn-accent/25 text-foreground ring-1 ring-conn-accent/60"
             : isMultiSelected
@@ -3112,28 +3112,30 @@ function TableNode({
             {formatCompactNumber(table.row_estimate)}
           </span>
         )}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            openSelectAll();
-          }}
-          className="hidden h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground group-hover:grid"
-          title={`SELECT * FROM ${table.name}`}
-        >
-          <FileCode2 className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            openTable();
-          }}
-          className="hidden h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground group-hover:grid"
-          title={t("tree.openTable")}
-        >
-          <TableIcon className="h-3 w-3" />
-        </button>
+        <div className="absolute right-1 top-1/2 z-10 hidden -translate-y-1/2 items-center gap-0.5 rounded-md bg-popover/95 px-1 py-0.5 shadow-md ring-1 ring-border backdrop-blur-sm group-hover:flex">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              openSelectAll();
+            }}
+            className="grid h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            title={`SELECT * FROM ${table.name}`}
+          >
+            <FileCode2 className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              openTable();
+            }}
+            className="grid h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            title={t("tree.openTable")}
+          >
+            <TableIcon className="h-3 w-3" />
+          </button>
+        </div>
       </div>
       {menu.element}
     </li>
@@ -3324,7 +3326,7 @@ function SavedQueryNode({
     <li>
       <div
         className={cn(
-          "group flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs transition-colors",
+          "group relative flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 text-xs transition-colors",
           isSelected
             ? "bg-conn-accent/25 text-foreground ring-1 ring-conn-accent/60"
             : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",

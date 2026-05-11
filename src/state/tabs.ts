@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import type { Uuid } from "@/lib/types";
+import { useTabState } from "@/state/tab-state";
 
 export type TabKind =
   | { kind: "welcome" }
@@ -121,8 +122,7 @@ interface TabsState {
   reserveId: () => string;
 }
 
-let counter = 0;
-const nextId = () => `tab-${++counter}`;
+const nextId = () => crypto.randomUUID();
 
 const initialTab: Tab = {
   id: nextId(),
@@ -138,18 +138,11 @@ const EPHEMERAL_KINDS: TabKind["kind"][] = [
   "schema-rename",
 ];
 
-/** Filter invalid tabs after rehydrate and recalculate counter. */
+/** Filter invalid tabs after rehydrate. */
 function sanitizeRestored(tabs: Tab[], activeId: string | null) {
   const valid = tabs.filter(
     (t) => !EPHEMERAL_KINDS.includes(t.kind.kind as TabKind["kind"]),
   );
-  // Bump counter to the max seen to avoid collisions with new ids.
-  let maxN = 0;
-  for (const t of valid) {
-    const m = /^tab-(\d+)$/.exec(t.id);
-    if (m) maxN = Math.max(maxN, Number(m[1]));
-  }
-  counter = maxN;
   // If everything restored empty, put welcome back.
   if (valid.length === 0) {
     const wid = nextId();
@@ -204,14 +197,17 @@ export const useTabs = create<TabsState>()(
           }
           return { tabs, activeId };
         });
+        useTabState.getState().remove(id);
       },
 
       closeMany(predicate) {
         let count = 0;
+        const removed: string[] = [];
         set((s) => {
           const keep = s.tabs.filter((t) => {
             if (predicate(t)) {
               count++;
+              removed.push(t.id);
               return false;
             }
             return true;
@@ -221,6 +217,8 @@ export const useTabs = create<TabsState>()(
             : keep[0]?.id ?? null;
           return { tabs: keep, activeId };
         });
+        const tabState = useTabState.getState();
+        for (const id of removed) tabState.remove(id);
         return count;
       },
 

@@ -121,12 +121,24 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
             Some(v) => Value::Int(v as i64),
             None => Value::Null,
         },
-        "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" => {
+        "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" => {
+            // CHAR/VARCHAR/TEXT columns with `_bin` collation arrive here:
+            // sqlx-mysql renames them to BINARY/VARBINARY/*BLOB whenever the
+            // BINARY column flag is set (and `_bin` collations DO set that
+            // flag). True binary columns (e.g. SHA256 BINARY(32), image
+            // BLOBs) usually fail UTF-8 validation and stay as Bytes.
             match tg!(Vec<u8>) {
-                Some(v) => Value::Bytes(v),
+                Some(b) => match String::from_utf8(b) {
+                    Ok(s) => Value::String(s),
+                    Err(e) => Value::Bytes(e.into_bytes()),
+                },
                 None => Value::Null,
             }
         }
+        "BIT" => match tg!(Vec<u8>) {
+            Some(v) => Value::Bytes(v),
+            None => Value::Null,
+        },
         _ => decode_fallback(row, i),
     }
 }

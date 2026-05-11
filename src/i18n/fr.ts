@@ -327,6 +327,7 @@ export const fr: Dict = {
       desc: "Trier DESC",
       clearOrder: "Effacer le tri",
       hide: "Masquer la colonne",
+      copyJoinComma: "Copier les valeurs (séparées par virgule)",
     },
     columnsPopover: {
       title: "Colonnes visibles",

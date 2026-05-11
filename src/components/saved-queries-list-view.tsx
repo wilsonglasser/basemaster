@@ -342,7 +342,6 @@ function Row({
       <tr
         className="group cursor-pointer border-b border-border/50 hover:bg-accent/30"
         onDoubleClick={onOpen}
-        onClick={onOpen}
         onContextMenu={menu.openAt}
       >
         <td className="truncate px-3 py-1.5 font-medium">{q.name}</td>
@@ -356,7 +355,7 @@ function Row({
           {formatDate(q.updated_at)}
         </td>
         <td className="px-3 py-1.5">
-          <div className="hidden items-center gap-0.5 group-hover:flex">
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
             <button
               type="button"
               onClick={(e) => {

@@ -327,6 +327,7 @@ export const zhCN: Dict = {
       desc: "降序排序",
       clearOrder: "清除排序",
       hide: "隐藏列",
+      copyJoinComma: "复制值 (逗号分隔)",
     },
     columnsPopover: {
       title: "可见列",

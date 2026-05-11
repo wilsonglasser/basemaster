@@ -548,9 +548,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
             if (!id) return;
             setColumnSizes((cs) => ({ ...cs, [id]: newSize }));
           }}
-          onHeaderClicked={
-            onHeaderClick ? (colIndex) => onHeaderClick(colIndex) : undefined
-          }
+          onHeaderClicked={(fieldCol) => {
+            if (onHeaderClick) {
+              onHeaderClick(fieldCol);
+              return;
+            }
+            setSelection({
+              columns: CompactSelection.fromSingleSelection(
+                fieldCol + ROW_MARKER_OFFSET,
+              ),
+              rows: CompactSelection.empty(),
+              current: undefined,
+            });
+          }}
           customRenderers={allCells}
           onCellEdited={
             onCellEdit

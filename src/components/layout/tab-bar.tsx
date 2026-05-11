@@ -646,7 +646,10 @@ function TabItem({
   const Icon = iconFor(tab.kind);
   const accent = tab.accentColor;
 
-  const detachable = tab.kind.kind === "table" || tab.kind.kind === "query";
+  const detachable =
+    tab.kind.kind === "table" ||
+    tab.kind.kind === "query" ||
+    tab.kind.kind === "tables-list";
   const t = useT();
   const [dragging, setDragging] = useState(false);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -894,6 +897,17 @@ function buildDetachPayload(tab: Tab, label: string) {
       connectionId: tab.kind.connectionId,
       schema,
       initialSql: sql,
+      accentColor: tab.accentColor ?? null,
+      label,
+      displayLabel: tab.label,
+    };
+  }
+  if (tab.kind.kind === "tables-list") {
+    return {
+      kind: "tables-list" as const,
+      connectionId: tab.kind.connectionId,
+      schema: tab.kind.schema,
+      category: tab.kind.category ?? "all",
       accentColor: tab.accentColor ?? null,
       label,
       displayLabel: tab.label,

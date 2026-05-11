@@ -329,6 +329,7 @@ export const ptBR = {
       desc: "Ordenar DESC",
       clearOrder: "Remover ordenação",
       hide: "Ocultar coluna",
+      copyJoinComma: "Copiar valores (separados por vírgula)",
     },
     columnsPopover: {
       title: "Colunas visíveis",

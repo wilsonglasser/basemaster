@@ -15,7 +15,13 @@ import {
   closeBracketsKeymap,
   completionKeymap,
 } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import {
+  copyLineDown,
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+} from "@codemirror/commands";
 import { MySQL, sql, type SQLNamespace } from "@codemirror/lang-sql";
 import {
   bracketMatching,
@@ -199,6 +205,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
                 onFormatRef.current?.();
                 return true;
               },
+            },
+            {
+              key: "Mod-d",
+              preventDefault: true,
+              run: copyLineDown,
             },
           ]),
           themeCompartment.current.of(cmTheme),

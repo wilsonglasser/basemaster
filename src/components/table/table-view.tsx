@@ -44,7 +44,6 @@ import type {
   OrderBy,
   PkEntry,
   QueryResult,
-  SortDir,
   Uuid,
   Value,
 } from "@/lib/types";
@@ -763,6 +762,20 @@ export function TableView({
     }
     items.push({ separator: true });
     items.push({
+      icon: <Copy className="h-3.5 w-3.5" />,
+      label: t("table.headerMenu.copyJoinComma"),
+      onClick: () => {
+        const parts: string[] = [];
+        for (const r of data.rows) {
+          const v = r[col];
+          if (isNullish(v)) continue;
+          parts.push(formatValue(v));
+        }
+        void navigator.clipboard.writeText(parts.join(","));
+      },
+    });
+    items.push({ separator: true });
+    items.push({
       icon: <EyeOff className="h-3.5 w-3.5" />,
       label: t("table.headerMenu.hide"),
       // Never allow hiding the last visible column : otherwise the grid becomes NaN.
@@ -1340,7 +1353,6 @@ export function TableView({
   ) => handleCellContextMenu(v2f(col), row, x, y);
   const visualColumnMoved = (from: number, to: number) =>
     handleColumnMoved(v2f(from), v2f(to));
-  const visualHeaderClick = (col: number) => handleHeaderClick(v2f(col));
   const visualHeaderContextMenu = (col: number, x: number, y: number) =>
     handleHeaderContextMenu(v2f(col), x, y);
 
@@ -1370,13 +1382,6 @@ export function TableView({
     if (count == null || limit === 0) return null;
     return Math.max(1, Math.ceil(count / limit));
   }, [count, limit]);
-
-  const handleHeaderClick = (col: number) => {
-    const colName = data?.columns[col];
-    if (!colName) return;
-    setOrderBy((prev) => cycleSort(prev, colName));
-    setPage(0);
-  };
 
   const refresh = async () => {
     await Promise.all([loadCount(), loadPage()]);
@@ -1563,7 +1568,6 @@ export function TableView({
                     : undefined,
               })
             }
-            onHeaderClick={visualHeaderClick}
             onHeaderContextMenu={visualHeaderContextMenu}
             orderBy={orderBy}
             gridRef={gridRef}
@@ -2039,7 +2043,6 @@ function DataPane({
   onCellSelect,
   onCellContextMenu,
   onColumnMoved,
-  onHeaderClick,
   onHeaderContextMenu,
   onAppendRow,
   orderBy,
@@ -2081,7 +2084,6 @@ function DataPane({
     clientY: number,
   ) => void;
   onColumnMoved?: (from: number, to: number) => void;
-  onHeaderClick: (col: number) => void;
   onHeaderContextMenu?: (col: number, clientX: number, clientY: number) => void;
   onAppendRow?: () => void;
   orderBy: OrderBy | null;
@@ -2162,7 +2164,6 @@ function DataPane({
         onCellSelect={onCellSelect}
         onCellContextMenu={onCellContextMenu}
         onColumnMoved={onColumnMoved}
-        onHeaderClick={onHeaderClick}
         onHeaderContextMenu={onHeaderContextMenu}
         columnSizes={columnSizes}
         onColumnSizesChange={onColumnSizesChange}
@@ -2644,10 +2645,3 @@ function DirtyFooter({
   );
 }
 
-function cycleSort(prev: OrderBy | null, col: string): OrderBy | null {
-  if (!prev || prev.column !== col)
-    return { column: col, direction: "asc" as SortDir };
-  if (prev.direction === "asc")
-    return { column: col, direction: "desc" as SortDir };
-  return null;
-}

@@ -327,6 +327,7 @@ export const ru: Dict = {
       desc: "Сортировка DESC",
       clearOrder: "Очистить сортировку",
       hide: "Скрыть столбец",
+      copyJoinComma: "Копировать значения (через запятую)",
     },
     columnsPopover: {
       title: "Видимые столбцы",

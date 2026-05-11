@@ -327,6 +327,7 @@ export const ja: Dict = {
       desc: "降順ソート",
       clearOrder: "ソートクリア",
       hide: "カラムを非表示",
+      copyJoinComma: "値をコピー (カンマ区切り)",
     },
     columnsPopover: {
       title: "表示カラム",
