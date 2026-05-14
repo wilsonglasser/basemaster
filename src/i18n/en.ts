@@ -534,6 +534,12 @@ export const en: Dict = {
       configWslHint:
         "Requires WSL2 with mirrored networking. Add {networkingMode} under {wsl2} in {file}. Otherwise the Windows loopback is not reachable from inside WSL.",
       copyInline: "copy",
+      autostart: "Start on app launch",
+      autostartHint:
+        "When on, the server starts automatically and closing the window keeps it running in the system tray instead of quitting.",
+      regenerateToken: "Regenerate token",
+      regenerateConfirm:
+        "Regenerate the MCP token? Clients using the current token will stop working until you update their config.",
     },
     portability: {
       intro:

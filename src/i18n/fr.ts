@@ -534,6 +534,12 @@ export const fr: Dict = {
       configWslHint:
         "Nécessite WSL2 avec networking miroir. Ajoute {networkingMode} sous {wsl2} dans {file}. Sinon le loopback Windows n'est pas accessible depuis WSL.",
       copyInline: "copier",
+      autostart: "Démarrer au lancement de l'app",
+      autostartHint:
+        "Si activé, le serveur démarre automatiquement et fermer la fenêtre le maintient dans la zone de notification au lieu de quitter.",
+      regenerateToken: "Régénérer le jeton",
+      regenerateConfirm:
+        "Régénérer le jeton MCP ? Les clients utilisant le jeton actuel cesseront de fonctionner jusqu'à la mise à jour de leur configuration.",
     },
     portability: {
       intro:

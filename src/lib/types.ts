@@ -64,6 +64,7 @@ export interface McpStatus {
   running: boolean;
   port: number;
   token: string | null;
+  autostart: boolean;
 }
 
 export interface ExportedFolder {

@@ -534,6 +534,12 @@ export const ja: Dict = {
       configWslHint:
         "WSL2のmirrored networkingが必要。{file}の{wsl2}下に{networkingMode}を追加してください。それ以外ではWindowsのloopbackがWSLから到達不可です。",
       copyInline: "コピー",
+      autostart: "アプリ起動時に開始",
+      autostartHint:
+        "オンにすると、サーバーは自動的に起動し、ウィンドウを閉じても終了せずにシステムトレイで動作し続けます。",
+      regenerateToken: "トークンを再生成",
+      regenerateConfirm:
+        "MCP トークンを再生成しますか？現在のトークンを使用しているクライアントは、設定を更新するまで動作しなくなります。",
     },
     portability: {
       intro:

@@ -609,6 +609,8 @@ function McpPanel() {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [port, setPort] = useState<number>(7424);
   const [loading, setLoading] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [autostartLoading, setAutostartLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<
     "token" | "configWin" | "configWsl" | null
@@ -645,6 +647,33 @@ function McpPanel() {
     }
   }
 
+  async function regenerate() {
+    if (!window.confirm(t("settings.mcp.regenerateConfirm"))) return;
+    setRegenerating(true);
+    setErr(null);
+    try {
+      setStatus(await ipc.mcp.regenerateToken());
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  async function toggleAutostart() {
+    setAutostartLoading(true);
+    setErr(null);
+    try {
+      const next = await ipc.mcp.setAutostart(!status?.autostart);
+      setStatus(next);
+      if (next.port) setPort(next.port);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setAutostartLoading(false);
+    }
+  }
+
   function copy(
     value: string,
     kind: "token" | "configWin" | "configWsl",
@@ -656,7 +685,8 @@ function McpPanel() {
 
   const running = !!status?.running;
   const token = status?.token ?? null;
-  const activePort = status?.port ?? port;
+  const autostart = !!status?.autostart;
+  const activePort = status?.port || port;
   const url = `http://127.0.0.1:${activePort}/mcp`;
   // WSL2 in mirrored networking mode shares the Windows loopback, so the
   // same 127.0.0.1 URL reaches the server. In NAT mode the Windows loopback
@@ -731,13 +761,31 @@ function McpPanel() {
         </span>
       </div>
 
+      <label className="flex items-start gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={autostart}
+          disabled={autostartLoading}
+          onChange={toggleAutostart}
+          className="mt-0.5 h-3.5 w-3.5 rounded border-border disabled:opacity-50"
+        />
+        <span>
+          <span className="text-foreground">
+            {t("settings.mcp.autostart")}
+          </span>
+          <span className="block text-[11px] text-muted-foreground/80">
+            {t("settings.mcp.autostartHint")}
+          </span>
+        </span>
+      </label>
+
       {err && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {err}
         </div>
       )}
 
-      {running && token && (
+      {token && (
         <>
           <div className="grid gap-1.5">
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -767,6 +815,20 @@ function McpPanel() {
                 ) : (
                   <Copy className="h-3.5 w-3.5" />
                 )}
+              </button>
+              <button
+                type="button"
+                onClick={regenerate}
+                disabled={regenerating}
+                className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50"
+                title={t("settings.mcp.regenerateToken")}
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-3.5 w-3.5",
+                    regenerating && "animate-spin",
+                  )}
+                />
               </button>
             </div>
           </div>

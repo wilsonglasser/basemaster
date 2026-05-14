@@ -1,8 +1,8 @@
 //! Local MCP (Model Context Protocol) server.
 //!
 //! Exposes a subset of MCP over HTTP JSON-RPC 2.0 on 127.0.0.1:<port>.
-//! The auth token is generated at start and shown to the user —
-//! any MCP client that configures `MCP_TOKEN` + URL can access it.
+//! The caller passes in the auth token (persisted in the OS keyring) —
+//! any MCP client that configures the token + URL can access it.
 //!
 //! Exposed tools:
 //!  - `list_connections` — saved connections (without passwords).
@@ -13,7 +13,8 @@
 //! Security:
 //!  - Bind on 127.0.0.1 only (never 0.0.0.0).
 //!  - Bearer token required on every request.
-//!  - Random 32-byte token, regenerated on every start.
+//!  - Random 32-byte token, persisted in the keyring, regenerated only
+//!    on explicit user request (so client config survives restarts).
 
 use std::sync::Arc;
 
@@ -34,8 +35,6 @@ use crate::state::AppState;
 
 #[derive(Clone)]
 pub struct McpServer {
-    /// Token generated at start. Clients pass via `Authorization: Bearer <token>`.
-    pub token: Arc<RwLock<Option<String>>>,
     /// Port in use (0 = not started).
     pub port: Arc<RwLock<u16>>,
     /// Handle for the server task so it can be stopped.
@@ -47,7 +46,6 @@ pub struct McpServer {
 impl McpServer {
     pub fn new() -> Self {
         Self {
-            token: Arc::new(RwLock::new(None)),
             port: Arc::new(RwLock::new(0)),
             handle: Arc::new(Mutex::new(None)),
             shutdown: Arc::new(Mutex::new(None)),
@@ -58,22 +56,19 @@ impl McpServer {
         self.handle.lock().await.is_some()
     }
 
-    pub async fn current_token(&self) -> Option<String> {
-        self.token.read().await.clone()
-    }
-
     pub async fn current_port(&self) -> u16 {
         *self.port.read().await
     }
 
     /// Starts the HTTP server. If already running, stops and restarts it.
+    /// The token is supplied by the caller (loaded from the keyring).
     pub async fn start(
         &self,
         app_handle: AppHandle,
         preferred_port: u16,
+        token: String,
     ) -> Result<(String, u16), String> {
         self.stop().await;
-        let token = random_hex_token(32);
         let listener = tokio::net::TcpListener::bind((
             std::net::Ipv4Addr::LOCALHOST,
             preferred_port,
@@ -103,7 +98,6 @@ impl McpServer {
                 .await;
         });
 
-        *self.token.write().await = Some(token.clone());
         *self.port.write().await = bound;
         *self.handle.lock().await = Some(handle);
         *self.shutdown.lock().await = Some(tx);
@@ -118,7 +112,6 @@ impl McpServer {
         if let Some(h) = self.handle.lock().await.take() {
             let _ = h.await;
         }
-        *self.token.write().await = None;
         *self.port.write().await = 0;
     }
 }
@@ -521,7 +514,7 @@ fn parse_str(args: &JsonValue, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing {}", key))
 }
 
-fn random_hex_token(bytes: usize) -> String {
+pub fn random_hex_token(bytes: usize) -> String {
     // Source: Uuid::new_v4() provides 128 bits; concatenates until
     // reaching the requested size. Not a full CSPRNG but enough for a local token.
     let mut out = String::with_capacity(bytes * 2);

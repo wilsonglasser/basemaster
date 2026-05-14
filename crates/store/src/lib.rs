@@ -16,6 +16,7 @@ pub mod query_history;
 pub mod saved_queries;
 pub mod schema_folders;
 pub mod secrets;
+pub mod settings;
 pub mod table_folders;
 
 pub use connection_folders::{
@@ -27,6 +28,7 @@ pub use query_history::{
 };
 pub use saved_queries::{SavedQuery, SavedQueryDraft, SavedQueryRepo};
 pub use schema_folders::{SchemaFolder, SchemaFolderAssignment, SchemaFolderRepo};
+pub use settings::SettingsRepo;
 pub use table_folders::{TableFolder, TableFolderAssignment, TableFolderRepo};
 
 #[derive(Debug, thiserror::Error)]
@@ -146,6 +148,10 @@ impl Store {
 
     pub fn schema_folders(&self) -> SchemaFolderRepo<'_> {
         SchemaFolderRepo::new(&self.pool)
+    }
+
+    pub fn settings(&self) -> SettingsRepo<'_> {
+        SettingsRepo::new(&self.pool)
     }
 
     pub fn table_folders(&self) -> TableFolderRepo<'_> {

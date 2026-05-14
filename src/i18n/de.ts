@@ -534,6 +534,12 @@ export const de: Dict = {
       configWslHint:
         "Erfordert WSL2 mit mirrored networking. Füge {networkingMode} unter {wsl2} in {file} hinzu. Sonst ist Windows-Loopback aus WSL nicht erreichbar.",
       copyInline: "kopieren",
+      autostart: "Beim App-Start starten",
+      autostartHint:
+        "Wenn aktiviert, startet der Server automatisch und das Schließen des Fensters hält ihn im Infobereich aktiv, statt zu beenden.",
+      regenerateToken: "Token neu generieren",
+      regenerateConfirm:
+        "MCP-Token neu generieren? Clients mit dem aktuellen Token funktionieren nicht mehr, bis ihre Konfiguration aktualisiert wird.",
     },
     portability: {
       intro:

@@ -12,7 +12,20 @@ mod ssh_tunnel;
 mod state;
 
 use basemaster_store::{AppPaths, Store};
-use tauri::Manager;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, WindowEvent,
+};
+
+/// Brings the main window back from the tray: show + unminimize + focus.
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -58,6 +71,25 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .on_window_event(|window, event| {
+            // Close-to-tray: while the MCP server is running, closing the
+            // main window must NOT kill the process — a local MCP client
+            // may still be connected. Hide to tray instead. With the MCP
+            // server stopped, closing quits normally.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() != "main" {
+                    return;
+                }
+                let app = window.app_handle();
+                let state = app.state::<state::AppState>();
+                let mcp_running =
+                    tauri::async_runtime::block_on(state.mcp.is_running());
+                if mcp_running {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             let paths = AppPaths::resolve()?;
             tracing::info!(?paths.data_dir, "abrindo SQLite local");
@@ -97,6 +129,79 @@ pub fn run() {
                         }
                     }
                 });
+            }
+
+            // Tray icon: keeps the app reachable while the window is hidden
+            // (see the close-to-tray handler in on_window_event). Quitting
+            // for real goes through the "Sair" menu item, which stops the
+            // MCP server first.
+            let show_item = MenuItem::with_id(
+                app,
+                "tray_show",
+                "Mostrar BaseMaster",
+                true,
+                None::<&str>,
+            )?;
+            let quit_item =
+                MenuItem::with_id(app, "tray_quit", "Sair", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("BaseMaster")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "tray_show" => show_main_window(app),
+                    "tray_quit" => {
+                        let state = app.state::<state::AppState>();
+                        tauri::async_runtime::block_on(state.mcp.stop());
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            // MCP autostart: if the user enabled it, bring the server up
+            // now — before the window even shows, since a local client
+            // may try to connect immediately on launch.
+            {
+                let state = app.state::<state::AppState>();
+                let autostart = tauri::async_runtime::block_on(
+                    state.store.settings().get_bool("mcp.autostart", false),
+                )
+                .unwrap_or(false);
+                if autostart {
+                    let port = tauri::async_runtime::block_on(
+                        state.store.settings().get("mcp.port"),
+                    )
+                    .ok()
+                    .flatten()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(commands::MCP_DEFAULT_PORT);
+                    match commands::mcp_load_or_create_token() {
+                        Ok(token) => {
+                            let handle = app.handle().clone();
+                            if let Err(e) = tauri::async_runtime::block_on(
+                                state.mcp.start(handle, port, token),
+                            ) {
+                                tracing::warn!("MCP autostart falhou: {e}");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("MCP autostart sem token: {e}")
+                        }
+                    }
+                }
             }
 
             Ok(())
@@ -180,6 +285,8 @@ pub fn run() {
             commands::mcp_status,
             commands::mcp_start,
             commands::mcp_stop,
+            commands::mcp_regenerate_token,
+            commands::mcp_set_autostart,
             commands::docker_discover_connections,
             commands::connections_export,
             commands::connections_import_parse,

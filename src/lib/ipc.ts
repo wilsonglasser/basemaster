@@ -434,6 +434,9 @@ export const ipc = {
     start: (port?: number) =>
       invoke<McpStatus>("mcp_start", { port: port ?? null }),
     stop: () => invoke<McpStatus>("mcp_stop"),
+    regenerateToken: () => invoke<McpStatus>("mcp_regenerate_token"),
+    setAutostart: (enabled: boolean) =>
+      invoke<McpStatus>("mcp_set_autostart", { enabled }),
   },
 
   archive: {

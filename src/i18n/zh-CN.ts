@@ -534,6 +534,12 @@ export const zhCN: Dict = {
       configWslHint:
         "需要带镜像网络的 WSL2。在 {file} 中的 {wsl2} 下添加 {networkingMode}。否则 Windows loopback 在 WSL 内不可达。",
       copyInline: "复制",
+      autostart: "随应用启动",
+      autostartHint:
+        "开启后，服务器会自动启动，关闭窗口时会保留在系统托盘中运行而不是退出。",
+      regenerateToken: "重新生成令牌",
+      regenerateConfirm:
+        "重新生成 MCP 令牌？使用当前令牌的客户端将停止工作，直到你更新它们的配置。",
     },
     portability: {
       intro:

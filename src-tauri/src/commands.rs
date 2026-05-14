@@ -1413,16 +1413,45 @@ pub async fn sql_dump_start(
 pub struct McpStatus {
     running: bool,
     port: u16,
+    /// Persisted token (keyring) — present whether the server is running
+    /// or not, so the client config can be copied before starting.
     token: Option<String>,
+    /// Whether the server starts automatically on app launch.
+    autostart: bool,
+}
+
+/// Default MCP port when nothing is persisted.
+pub const MCP_DEFAULT_PORT: u16 = 7424;
+
+/// Loads the persisted MCP token from the keyring, generating + storing
+/// one on first use. The token is stable across restarts.
+pub fn mcp_load_or_create_token() -> Result<String, String> {
+    if let Some(t) = secrets::get_mcp_token().map_err(err)? {
+        return Ok(t);
+    }
+    let token = crate::mcp_server::random_hex_token(32);
+    secrets::set_mcp_token(&token).map_err(err)?;
+    Ok(token)
+}
+
+async fn mcp_status_payload(state: &AppState) -> McpStatus {
+    let autostart = state
+        .store
+        .settings()
+        .get_bool("mcp.autostart", false)
+        .await
+        .unwrap_or(false);
+    McpStatus {
+        running: state.mcp.is_running().await,
+        port: state.mcp.current_port().await,
+        token: secrets::get_mcp_token().ok().flatten(),
+        autostart,
+    }
 }
 
 #[tauri::command]
 pub async fn mcp_status(state: State<'_, AppState>) -> R<McpStatus> {
-    Ok(McpStatus {
-        running: state.mcp.is_running().await,
-        port: state.mcp.current_port().await,
-        token: state.mcp.current_token().await,
-    })
+    Ok(mcp_status_payload(&state).await)
 }
 
 #[tauri::command]
@@ -1431,26 +1460,69 @@ pub async fn mcp_start(
     state: State<'_, AppState>,
     port: Option<u16>,
 ) -> R<McpStatus> {
-    let (token, bound) = state
-        .mcp
-        .start(app, port.unwrap_or(7424))
-        .await
-        .map_err(err)?;
-    Ok(McpStatus {
-        running: true,
-        port: bound,
-        token: Some(token),
-    })
+    let token = mcp_load_or_create_token()?;
+    let port = port.unwrap_or(MCP_DEFAULT_PORT);
+    let (_token, bound) = state.mcp.start(app, port, token).await.map_err(err)?;
+    // Remember the port that actually bound — autostart reuses it.
+    let _ = state
+        .store
+        .settings()
+        .set("mcp.port", &bound.to_string())
+        .await;
+    Ok(mcp_status_payload(&state).await)
 }
 
 #[tauri::command]
 pub async fn mcp_stop(state: State<'_, AppState>) -> R<McpStatus> {
     state.mcp.stop().await;
-    Ok(McpStatus {
-        running: false,
-        port: state.mcp.current_port().await,
-        token: None,
-    })
+    Ok(mcp_status_payload(&state).await)
+}
+
+/// Generates a fresh token, persists it, and restarts the server if it
+/// was running. Existing clients must reconfigure with the new token.
+#[tauri::command]
+pub async fn mcp_regenerate_token(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> R<McpStatus> {
+    let token = crate::mcp_server::random_hex_token(32);
+    secrets::set_mcp_token(&token).map_err(err)?;
+    if state.mcp.is_running().await {
+        let port = state.mcp.current_port().await;
+        state.mcp.stop().await;
+        state.mcp.start(app, port, token).await.map_err(err)?;
+    }
+    Ok(mcp_status_payload(&state).await)
+}
+
+/// Toggles autostart-on-launch. Enabling it also starts the server now
+/// if it isn't already running, so the toggle has an immediate effect.
+#[tauri::command]
+pub async fn mcp_set_autostart(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> R<McpStatus> {
+    state
+        .store
+        .settings()
+        .set("mcp.autostart", if enabled { "true" } else { "false" })
+        .await
+        .map_err(err)?;
+    if enabled && !state.mcp.is_running().await {
+        let token = mcp_load_or_create_token()?;
+        let port = state
+            .store
+            .settings()
+            .get("mcp.port")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(MCP_DEFAULT_PORT);
+        state.mcp.start(app, port, token).await.map_err(err)?;
+    }
+    Ok(mcp_status_payload(&state).await)
 }
 
 #[tauri::command]

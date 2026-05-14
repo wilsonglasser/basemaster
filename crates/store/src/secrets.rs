@@ -17,6 +17,9 @@ const SERVICE_SSH: &str = "basemaster-ssh";
 const SERVICE_SSH_KEY: &str = "basemaster-ssh-key-passphrase";
 const SERVICE_SSH_JUMPS: &str = "basemaster-ssh-jumps";
 const SERVICE_HTTP_PROXY: &str = "basemaster-http-proxy";
+const SERVICE_MCP: &str = "basemaster-mcp";
+// O token do MCP não é por conexão — é único do app. Conta fixa.
+const MCP_TOKEN_ACCOUNT: &str = "token";
 
 fn entry(service: &str, connection_id: Uuid) -> Result<keyring::Entry, keyring::Error> {
     keyring::Entry::new(service, &connection_id.to_string())
@@ -131,6 +134,36 @@ pub fn get_http_proxy_password(connection_id: Uuid) -> StoreResult<Option<String
 
 pub fn delete_http_proxy_password(connection_id: Uuid) -> StoreResult<()> {
     match entry(SERVICE_HTTP_PROXY, connection_id)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+// --- MCP server token ---
+//
+// O token Bearer do servidor MCP local. Único do app (não por conexão),
+// persistido pra não invalidar a config do cliente a cada restart.
+// Regerável manualmente pelo usuário.
+
+fn mcp_entry() -> Result<keyring::Entry, keyring::Error> {
+    keyring::Entry::new(SERVICE_MCP, MCP_TOKEN_ACCOUNT)
+}
+
+pub fn set_mcp_token(token: &str) -> StoreResult<()> {
+    mcp_entry()?.set_password(token)?;
+    Ok(())
+}
+
+pub fn get_mcp_token() -> StoreResult<Option<String>> {
+    match mcp_entry()?.get_password() {
+        Ok(p) => Ok(Some(p)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn delete_mcp_token() -> StoreResult<()> {
+    match mcp_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.into()),
     }

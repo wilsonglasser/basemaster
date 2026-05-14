@@ -536,6 +536,12 @@ export const ptBR = {
       configWslHint:
         "Requer WSL2 com networking espelhado. Adicione {networkingMode} em {wsl2} no {file}. Caso contrário o loopback do Windows não é alcançável de dentro do WSL.",
       copyInline: "copiar",
+      autostart: "Iniciar junto com o app",
+      autostartHint:
+        "Quando ligado, o servidor inicia automaticamente e fechar a janela mantém ele rodando na bandeja do sistema em vez de encerrar.",
+      regenerateToken: "Regerar token",
+      regenerateConfirm:
+        "Regerar o token do MCP? Clientes usando o token atual vão parar de funcionar até você atualizar a config deles.",
     },
     portability: {
       intro:
