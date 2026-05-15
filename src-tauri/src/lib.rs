@@ -17,6 +17,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
+use tauri_plugin_window_state::StateFlags;
 
 /// Brings the main window back from the tray: show + unminimize + focus.
 fn show_main_window(app: &tauri::AppHandle) {
@@ -25,6 +26,52 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
+}
+
+/// Builds the system tray. Returns Err if any step fails so the caller
+/// can log and continue — the app must not abort just because the tray
+/// is unavailable (shell not ready on autostart, restricted session, etc).
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(
+        app,
+        "tray_show",
+        "Mostrar BaseMaster",
+        true,
+        None::<&str>,
+    )?;
+    let quit_item =
+        MenuItem::with_id(app, "tray_quit", "Sair", true, None::<&str>)?;
+    let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+    let icon = app
+        .default_window_icon()
+        .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("no default window icon")))?
+        .clone();
+    TrayIconBuilder::with_id("main")
+        .icon(icon)
+        .tooltip("BaseMaster")
+        .menu(&tray_menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "tray_show" => show_main_window(app),
+            "tray_quit" => {
+                let state = app.state::<state::AppState>();
+                tauri::async_runtime::block_on(state.mcp.stop());
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -63,12 +110,28 @@ pub fn run() {
     );
     let prevent_default = prevent_default_builder.build();
 
+    // window_state plugin: persist size/position/maximized only. Do NOT
+    // persist VISIBLE — close-to-tray sets visible=false; restoring that
+    // on next launch leaves the user staring at an invisible app.
+    let window_state_flags = StateFlags::SIZE
+        | StateFlags::POSITION
+        | StateFlags::MAXIMIZED
+        | StateFlags::DECORATIONS;
+    let window_state_plugin = tauri_plugin_window_state::Builder::default()
+        .with_state_flags(window_state_flags)
+        .build();
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // Second launch attempt: bring the existing window back from
+            // the tray instead of starting a new process.
+            show_main_window(app);
+        }))
         .plugin(prevent_default)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(window_state_plugin)
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| {
@@ -117,16 +180,23 @@ pub fn run() {
             // Safety net: the window starts invisible (visible:false in
             // tauri.conf.json) and main.tsx calls show() as soon as it mounts.
             // If for some reason the bundle doesn't load within 5s, force
-            // show() here so we don't leave the window invisible forever.
+            // show()+unminimize() here so we don't leave the user staring
+            // at nothing. Also covers the case where window_state restored
+            // the window minimized from a previous close-to-tray exit.
             if let Some(window) = app.get_webview_window("main") {
                 let w = window.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    if let Ok(visible) = w.is_visible() {
-                        if !visible {
-                            tracing::warn!("frontend didn't show() in 5s — forcing");
-                            let _ = w.show();
-                        }
+                    let visible = w.is_visible().unwrap_or(false);
+                    let minimized = w.is_minimized().unwrap_or(false);
+                    if !visible || minimized {
+                        tracing::warn!(
+                            "frontend didn't fully show in 5s — forcing \
+                             (visible={visible} minimized={minimized})"
+                        );
+                        let _ = w.show();
+                        let _ = w.unminimize();
+                        let _ = w.set_focus();
                     }
                 });
             }
@@ -135,41 +205,14 @@ pub fn run() {
             // (see the close-to-tray handler in on_window_event). Quitting
             // for real goes through the "Sair" menu item, which stops the
             // MCP server first.
-            let show_item = MenuItem::with_id(
-                app,
-                "tray_show",
-                "Mostrar BaseMaster",
-                true,
-                None::<&str>,
-            )?;
-            let quit_item =
-                MenuItem::with_id(app, "tray_quit", "Sair", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-            let _tray = TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("BaseMaster")
-                .menu(&tray_menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "tray_show" => show_main_window(app),
-                    "tray_quit" => {
-                        let state = app.state::<state::AppState>();
-                        tauri::async_runtime::block_on(state.mcp.stop());
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        show_main_window(tray.app_handle());
-                    }
-                })
-                .build(app)?;
+            //
+            // Best-effort: if tray creation fails (shell not ready on
+            // autostart, missing icon, restricted session) we log and
+            // continue — losing the tray is far better than aborting the
+            // whole app at setup time.
+            if let Err(e) = setup_tray(app) {
+                tracing::warn!("tray setup failed, continuing without tray: {e}");
+            }
 
             // MCP autostart: if the user enabled it, bring the server up
             // now — before the window even shows, since a local client

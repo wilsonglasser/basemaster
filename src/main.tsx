@@ -9,7 +9,14 @@ import "./index.css";
 // because the <script> is at the end of body. This eliminates the flash of a
 // black window between Tauri opening and the WebView paint. Runs before any
 // React render to guarantee the user sees the splash right away.
-getCurrentWebviewWindow().show().catch(() => {});
+// Also unminimize + focus: a previous close-to-tray run may have left the
+// window hidden/minimized, and window_state plugin can restore that state.
+{
+  const w = getCurrentWebviewWindow();
+  w.show().catch(() => {});
+  w.unminimize().catch(() => {});
+  w.setFocus().catch(() => {});
+}
 
 initSentry();
 

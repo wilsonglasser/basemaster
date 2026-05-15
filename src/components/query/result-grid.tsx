@@ -89,6 +89,8 @@ interface ResultGridProps {
   onCellSelect?: (cell: readonly [number, number] | undefined) => void;
   /** Click on a column header (0-based index). */
   onHeaderClick?: (col: number) => void;
+  /** Double-click on a column header (0-based index). */
+  onHeaderDoubleClick?: (col: number) => void;
   /** Right-click no header (ordenar, ocultar, etc.). */
   onHeaderContextMenu?: (col: number, clientX: number, clientY: number) => void;
   /** Drag & drop no header reordenou colunas (from → to). */
@@ -167,6 +169,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
       onCellContextMenu,
       onCellSelect,
       onHeaderClick,
+      onHeaderDoubleClick,
       onHeaderContextMenu,
       onColumnMoved,
       columnSizes: columnSizesProp,
@@ -548,18 +551,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
             if (!id) return;
             setColumnSizes((cs) => ({ ...cs, [id]: newSize }));
           }}
-          onHeaderClicked={(fieldCol) => {
-            if (onHeaderClick) {
-              onHeaderClick(fieldCol);
+          onHeaderClicked={(fieldCol, ev) => {
+            if (ev.isDoubleClick === true) {
+              onHeaderDoubleClick?.(fieldCol);
               return;
             }
-            setSelection({
-              columns: CompactSelection.fromSingleSelection(
-                fieldCol + ROW_MARKER_OFFSET,
-              ),
-              rows: CompactSelection.empty(),
-              current: undefined,
-            });
+            onHeaderClick?.(fieldCol);
           }}
           customRenderers={allCells}
           onCellEdited={

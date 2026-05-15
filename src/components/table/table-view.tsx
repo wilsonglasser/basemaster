@@ -1355,6 +1355,17 @@ export function TableView({
     handleColumnMoved(v2f(from), v2f(to));
   const visualHeaderContextMenu = (col: number, x: number, y: number) =>
     handleHeaderContextMenu(v2f(col), x, y);
+  const visualHeaderDoubleClick = (col: number) => {
+    if (!data) return;
+    const colName = data.columns[v2f(col)];
+    if (!colName) return;
+    setOrderBy((prev) => {
+      if (prev?.column !== colName) return { column: colName, direction: "asc" };
+      if (prev.direction === "asc") return { column: colName, direction: "desc" };
+      return null;
+    });
+    setPage(0);
+  };
 
   // Compute matches + navigation.
   const { matches, index: matchIndex, prev: matchPrev, next: matchNext } =
@@ -1569,6 +1580,7 @@ export function TableView({
               })
             }
             onHeaderContextMenu={visualHeaderContextMenu}
+            onHeaderDoubleClick={visualHeaderDoubleClick}
             orderBy={orderBy}
             gridRef={gridRef}
             columnSizes={columnSizes}
@@ -2044,6 +2056,7 @@ function DataPane({
   onCellContextMenu,
   onColumnMoved,
   onHeaderContextMenu,
+  onHeaderDoubleClick,
   onAppendRow,
   orderBy,
   gridRef,
@@ -2085,6 +2098,7 @@ function DataPane({
   ) => void;
   onColumnMoved?: (from: number, to: number) => void;
   onHeaderContextMenu?: (col: number, clientX: number, clientY: number) => void;
+  onHeaderDoubleClick?: (col: number) => void;
   onAppendRow?: () => void;
   orderBy: OrderBy | null;
   gridRef: React.RefObject<ResultGridHandle | null>;
@@ -2165,6 +2179,7 @@ function DataPane({
         onCellContextMenu={onCellContextMenu}
         onColumnMoved={onColumnMoved}
         onHeaderContextMenu={onHeaderContextMenu}
+        onHeaderDoubleClick={onHeaderDoubleClick}
         columnSizes={columnSizes}
         onColumnSizesChange={onColumnSizesChange}
         scrollOffset={scrollOffset}
