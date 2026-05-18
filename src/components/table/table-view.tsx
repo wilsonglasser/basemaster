@@ -687,26 +687,29 @@ export function TableView({
 
   /** Set literal empty string ("") : distinct from NULL. Only makes sense on
    *  linhas existentes (em novas, ausente = NULL). */
-  const handleSetEmpty = (col: number, row: number) => {
+  const handleSetEmptyCells = (cells: Array<readonly [number, number]>) => {
     if (!data) return;
-    if (row >= data.rows.length) return;
-    const originalRow = data.rows[row];
-    if (!originalRow) return;
-    const original = originalRow[col];
-    const isAlreadyEmpty =
-      original?.type === "string" && original.value === "";
+    const existingLen = data.rows.length;
     setDirty((d) => {
       const next = new Map(d);
-      const key = `${row}:${col}`;
-      if (isAlreadyEmpty) next.delete(key);
-      else {
-        next.set(key, {
-          row,
-          col,
-          originalRow,
-          newText: "",
-          intent: "empty",
-        });
+      for (const [col, row] of cells) {
+        if (row >= existingLen) continue;
+        const originalRow = data.rows[row];
+        if (!originalRow) continue;
+        const original = originalRow[col];
+        const isAlreadyEmpty =
+          original?.type === "string" && original.value === "";
+        const key = `${row}:${col}`;
+        if (isAlreadyEmpty) next.delete(key);
+        else {
+          next.set(key, {
+            row,
+            col,
+            originalRow,
+            newText: "",
+            intent: "empty",
+          });
+        }
       }
       return next;
     });
@@ -885,6 +888,13 @@ export function TableView({
       },
     ];
     if (editable) {
+      // Target cells: if right-clicked cell ∈ selection and selection >1,
+      // apply to whole selection (Navicat-style); else just clicked cell.
+      const targetCells: Array<readonly [number, number]> =
+        visSelected.length > 1 && inSelection
+          ? fieldSelected.map(([c, r]) => [c, r] as const)
+          : [[col, row] as const];
+
       // For existing rows: detect whether it's already an empty string to disable.
       const alreadyEmpty = (() => {
         if (isNewRow) return false;
@@ -901,13 +911,13 @@ export function TableView({
         label: t("table.cellMenu.setNull"),
         disabled: currentIsNull,
         variant: "destructive",
-        onClick: () => handleDeleteCells([[col, row]]),
+        onClick: () => handleDeleteCells(targetCells),
       });
       items.push({
         icon: <Eraser className="h-3.5 w-3.5" />,
         label: t("table.cellMenu.setEmpty"),
         disabled: isNewRow || alreadyEmpty,
-        onClick: () => handleSetEmpty(col, row),
+        onClick: () => handleSetEmptyCells(targetCells),
       });
     }
 
@@ -1539,7 +1549,7 @@ export function TableView({
               if (intent === "null") {
                 handleDeleteCells([[actualCol, row]]);
               } else if (intent === "empty") {
-                handleSetEmpty(actualCol, row);
+                handleSetEmptyCells([[actualCol, row]]);
               } else {
                 handleCellEdit(actualCol, row, text);
               }
