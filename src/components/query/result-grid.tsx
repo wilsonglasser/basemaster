@@ -230,6 +230,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
           out.push([c, row]);
         }
       });
+      // Whole columns selected (via header click) : ALL rows.
+      sel.columns.toArray().forEach((col) => {
+        for (let r = 0; r < rows.length; r++) {
+          out.push([col, r]);
+        }
+      });
       return out;
     };
 
@@ -658,16 +664,32 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
                     row: number;
                     text: string;
                   }> = [];
-                  for (let r = 0; r < values.length; r++) {
-                    const row = values[r];
-                    for (let c = 0; c < row.length; c++) {
-                      const colIdx = target[0] + c;
-                      if (colIdx >= columns.length) continue;
-                      edits.push({
-                        col: colIdx,
-                        row: target[1] + r,
-                        text: row[c],
-                      });
+                  const single =
+                    values.length === 1 && values[0]?.length === 1
+                      ? values[0][0]
+                      : undefined;
+                  const selCells = expandSelectionToCells(selection);
+                  if (single !== undefined && selCells.length > 1) {
+                    // One copied value into a multi-cell/column selection :
+                    // replicate to every selected cell (Navicat-style fill),
+                    // matching the onCellEdited path. Works for any cell kind
+                    // (enum/date/number/text) since onBatchEdit writes by
+                    // col:row regardless of the cell renderer.
+                    for (const [c, r] of selCells) {
+                      edits.push({ col: c, row: r, text: single });
+                    }
+                  } else {
+                    for (let r = 0; r < values.length; r++) {
+                      const row = values[r];
+                      for (let c = 0; c < row.length; c++) {
+                        const colIdx = target[0] + c;
+                        if (colIdx >= columns.length) continue;
+                        edits.push({
+                          col: colIdx,
+                          row: target[1] + r,
+                          text: row[c],
+                        });
+                      }
                     }
                   }
                   if (edits.length > 0) onBatchEdit(edits);
