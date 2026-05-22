@@ -36,7 +36,14 @@ impl Dialect {
 /// reveal the dialect. Pragmatic heuristic — real dumps give a clear
 /// "fingerprint" right in the header.
 pub fn detect_dialect(sql: &str) -> Dialect {
-    let sample = &sql[..sql.len().min(16 * 1024)];
+    // Floor the 16KB cut to a char boundary — slicing mid-UTF-8 panics, and
+    // with panic=abort that takes the whole app down on any non-ASCII dump
+    // larger than 16KB.
+    let mut end = (16 * 1024).min(sql.len());
+    while end > 0 && !sql.is_char_boundary(end) {
+        end -= 1;
+    }
+    let sample = &sql[..end];
     // Backtick quoting is very MySQL-specific.
     if sample.contains('`') {
         return Dialect::Mysql;
@@ -437,6 +444,17 @@ mod tests {
     fn detect_dialect_unknown_for_generic_sql() {
         let sql = "SELECT 1;";
         assert_eq!(detect_dialect(sql), Dialect::Unknown);
+    }
+
+    #[test]
+    fn detect_dialect_no_panic_on_multibyte_at_16kb_boundary() {
+        // A multibyte char straddling byte 16384 must not panic the slice.
+        // Pad with ASCII so byte 16384 lands inside a 2-byte 'á' (0xC3 0xA1).
+        let mut sql = "x".repeat(16 * 1024 - 1);
+        sql.push('á');
+        sql.push_str(" SELECT 1;");
+        // Must return without panicking.
+        let _ = detect_dialect(&sql);
     }
 
     #[test]
