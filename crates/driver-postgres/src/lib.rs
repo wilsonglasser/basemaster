@@ -512,10 +512,21 @@ impl Driver for PostgresDriver {
     ) -> Result<u64> {
         let pool = self.pool().await?;
         let qi = |s: &str| quote_ident_raw(s);
+        // NULL identifying columns need `IS NULL` — `col = $n` with a NULL
+        // bind never matches (NULL = NULL is unknown). $1 is the SET value,
+        // so non-NULL where placeholders start at $2.
+        let mut next = 2;
         let where_parts: Vec<String> = where_cols
             .iter()
-            .enumerate()
-            .map(|(i, (c, _))| format!("{} = ${}", qi(c), i + 2))
+            .map(|(c, v)| {
+                if matches!(v, Value::Null) {
+                    format!("{} IS NULL", qi(c))
+                } else {
+                    let part = format!("{} = ${}", qi(c), next);
+                    next += 1;
+                    part
+                }
+            })
             .collect();
         let sql = format!(
             "UPDATE {}.{} SET {} = $1 WHERE {}",
@@ -527,7 +538,9 @@ impl Driver for PostgresDriver {
         let mut q = sqlx::query(&sql);
         q = bind_value(q, set_value);
         for (_, v) in where_cols {
-            q = bind_value(q, v);
+            if !matches!(v, Value::Null) {
+                q = bind_value(q, v);
+            }
         }
         let r = q
             .execute(&pool)
@@ -544,10 +557,20 @@ impl Driver for PostgresDriver {
     ) -> Result<u64> {
         let pool = self.pool().await?;
         let qi = |s: &str| quote_ident_raw(s);
+        // NULL identifying columns need `IS NULL` — `col = $n` with a NULL
+        // bind never matches. Placeholders only consumed by non-NULL columns.
+        let mut next = 1;
         let where_parts: Vec<String> = where_cols
             .iter()
-            .enumerate()
-            .map(|(i, (c, _))| format!("{} = ${}", qi(c), i + 1))
+            .map(|(c, v)| {
+                if matches!(v, Value::Null) {
+                    format!("{} IS NULL", qi(c))
+                } else {
+                    let part = format!("{} = ${}", qi(c), next);
+                    next += 1;
+                    part
+                }
+            })
             .collect();
         let sql = format!(
             "DELETE FROM {}.{} WHERE {}",
@@ -557,7 +580,9 @@ impl Driver for PostgresDriver {
         );
         let mut q = sqlx::query(&sql);
         for (_, v) in where_cols {
-            q = bind_value(q, v);
+            if !matches!(v, Value::Null) {
+                q = bind_value(q, v);
+            }
         }
         let r = q
             .execute(&pool)
