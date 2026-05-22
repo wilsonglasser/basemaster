@@ -1125,8 +1125,12 @@ async fn run_table_copy(
         // complete_inserts: includes the column list in the INSERT (recommended).
         // !complete_inserts: omits it. Position-dependent; only works if the
         // column order on the target is identical to the source.
+        // Generated columns force the column list even when complete_inserts
+        // is off: dropping a generated column mid-table shifts every following
+        // value, so a bare `VALUES` would map them to the wrong columns.
         // Prepend session_prelude to ensure FK_CHECKS=0 on the SAME conn.
-        let prefix = if opts.complete_inserts {
+        let emit_col_list = opts.complete_inserts || !generated_cols.is_empty();
+        let prefix = if emit_col_list {
             format!(
                 "{}{} {}.{} ({}) VALUES ",
                 session_prelude,
@@ -1568,7 +1572,10 @@ async fn copy_pk_range(
             .filter(|(_, &k)| k)
             .map(|(c, _)| target.quote_ident(c))
             .collect();
-        let prefix = if opts.complete_inserts {
+        // Generated columns force the column list (see the keyset path above):
+        // a bare `VALUES` would misalign once a generated column is dropped.
+        let emit_col_list = opts.complete_inserts || !generated_cols.is_empty();
+        let prefix = if emit_col_list {
             format!(
                 "{}{} {}.{} ({}) VALUES ",
                 session_prelude,

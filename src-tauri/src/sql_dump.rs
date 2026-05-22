@@ -536,6 +536,16 @@ async fn dump_one_table(
         return Ok(0);
     }
 
+    // Generated columns (STORED/VIRTUAL) must be excluded from the data:
+    // re-importing a value into one fails ("value specified for generated
+    // column is not allowed"). The DDL above keeps their definition intact.
+    let generated_cols: std::collections::HashSet<String> = source
+        .list_generated_columns(schema, table)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
     sink.write(section_header("Records of", table).as_bytes())?;
 
     let chunk = opts.chunk_size.max(1);
@@ -565,12 +575,25 @@ async fn dump_one_table(
             break;
         }
 
+        // `keep[i] = false` → column i is generated; drop it from the column
+        // list and from every row's VALUES.
+        let keep: Vec<bool> = batch
+            .columns
+            .iter()
+            .map(|c| !generated_cols.contains(c))
+            .collect();
         let cols: Vec<String> = batch
             .columns
             .iter()
-            .map(|c| source.quote_ident(c))
+            .zip(keep.iter())
+            .filter(|(_, &k)| k)
+            .map(|(c, _)| source.quote_ident(c))
             .collect();
-        let prefix = if opts.complete_inserts {
+        // Generated columns force the column list even when complete_inserts
+        // is off: a bare `VALUES` would misalign once a generated value is
+        // dropped, mapping the rest to the wrong columns on import.
+        let emit_col_list = opts.complete_inserts || !generated_cols.is_empty();
+        let prefix = if emit_col_list {
             format!(
                 "INSERT INTO {}.{} ({}) VALUES\n",
                 qi(schema),
@@ -588,7 +611,9 @@ async fn dump_one_table(
             for row in &batch.rows {
                 let parts: Vec<String> = row
                     .iter()
-                    .map(|v| sql_literal_opts_dialect(v, opts.hex_blob, pg_mode))
+                    .zip(keep.iter())
+                    .filter(|(_, &k)| k)
+                    .map(|(v, _)| sql_literal_opts_dialect(v, opts.hex_blob, pg_mode))
                     .collect();
                 let row_sql = format!("  ({})", parts.join(", "));
                 if rows_in_buf > 0 && buf.len() + 2 + row_sql.len() > max_bytes {
@@ -612,7 +637,9 @@ async fn dump_one_table(
             for row in &batch.rows {
                 let parts: Vec<String> = row
                     .iter()
-                    .map(|v| sql_literal_opts_dialect(v, opts.hex_blob, pg_mode))
+                    .zip(keep.iter())
+                    .filter(|(_, &k)| k)
+                    .map(|(v, _)| sql_literal_opts_dialect(v, opts.hex_blob, pg_mode))
                     .collect();
                 let sql = format!("{}  ({});\n", prefix, parts.join(", "));
                 sink.write(sql.as_bytes())?;
