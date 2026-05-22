@@ -539,6 +539,14 @@ export const ptBR = {
       autostart: "Iniciar junto com o app",
       autostartHint:
         "Quando ligado, o servidor inicia automaticamente e fechar a janela mantém ele rodando na bandeja do sistema em vez de encerrar.",
+      guardrails: {
+        title: "Guardrails de query",
+        hint: "Bloqueia statements de escrita via MCP. Marcado = bloqueado. Tudo ligado por padrão (servidor read-only).",
+        dml: "Bloquear escrita de dados (INSERT/UPDATE/DELETE/TRUNCATE)",
+        ddl: "Bloquear mudança de schema (CREATE/DROP/ALTER/RENAME)",
+        perms: "Bloquear permissões (GRANT/REVOKE)",
+        tx: "Bloquear transação/controle (COMMIT/SET/CALL/EXEC)",
+      },
       regenerateToken: "Regerar token",
       regenerateConfirm:
         "Regerar o token do MCP? Clientes usando o token atual vão parar de funcionar até você atualizar a config deles.",

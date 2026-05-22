@@ -14,7 +14,7 @@ import { DARK_PRESETS, LIGHT_PRESETS, useTheme } from "@/state/theme";
 import { ipc } from "@/lib/ipc";
 import { useDangerousQuery } from "@/state/dangerous-query";
 import { useUpdater } from "@/state/updater";
-import type { KnownHostEntry, McpStatus } from "@/lib/types";
+import type { KnownHostEntry, McpStatus, McpGuardrail } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const REPO_URL = "https://github.com/wilsonglasser/basemaster";
@@ -611,6 +611,7 @@ function McpPanel() {
   const [loading, setLoading] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
+  const [guardLoading, setGuardLoading] = useState<McpGuardrail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<
     "token" | "configWin" | "configWsl" | null
@@ -671,6 +672,18 @@ function McpPanel() {
       setErr(String(e));
     } finally {
       setAutostartLoading(false);
+    }
+  }
+
+  async function toggleGuardrail(category: McpGuardrail, current: boolean) {
+    setGuardLoading(category);
+    setErr(null);
+    try {
+      setStatus(await ipc.mcp.setGuardrail(category, !current));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setGuardLoading(null);
     }
   }
 
@@ -778,6 +791,39 @@ function McpPanel() {
           </span>
         </span>
       </label>
+
+      <div className="rounded-md border border-border p-3">
+        <p className="text-xs font-medium text-foreground">
+          {t("settings.mcp.guardrails.title")}
+        </p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground/80">
+          {t("settings.mcp.guardrails.hint")}
+        </p>
+        <div className="mt-2 grid gap-1.5">
+          {(
+            [
+              ["dml", status?.block_dml],
+              ["ddl", status?.block_ddl],
+              ["perms", status?.block_perms],
+              ["tx", status?.block_tx],
+            ] as [McpGuardrail, boolean | undefined][]
+          ).map(([cat, checked]) => (
+            <label
+              key={cat}
+              className="flex items-center gap-2 text-xs text-foreground"
+            >
+              <input
+                type="checkbox"
+                checked={!!checked}
+                disabled={guardLoading !== null}
+                onChange={() => toggleGuardrail(cat, !!checked)}
+                className="h-3.5 w-3.5 rounded border-border disabled:opacity-50"
+              />
+              {t(`settings.mcp.guardrails.${cat}`)}
+            </label>
+          ))}
+        </div>
+      </div>
 
       {err && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">

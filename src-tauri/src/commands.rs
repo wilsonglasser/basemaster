@@ -1418,6 +1418,12 @@ pub struct McpStatus {
     token: Option<String>,
     /// Whether the server starts automatically on app launch.
     autostart: bool,
+    /// Query guardrails — true means that statement category is blocked
+    /// over MCP. All default to true (read-only server).
+    block_dml: bool,
+    block_ddl: bool,
+    block_perms: bool,
+    block_tx: bool,
 }
 
 /// Default MCP port when nothing is persisted.
@@ -1435,17 +1441,17 @@ pub fn mcp_load_or_create_token() -> Result<String, String> {
 }
 
 async fn mcp_status_payload(state: &AppState) -> McpStatus {
-    let autostart = state
-        .store
-        .settings()
-        .get_bool("mcp.autostart", false)
-        .await
-        .unwrap_or(false);
+    let s = state.store.settings();
+    let autostart = s.get_bool("mcp.autostart", false).await.unwrap_or(false);
     McpStatus {
         running: state.mcp.is_running().await,
         port: state.mcp.current_port().await,
         token: secrets::get_mcp_token().ok().flatten(),
         autostart,
+        block_dml: s.get_bool("mcp.block_dml", true).await.unwrap_or(true),
+        block_ddl: s.get_bool("mcp.block_ddl", true).await.unwrap_or(true),
+        block_perms: s.get_bool("mcp.block_perms", true).await.unwrap_or(true),
+        block_tx: s.get_bool("mcp.block_tx", true).await.unwrap_or(true),
     }
 }
 
@@ -1522,6 +1528,30 @@ pub async fn mcp_set_autostart(
             .unwrap_or(MCP_DEFAULT_PORT);
         state.mcp.start(app, port, token).await.map_err(err)?;
     }
+    Ok(mcp_status_payload(&state).await)
+}
+
+/// Toggles a query guardrail category. Takes effect immediately — the running
+/// server reads the setting per `run_query`, no restart needed.
+#[tauri::command]
+pub async fn mcp_set_guardrail(
+    state: State<'_, AppState>,
+    category: String,
+    enabled: bool,
+) -> R<McpStatus> {
+    let key = match category.as_str() {
+        "dml" => "mcp.block_dml",
+        "ddl" => "mcp.block_ddl",
+        "perms" => "mcp.block_perms",
+        "tx" => "mcp.block_tx",
+        _ => return Err(err("unknown guardrail category")),
+    };
+    state
+        .store
+        .settings()
+        .set(key, if enabled { "true" } else { "false" })
+        .await
+        .map_err(err)?;
     Ok(mcp_status_payload(&state).await)
 }
 

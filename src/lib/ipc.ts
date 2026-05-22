@@ -20,6 +20,7 @@ import type {
   InsertResult,
   KnownHostEntry,
   McpStatus,
+  McpGuardrail,
   PageOptions,
   PkEntry,
   QueryHistoryDraft,
@@ -437,6 +438,8 @@ export const ipc = {
     regenerateToken: () => invoke<McpStatus>("mcp_regenerate_token"),
     setAutostart: (enabled: boolean) =>
       invoke<McpStatus>("mcp_set_autostart", { enabled }),
+    setGuardrail: (category: McpGuardrail, enabled: boolean) =>
+      invoke<McpStatus>("mcp_set_guardrail", { category, enabled }),
   },
 
   archive: {

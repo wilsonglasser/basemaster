@@ -537,6 +537,14 @@ export const fr: Dict = {
       autostart: "Démarrer au lancement de l'app",
       autostartHint:
         "Si activé, le serveur démarre automatiquement et fermer la fenêtre le maintient dans la zone de notification au lieu de quitter.",
+      guardrails: {
+        title: "Garde-fous de requête",
+        hint: "Bloque les instructions d'écriture via MCP. Coché = bloqué. Tout activé par défaut (serveur en lecture seule).",
+        dml: "Bloquer les écritures de données (INSERT/UPDATE/DELETE/TRUNCATE)",
+        ddl: "Bloquer les changements de schéma (CREATE/DROP/ALTER/RENAME)",
+        perms: "Bloquer les permissions (GRANT/REVOKE)",
+        tx: "Bloquer transaction/contrôle (COMMIT/SET/CALL/EXEC)",
+      },
       regenerateToken: "Régénérer le jeton",
       regenerateConfirm:
         "Régénérer le jeton MCP ? Les clients utilisant le jeton actuel cesseront de fonctionner jusqu'à la mise à jour de leur configuration.",

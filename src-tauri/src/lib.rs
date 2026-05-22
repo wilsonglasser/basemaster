@@ -330,6 +330,7 @@ pub fn run() {
             commands::mcp_stop,
             commands::mcp_regenerate_token,
             commands::mcp_set_autostart,
+            commands::mcp_set_guardrail,
             commands::docker_discover_connections,
             commands::connections_export,
             commands::connections_import_parse,

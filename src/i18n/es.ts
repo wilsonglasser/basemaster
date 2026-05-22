@@ -537,6 +537,14 @@ export const es: Dict = {
       autostart: "Iniciar al abrir la app",
       autostartHint:
         "Cuando está activado, el servidor se inicia automáticamente y cerrar la ventana lo mantiene en la bandeja del sistema en lugar de salir.",
+      guardrails: {
+        title: "Guardarraíles de consultas",
+        hint: "Bloquea sentencias de escritura por MCP. Marcado = bloqueado. Todo activado por defecto (servidor de solo lectura).",
+        dml: "Bloquear escritura de datos (INSERT/UPDATE/DELETE/TRUNCATE)",
+        ddl: "Bloquear cambios de esquema (CREATE/DROP/ALTER/RENAME)",
+        perms: "Bloquear permisos (GRANT/REVOKE)",
+        tx: "Bloquear transacción/control (COMMIT/SET/CALL/EXEC)",
+      },
       regenerateToken: "Regenerar token",
       regenerateConfirm:
         "¿Regenerar el token MCP? Los clientes que usen el token actual dejarán de funcionar hasta que actualices su configuración.",

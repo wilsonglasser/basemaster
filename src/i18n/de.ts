@@ -537,6 +537,14 @@ export const de: Dict = {
       autostart: "Beim App-Start starten",
       autostartHint:
         "Wenn aktiviert, startet der Server automatisch und das Schließen des Fensters hält ihn im Infobereich aktiv, statt zu beenden.",
+      guardrails: {
+        title: "Query-Schutzregeln",
+        hint: "Schreib-Statements über MCP blockieren. Aktiviert = blockiert. Standardmäßig alles an (Nur-Lese-Server).",
+        dml: "Datenänderungen blockieren (INSERT/UPDATE/DELETE/TRUNCATE)",
+        ddl: "Schemaänderungen blockieren (CREATE/DROP/ALTER/RENAME)",
+        perms: "Berechtigungen blockieren (GRANT/REVOKE)",
+        tx: "Transaktion/Steuerung blockieren (COMMIT/SET/CALL/EXEC)",
+      },
       regenerateToken: "Token neu generieren",
       regenerateConfirm:
         "MCP-Token neu generieren? Clients mit dem aktuellen Token funktionieren nicht mehr, bis ihre Konfiguration aktualisiert wird.",

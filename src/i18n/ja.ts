@@ -537,6 +537,14 @@ export const ja: Dict = {
       autostart: "アプリ起動時に開始",
       autostartHint:
         "オンにすると、サーバーは自動的に起動し、ウィンドウを閉じても終了せずにシステムトレイで動作し続けます。",
+      guardrails: {
+        title: "クエリガードレール",
+        hint: "MCP経由の書き込み文をブロック。チェック=ブロック。デフォルトで全て有効（読み取り専用サーバー）。",
+        dml: "データ書き込みをブロック (INSERT/UPDATE/DELETE/TRUNCATE)",
+        ddl: "スキーマ変更をブロック (CREATE/DROP/ALTER/RENAME)",
+        perms: "権限変更をブロック (GRANT/REVOKE)",
+        tx: "トランザクション/制御をブロック (COMMIT/SET/CALL/EXEC)",
+      },
       regenerateToken: "トークンを再生成",
       regenerateConfirm:
         "MCP トークンを再生成しますか？現在のトークンを使用しているクライアントは、設定を更新するまで動作しなくなります。",

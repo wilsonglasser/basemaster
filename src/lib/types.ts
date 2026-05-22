@@ -65,7 +65,13 @@ export interface McpStatus {
   port: number;
   token: string | null;
   autostart: boolean;
+  block_dml: boolean;
+  block_ddl: boolean;
+  block_perms: boolean;
+  block_tx: boolean;
 }
+
+export type McpGuardrail = "dml" | "ddl" | "perms" | "tx";
 
 export interface ExportedFolder {
   name: string;

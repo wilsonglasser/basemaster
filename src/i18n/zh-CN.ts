@@ -537,6 +537,14 @@ export const zhCN: Dict = {
       autostart: "随应用启动",
       autostartHint:
         "开启后，服务器会自动启动，关闭窗口时会保留在系统托盘中运行而不是退出。",
+      guardrails: {
+        title: "查询防护",
+        hint: "通过 MCP 阻止写入语句。勾选=阻止。默认全部开启（只读服务器）。",
+        dml: "阻止数据写入 (INSERT/UPDATE/DELETE/TRUNCATE)",
+        ddl: "阻止架构变更 (CREATE/DROP/ALTER/RENAME)",
+        perms: "阻止权限变更 (GRANT/REVOKE)",
+        tx: "阻止事务/控制 (COMMIT/SET/CALL/EXEC)",
+      },
       regenerateToken: "重新生成令牌",
       regenerateConfirm:
         "重新生成 MCP 令牌？使用当前令牌的客户端将停止工作，直到你更新它们的配置。",

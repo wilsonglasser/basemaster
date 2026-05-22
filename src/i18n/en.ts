@@ -537,6 +537,14 @@ export const en: Dict = {
       autostart: "Start on app launch",
       autostartHint:
         "When on, the server starts automatically and closing the window keeps it running in the system tray instead of quitting.",
+      guardrails: {
+        title: "Query guardrails",
+        hint: "Block write statements over MCP. Checked = blocked. All on by default (read-only server).",
+        dml: "Block data writes (INSERT/UPDATE/DELETE/TRUNCATE)",
+        ddl: "Block schema changes (CREATE/DROP/ALTER/RENAME)",
+        perms: "Block permission changes (GRANT/REVOKE)",
+        tx: "Block transaction/control (COMMIT/SET/CALL/EXEC)",
+      },
       regenerateToken: "Regenerate token",
       regenerateConfirm:
         "Regenerate the MCP token? Clients using the current token will stop working until you update their config.",
