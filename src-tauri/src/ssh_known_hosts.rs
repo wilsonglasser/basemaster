@@ -73,7 +73,7 @@ impl KnownHosts {
     }
 
     pub fn verify(&self, host: &str, port: u16, key: &ssh_key::PublicKey) -> Verdict {
-        let entries = self.entries.read().unwrap();
+        let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
         match entries.get(&HostPort(host.to_string(), port)) {
             Some(keys) => {
                 if keys.iter().any(|k| k == key) {
@@ -98,7 +98,7 @@ impl KnownHosts {
             .map_err(|e| format!("encode openssh: {e}"))?;
 
         {
-            let mut entries = self.entries.write().unwrap();
+            let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
             entries
                 .entry(HostPort(host.to_string(), port))
                 .or_default()
@@ -123,7 +123,7 @@ impl KnownHosts {
 
     /// Flat snapshot of all entries, one per stored key.
     pub fn list(&self) -> Vec<KnownHostEntry> {
-        let entries = self.entries.read().unwrap();
+        let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::new();
         for (hp, keys) in entries.iter() {
             for key in keys {
@@ -153,7 +153,7 @@ impl KnownHosts {
         fingerprint: &str,
     ) -> Result<(), String> {
         let snapshot = {
-            let mut entries = self.entries.write().unwrap();
+            let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
             if let Some(keys) = entries.get_mut(&HostPort(host.to_string(), port)) {
                 keys.retain(|k| fingerprint_sha256(k) != fingerprint);
                 if keys.is_empty() {

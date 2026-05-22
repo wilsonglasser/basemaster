@@ -60,12 +60,12 @@ impl HttpProxyTunnel {
                                     if let Err(e) = forward_connection(
                                         stream, addr, &proxy, &host, target_port,
                                     ).await {
-                                        eprintln!("http proxy forward error: {e}");
+                                        tracing::warn!("http proxy forward error: {e}");
                                     }
                                 });
                             }
                             Err(e) => {
-                                eprintln!("http proxy listener accept error: {e}");
+                                tracing::warn!("http proxy listener accept error: {e}");
                                 break;
                             }
                         }

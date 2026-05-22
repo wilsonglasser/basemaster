@@ -251,12 +251,12 @@ impl SshTunnel {
                                     if let Err(e) = forward_connection(
                                         session, stream, addr, &host, target_port,
                                     ).await {
-                                        eprintln!("ssh forward error: {e}");
+                                        tracing::warn!("ssh forward error: {e}");
                                     }
                                 });
                             }
                             Err(e) => {
-                                eprintln!("ssh listener accept error: {e}");
+                                tracing::warn!("ssh listener accept error: {e}");
                                 break;
                             }
                         }
