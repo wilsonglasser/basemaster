@@ -297,18 +297,32 @@ async fn process_sql(
 /// `DELIMITER xxx` directive that mysqldump uses on triggers/procedures.
 fn split_statements(src: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let mut buf = String::with_capacity(256);
+    // Accumulate raw bytes, not `b as char`: casting each byte to a char
+    // mangles multibyte UTF-8 (an 'á' would become two Latin-1 chars and
+    // re-encode as garbage), corrupting non-ASCII data on import. All the
+    // boundary markers below (delimiter, comment, quote) are ASCII, so a
+    // multibyte sequence is always copied whole — the buffer stays valid UTF-8.
+    let mut buf: Vec<u8> = Vec::with_capacity(256);
     let mut delim: String = ";".to_string();
     let bytes = src.as_bytes();
     let mut i = 0usize;
     let len = bytes.len();
+
+    let flush = |buf: &mut Vec<u8>, out: &mut Vec<String>| {
+        let s = String::from_utf8_lossy(buf);
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_string());
+        }
+        buf.clear();
+    };
 
     while i < len {
         let b = bytes[i];
 
         // DELIMITER directive — case-insensitive, at the start of the line
         // (allowing whitespace before).
-        if (buf.is_empty() || buf.ends_with('\n'))
+        if (buf.is_empty() || buf.last() == Some(&b'\n'))
             && at_word_ci(bytes, i, b"DELIMITER")
         {
             // Advance past DELIMITER.
@@ -318,12 +332,12 @@ fn split_statements(src: &str) -> Vec<String> {
                 i += 1;
             }
             // Read until EOL.
-            let mut new_delim = String::new();
+            let mut new_delim: Vec<u8> = Vec::new();
             while i < len && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                new_delim.push(bytes[i] as char);
+                new_delim.push(bytes[i]);
                 i += 1;
             }
-            let new_delim = new_delim.trim().to_string();
+            let new_delim = String::from_utf8_lossy(&new_delim).trim().to_string();
             if !new_delim.is_empty() {
                 delim = new_delim;
             }
@@ -364,30 +378,30 @@ fn split_statements(src: &str) -> Vec<String> {
         // String / quoted identifier — consume until closing.
         if b == b'\'' || b == b'"' || b == b'`' {
             let quote = b;
-            buf.push(b as char);
+            buf.push(b);
             i += 1;
             while i < len {
                 let c = bytes[i];
                 if c == b'\\' && i + 1 < len {
                     // Backslash-escape (\' \" \\ etc).
-                    buf.push(c as char);
-                    buf.push(bytes[i + 1] as char);
+                    buf.push(c);
+                    buf.push(bytes[i + 1]);
                     i += 2;
                     continue;
                 }
                 if c == quote {
                     // Doubled = escape (MySQL ANSI). Keep.
                     if i + 1 < len && bytes[i + 1] == quote {
-                        buf.push(c as char);
-                        buf.push(c as char);
+                        buf.push(c);
+                        buf.push(c);
                         i += 2;
                         continue;
                     }
-                    buf.push(c as char);
+                    buf.push(c);
                     i += 1;
                     break;
                 }
-                buf.push(c as char);
+                buf.push(c);
                 i += 1;
             }
             continue;
@@ -395,24 +409,17 @@ fn split_statements(src: &str) -> Vec<String> {
 
         // Delimiter match — end of statement.
         if at_str(bytes, i, delim.as_bytes()) {
-            let stmt = buf.trim();
-            if !stmt.is_empty() {
-                out.push(stmt.to_string());
-            }
-            buf.clear();
+            flush(&mut buf, &mut out);
             i += delim.len();
             continue;
         }
 
-        buf.push(b as char);
+        buf.push(b);
         i += 1;
     }
 
     // Leftovers.
-    let tail = buf.trim();
-    if !tail.is_empty() {
-        out.push(tail.to_string());
-    }
+    flush(&mut buf, &mut out);
     out
 }
 
@@ -563,6 +570,20 @@ mod tests {
         assert!(split_statements("").is_empty());
         assert!(split_statements("   \n\t  ").is_empty());
         assert!(split_statements(";;;").is_empty());
+    }
+
+    #[test]
+    fn split_preserves_multibyte_utf8() {
+        // Bytes must survive verbatim — the old `b as char` path mangled
+        // accented/CJK/emoji data into mojibake.
+        let out = split_statements(
+            "INSERT INTO t VALUES ('café', 'açúcar', '日本語', '😀'); SELECT 1;",
+        );
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains("café"));
+        assert!(out[0].contains("açúcar"));
+        assert!(out[0].contains("日本語"));
+        assert!(out[0].contains('😀'));
     }
 
     #[test]
