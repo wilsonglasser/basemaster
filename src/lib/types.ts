@@ -397,6 +397,9 @@ export interface DumpOptions {
   create_schema?: boolean;
   chunk_size?: number;
   max_statement_size_kb?: number;
+  concurrency?: number;
+  intra_table_workers?: number;
+  intra_table_min_rows?: number;
 }
 
 export interface DumpTableProgress {
@@ -405,6 +408,25 @@ export interface DumpTableProgress {
   done: number;
   total: number;
   elapsed_ms: number;
+}
+
+export interface DumpWorkerProgress {
+  schema: string;
+  table: string;
+  worker_id: number;
+  low_pk: string;
+  high_pk: string;
+  done: number;
+  elapsed_ms: number;
+  finished: boolean;
+  error: string | null;
+}
+
+export interface DumpTableNote {
+  schema: string;
+  table: string;
+  message: string;
+  level: string;
 }
 
 export interface DumpTableDone {
