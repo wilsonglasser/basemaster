@@ -1361,21 +1361,7 @@ async fn run_table_copy_ranges(
 
     // 2. Split [min, max+1) into N roughly equal ranges by value.
     // (not by distribution : assumes uniformly-distributed PK)
-    let span = (max_i - min_i) + 1;
-    let step = span.div_euclid(workers as i128).max(1);
-    let mut ranges: Vec<(i128, i128)> = Vec::with_capacity(workers);
-    let mut cur = min_i;
-    for i in 0..workers {
-        let hi = if i + 1 == workers {
-            max_i + 1
-        } else {
-            (cur + step).min(max_i + 1)
-        };
-        if cur < hi {
-            ranges.push((cur, hi));
-        }
-        cur = hi;
-    }
+    let ranges = split_pk_ranges(min_i, max_i, workers);
 
     // 3. Spawn workers.
     use std::sync::atomic::AtomicU64;
@@ -1459,10 +1445,36 @@ async fn run_table_copy_ranges(
     Ok(total_transferred)
 }
 
+/// Splits `[min_i, max_i]` into `workers` roughly-equal half-open ranges
+/// `[low, high)` by value (assumes uniform PK distribution). Used by both
+/// data-transfer intra-table parallelism and sql_dump's PK-range sharding.
+pub(crate) fn split_pk_ranges(
+    min_i: i128,
+    max_i: i128,
+    workers: usize,
+) -> Vec<(i128, i128)> {
+    let span = (max_i - min_i) + 1;
+    let step = span.div_euclid(workers as i128).max(1);
+    let mut ranges: Vec<(i128, i128)> = Vec::with_capacity(workers);
+    let mut cur = min_i;
+    for i in 0..workers {
+        let hi = if i + 1 == workers {
+            max_i + 1
+        } else {
+            (cur + step).min(max_i + 1)
+        };
+        if cur < hi {
+            ranges.push((cur, hi));
+        }
+        cur = hi;
+    }
+    ranges
+}
+
 /// Converts Value::Int/UInt/Decimal to i128 if possible. Used to compute
 /// PK range. Decimal comes from MIN/MAX on bigint unsigned columns via
 /// sqlx in some cases.
-fn value_to_i128(v: &basemaster_core::Value) -> Option<i128> {
+pub(crate) fn value_to_i128(v: &basemaster_core::Value) -> Option<i128> {
     use basemaster_core::Value;
     match v {
         Value::Int(i) => Some(*i as i128),
@@ -1695,7 +1707,7 @@ async fn copy_pk_range(
 /// keyset (`WHERE col > last LIMIT N` benefits from any BTREE-indexed
 /// orderable column). Falls back to OFFSET only when the PK is composite,
 /// missing, or genuinely non-orderable (json/blob/set).
-async fn find_keyset_column(
+pub(crate) async fn find_keyset_column(
     source: &dyn Driver,
     schema: &str,
     table: &str,
@@ -1747,7 +1759,7 @@ fn is_partitionable_integer_type(t: &basemaster_core::ColumnType) -> bool {
 /// Returns true when the chosen keyset column for the table is integer-
 /// partitionable. Cheap re-fetch: describe_table is cached at the driver
 /// level for most backends.
-async fn keyset_column_is_integer(
+pub(crate) async fn keyset_column_is_integer(
     source: &dyn Driver,
     schema: &str,
     table: &str,
