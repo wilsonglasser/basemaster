@@ -1022,6 +1022,9 @@ export const zhCN: Dict = {
     useHint: "在脚本前运行 `USE schema;`。当转储未限定表名时使用。",
     continueOnError: "出错时继续",
     continueHint: "关闭时，第一个失败将中止导入。数据库可能处于部分状态 : 无自动 rollback。",
+    concurrencyLabel: "并行工作线程",
+    concurrencyHint:
+      "数据阶段的工作线程数 (1-8)。仅适用于 BaseMaster 转储；其他 .sql/.zip 按顺序导入。",
     dialectHint: "源方言自动检测 (MySQL/PG)。若与目标不同，statements 在执行前会被规范化。无目标对应的命令（如 PG 的 LOCK TABLES）会被静默跳过。",
     statementsLabel: "{n} 条 statement{plural}",
     errorsLabel: "{n} 条错误{plural}",

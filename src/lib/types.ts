@@ -453,6 +453,7 @@ export interface ImportOptions {
   disable_fk_checks?: boolean;
   disable_unique_checks?: boolean;
   preserve_zero_auto_increment?: boolean;
+  concurrency?: number;
 }
 
 export interface ImportProgress {

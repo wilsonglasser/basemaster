@@ -1022,6 +1022,9 @@ export const es: Dict = {
     useHint: "Ejecuta como `USE schema;` antes del script. Úsalo cuando el dump no califica los nombres de tabla.",
     continueOnError: "Continuar al error",
     continueHint: "Si está apagado, el primer fallo aborta la importación. La base puede quedar en estado parcial : sin rollback automático.",
+    concurrencyLabel: "Workers paralelos",
+    concurrencyHint:
+      "Workers para la fase de datos (1-8). Solo aplica a dumps de BaseMaster; otros .sql/.zip importan en serie.",
     dialectHint: "El dialecto origen se detecta automáticamente (MySQL/PG). Si difiere del destino, las statements se normalizan antes de ejecutar. Comandos sin análogo en destino (ej. LOCK TABLES yendo a PG) se omiten silenciosamente.",
     statementsLabel: "{n} statement{plural}",
     errorsLabel: "{n} error{plural}",

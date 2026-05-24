@@ -1024,6 +1024,9 @@ export const ptBR = {
     useHint: "Rodado como `USE schema;` antes do script. Use quando o dump não qualifica os nomes de tabela.",
     continueOnError: "Continuar em caso de erro",
     continueHint: "Quando desativado, a primeira falha aborta o import. O banco pode ficar em estado parcial : sem rollback automático.",
+    concurrencyLabel: "Workers paralelos",
+    concurrencyHint:
+      "Workers pra fase de dados (1-8). Só vale pra dumps do BaseMaster; outros .sql/.zip importam em série.",
     dialectHint: "Dialeto da origem é detectado automaticamente (MySQL/PG). Se for diferente do destino, statements são normalizados antes de executar. Comandos sem análogo no destino (ex: LOCK TABLES indo pra PG) são pulados silenciosamente.",
     statementsLabel: "{n} statement{plural}",
     errorsLabel: "{n} erro{plural}",

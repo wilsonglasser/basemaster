@@ -1022,6 +1022,9 @@ export const fr: Dict = {
     useHint: "Exécute `USE schema;` avant le script. À utiliser quand le dump ne qualifie pas les noms de table.",
     continueOnError: "Continuer en cas d'erreur",
     continueHint: "Si désactivé, le premier échec abandonne l'import. La base peut rester dans un état partiel : pas de rollback automatique.",
+    concurrencyLabel: "Workers parallèles",
+    concurrencyHint:
+      "Workers pour la phase de données (1-8). S'applique seulement aux dumps BaseMaster ; les autres .sql/.zip importent en série.",
     dialectHint: "Le dialecte source est détecté automatiquement (MySQL/PG). S'il diffère de la cible, les statements sont normalisés avant exécution. Les commandes sans analogue cible (ex. LOCK TABLES vers PG) sont silencieusement sautées.",
     statementsLabel: "{n} statement{plural}",
     errorsLabel: "{n} erreur{plural}",

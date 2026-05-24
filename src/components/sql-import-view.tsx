@@ -56,6 +56,7 @@ export function SqlImportView({
     schema ?? conn?.default_database ?? "",
   );
   const [continueOnError, setContinueOnError] = useState(true);
+  const [concurrency, setConcurrency] = useState(4);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [done, setDone] = useState<ImportDone | null>(null);
@@ -118,6 +119,7 @@ export function SqlImportView({
       path,
       schema: targetSchema || null,
       continue_on_error: continueOnError,
+      concurrency,
     };
     setStartError(null);
     setProgress(null);
@@ -232,6 +234,25 @@ export function SqlImportView({
             </label>
             <p className="text-[11px] text-muted-foreground">
               {t("sqlImport.continueHint")}
+            </p>
+            <label className="mt-1 grid grid-cols-[160px_1fr] items-center gap-2 text-xs">
+              <span>{t("sqlImport.concurrencyLabel")}</span>
+              <input
+                type="number"
+                min={1}
+                max={8}
+                value={concurrency}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (Number.isFinite(n)) {
+                    setConcurrency(Math.min(8, Math.max(1, Math.floor(n))));
+                  }
+                }}
+                className="w-24 rounded-md border border-border bg-background px-2 py-1 text-right font-mono text-xs tabular-nums"
+              />
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              {t("sqlImport.concurrencyHint")}
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground">
               {t("sqlImport.dialectHint")}

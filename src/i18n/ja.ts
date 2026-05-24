@@ -1022,6 +1022,9 @@ export const ja: Dict = {
     useHint: "スクリプトの前に `USE schema;` を実行。ダンプがテーブル名を修飾しない場合に使用。",
     continueOnError: "エラー時継続",
     continueHint: "オフの場合、最初の失敗でインポートを中止。DBが部分的な状態になる可能性 : 自動rollbackなし。",
+    concurrencyLabel: "並列ワーカー",
+    concurrencyHint:
+      "データフェーズのワーカー数 (1-8)。BaseMasterのダンプのみ対象。他の.sql/.zipは逐次インポート。",
     dialectHint: "ソース方言は自動検出（MySQL/PG）。ターゲットと異なる場合、実行前にstatementsを正規化。ターゲットに対応がないコマンド（例: PG向けのLOCK TABLES）は黙ってスキップ。",
     statementsLabel: "{n}件のstatement{plural}",
     errorsLabel: "{n}件のエラー{plural}",
