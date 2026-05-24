@@ -545,10 +545,26 @@ async fn transfer_one(
         }
     }
     if !session_prelude.is_empty() {
-        target
+        if let Err(e) = target
             .execute(Some(&opts.target_schema), &session_prelude)
             .await
-            .map_err(|e| format!("session prelude {}: {}", table, e))?;
+        {
+            // 1227 = missing SUPER/SYSTEM_VARIABLES_ADMIN/SESSION_VARIABLES_ADMIN.
+            // Of the SETs here only SQL_LOG_BIN needs that privilege; drop it and
+            // retry so the copy still runs (binlog stays on — harmless for us).
+            if opts.disable_binlog && e.to_string().contains("1227") {
+                session_prelude = session_prelude.replace("SET SQL_LOG_BIN=0; ", "");
+                session_restore = session_restore.replace("SET SQL_LOG_BIN=1; ", "");
+                if !session_prelude.is_empty() {
+                    target
+                        .execute(Some(&opts.target_schema), &session_prelude)
+                        .await
+                        .map_err(|e| format!("session prelude {}: {}", table, e))?;
+                }
+            } else {
+                return Err(format!("session prelude {}: {}", table, e));
+            }
+        }
     }
     // Alternative prelude to be prepended to INSERTs inside a tx.
     // MySQL rejects `SET SQL_LOG_BIN` inside a transaction (error 1694),
