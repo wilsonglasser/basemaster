@@ -130,7 +130,7 @@ export function SavedQueriesListView({ connectionId, schema }: Props) {
     try {
       const saved = await createQuery(connectionId, {
         name: name.trim(),
-        sql: "-- nova query\nSELECT 1;",
+        sql: "",
         schema: schema ?? null,
       });
       openQuery(saved);

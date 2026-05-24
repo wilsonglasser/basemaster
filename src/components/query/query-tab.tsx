@@ -142,7 +142,7 @@ export function QueryTab({
     () =>
       useTabState.getState().queryOf(tabId)?.sql ??
       initialSql ??
-      "SELECT 1;",
+      "",
   );
 
   // Read the persisted snapshot from tab-state : survives detach/reattach
@@ -150,7 +150,7 @@ export function QueryTab({
   // for initial seeding.
   const snap = useTabState.getState().queryOf(tabId);
   const [sql, setSql] = useState(
-    () => snap?.sql ?? initialSql ?? "SELECT 1;",
+    () => snap?.sql ?? initialSql ?? "",
   );
   const [schema, setSchema] = useState<string | null>(
     snap?.schema ?? initialSchema ?? conn?.default_database ?? null,
