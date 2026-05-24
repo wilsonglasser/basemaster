@@ -485,6 +485,8 @@ fn write_footer_and_finish(
         b"\nSET FOREIGN_KEY_CHECKS = 1;\nSET UNIQUE_CHECKS = 1;\n"
     };
     if matches!(opts.format, DumpFormat::Sql) {
+        // `@BM:F` lets the import isolate the footer and run it last.
+        sink.write(b"-- @BM:F\n")?;
         sink.write(footer)?;
     } else {
         sink.begin_file("zz_footer.sql")?;
@@ -564,23 +566,30 @@ async fn run_serial_dump(
     let mut last_schema: Option<String> = None;
     let (mut total_rows, mut tables_done, mut failed) = (0u64, 0u32, 0u32);
 
-    for (_idx, schema, table) in work {
+    for (idx, schema, table) in work {
         if !control.check().await {
             break;
         }
-        if opts.create_schema && last_schema.as_deref() != Some(schema.as_str()) {
+        let is_zip = matches!(opts.format, DumpFormat::Zip);
+        let schema_changed = last_schema.as_deref() != Some(schema.as_str());
+        if is_zip && opts.create_schema && schema_changed {
             write_create_schema(&mut sink, opts, source, source_is_pg, schema)?;
         }
         last_schema = Some(schema.clone());
 
-        if matches!(opts.format, DumpFormat::Zip) {
+        if is_zip {
             sink.begin_file(&format!("{}/{}.sql", schema, table))?;
         }
+        sink.write(marker_table(*idx, schema, table).as_bytes())?;
+        if !is_zip && opts.create_schema && schema_changed {
+            write_create_schema(&mut sink, opts, source, source_is_pg, schema)?;
+        }
         let t_start = Instant::now();
-        let res =
-            dump_table_direct(app, opts, source, schema, table, &mut sink, source_is_pg, control)
-                .await;
-        if matches!(opts.format, DumpFormat::Zip) {
+        let res = dump_table_direct(
+            app, opts, source, *idx, schema, table, &mut sink, source_is_pg, control,
+        )
+        .await;
+        if is_zip {
             sink.end_file()?;
         }
         let (rows, error) = match res {
@@ -615,6 +624,7 @@ async fn dump_table_direct(
     app: &AppHandle,
     opts: &DumpOptions,
     source: &dyn Driver,
+    idx: usize,
     schema: &str,
     table: &str,
     sink: &mut DumpSink,
@@ -648,6 +658,7 @@ async fn dump_table_direct(
         .collect();
     let keyset_col = crate::data_transfer::find_keyset_column(source, schema, table).await;
 
+    sink.write(marker_data(idx).as_bytes())?;
     sink.write(section_header("Records of", table).as_bytes())?;
     let started = Instant::now();
     write_table_data(
@@ -794,14 +805,25 @@ fn merge_table(
     last_schema: &mut Option<String>,
     a: &TableArtifact,
 ) -> Result<(), String> {
-    if opts.create_schema && last_schema.as_deref() != Some(a.schema.as_str()) {
+    let is_zip = matches!(opts.format, DumpFormat::Zip);
+    let schema_changed = last_schema.as_deref() != Some(a.schema.as_str());
+    // ZIP: CREATE SCHEMA is its own `00_schema.sql` entry, written while no
+    // table entry is open (pre-phase on import).
+    if is_zip && opts.create_schema && schema_changed {
         write_create_schema(sink, opts, source, source_is_pg, &a.schema)?;
     }
     *last_schema = Some(a.schema.clone());
 
-    if matches!(opts.format, DumpFormat::Zip) {
+    if is_zip {
         sink.begin_file(&format!("{}/{}.sql", a.schema, a.table))?;
     }
+    sink.write(marker_table(a.idx, &a.schema, &a.table).as_bytes())?;
+    // SQL: CREATE SCHEMA goes inline, after the table marker, so it lands in
+    // this table's DDL region (import runs it in the DDL phase).
+    if !is_zip && opts.create_schema && schema_changed {
+        write_create_schema(sink, opts, source, source_is_pg, &a.schema)?;
+    }
+
     if let Some(ddl_path) = &a.ddl_path {
         write_structure_header(sink, opts, source, source_is_pg, &a.table)?;
         // The DDL temp file already ends with `;\n\n`.
@@ -809,16 +831,33 @@ fn merge_table(
         let _ = std::fs::remove_file(ddl_path);
     }
     if !a.data_paths.is_empty() {
+        sink.write(marker_data(a.idx).as_bytes())?;
         sink.write(section_header("Records of", &a.table).as_bytes())?;
         for p in &a.data_paths {
             sink.write_from_file(p)?;
             let _ = std::fs::remove_file(p);
         }
     }
-    if matches!(opts.format, DumpFormat::Zip) {
+    if is_zip {
         sink.end_file()?;
     }
     Ok(())
+}
+
+/// Machine-readable signature on the first line of every BaseMaster dump.
+/// The importer keys parallel import off this; foreign `.sql`/`.zip` without
+/// it fall back to sequential. Bump the version if the marker layout changes.
+pub const DUMP_SIGNATURE: &str = "-- @BM:DUMP v1";
+
+/// Per-table marker: start of a table unit (structure region begins here).
+fn marker_table(idx: usize, schema: &str, table: &str) -> String {
+    format!("-- @BM:T idx={} schema={} table={}\n", idx, schema, table)
+}
+
+/// Marker: start of a table's data region (INSERTs). Lets the importer split
+/// the data off and parallelize it (intra-table).
+fn marker_data(idx: usize) -> String {
+    format!("-- @BM:D idx={}\n", idx)
 }
 
 fn build_preamble(
@@ -849,7 +888,8 @@ fn build_preamble(
          SET SQL_MODE = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO');\n\n"
     };
     format!(
-        "/*\n\
+        "{sig}\n\
+         /*\n\
          BaseMaster SQL Dump\n\n\
          Source Server         : {conn}\n\
          Source Server Type    : {srv}\n\
@@ -860,6 +900,7 @@ fn build_preamble(
          Date: {now}\n\
          */\n\n\
          {session_flags}",
+        sig = DUMP_SIGNATURE,
         conn = conn_label,
         srv = server_type,
     )
