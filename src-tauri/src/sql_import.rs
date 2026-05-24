@@ -1,14 +1,22 @@
-//! SQL Import V1 — runs a `.sql` (or `.zip` with multiple `.sql`s) on
-//! the target. Respects strings, comments, and the `DELIMITER` directive
-//! common in dumps with triggers/procedures.
+//! SQL Import — runs a `.sql` (or `.zip` with multiple `.sql`s) on the target.
+//! Respects strings, comments, and the `DELIMITER` directive common in dumps
+//! with triggers/procedures.
+//!
+//! The file is **streamed** in chunks (never fully loaded), so multi-gigabyte
+//! dumps import with bounded memory. For BaseMaster dumps (detected via the
+//! `@BM:DUMP` signature) the data phase runs across N parallel workers: a
+//! single bounded queue fed by the streaming parser spreads every table's
+//! INSERTs across the pool (FK checks are off, so order is irrelevant).
+//! Foreign `.sql`/`.zip` stream sequentially.
 //!
 //! Events:
 //!   `sql_import:progress` — { statements_done, errors, current_source }
 //!   `sql_import:stmt_error` — { index, sql, message }
 //!   `sql_import:done` — { statements_done, errors, elapsed_ms }
 
-use std::io::Read;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::io::{BufReader, Read};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -19,6 +27,11 @@ use uuid::Uuid;
 
 use crate::data_transfer::TransferControl;
 use crate::sql_translate::{detect_dialect, normalize_for, Dialect};
+
+/// Bytes read per chunk while streaming the source.
+const READ_CHUNK: usize = 64 * 1024;
+/// Head bytes sampled up-front for signature + dialect detection.
+const SAMPLE_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportOptions {
@@ -70,7 +83,8 @@ fn default_concurrency() -> u32 {
 pub struct ImportProgress {
     pub statements_done: u64,
     pub errors: u32,
-    /// Name of the file being processed (useful for multi-entry ZIPs).
+    /// Phase being processed: "header" | "structure" | "data" | "footer" |
+    /// "done", or a file name for foreign single-file imports.
     pub current_source: String,
 }
 
@@ -126,55 +140,21 @@ pub async fn run_import(
     }
 
     let concurrency = opts.concurrency.clamp(1, 8) as usize;
-    let mut total_stmts: u64 = 0;
-    let mut total_errs: u32 = 0;
 
-    if is_zip {
-        let entries = read_zip_entries(&path)?;
-        // Parallel only for our own dumps (signature in 00_header.sql).
-        let is_ours = entries
-            .iter()
-            .any(|(n, c)| n.ends_with("00_header.sql") && sql_has_signature(c));
-        if concurrency > 1 && is_ours {
-            let (s, e) =
-                run_zip_parallel(&app, &opts, target, &control, &entries, &session_prelude, concurrency)
-                    .await?;
-            total_stmts = s;
-            total_errs = e;
-        } else {
-            for (name, content) in &entries {
-                if !control.check().await {
-                    break;
-                }
-                process_sql(
-                    &app, &opts, &*target, &control, content, name, &session_prelude,
-                    &mut total_stmts, &mut total_errs,
-                )
-                .await?;
-            }
-        }
+    // Peek the head for the signature + a dialect-detection sample. Cheap:
+    // reads a single small entry (zip) or the first chunk (sql).
+    let (has_signature, sample) = if is_zip {
+        peek_zip(&path)?
     } else {
-        let buf = std::fs::read_to_string(&path)
-            .map_err(|e| format!("abrir arquivo: {}", e))?;
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("dump.sql")
-            .to_string();
-        if concurrency > 1 && sql_has_signature(&buf) {
-            let (s, e) =
-                run_sql_parallel(&app, &opts, target, &control, &buf, &name, &session_prelude, concurrency)
-                    .await?;
-            total_stmts = s;
-            total_errs = e;
-        } else {
-            process_sql(
-                &app, &opts, &*target, &control, &buf, &name, &session_prelude,
-                &mut total_stmts, &mut total_errs,
-            )
-            .await?;
-        }
-    }
+        let head = peek_head(&path)?;
+        (sql_has_signature(&head), head)
+    };
+    let parallel_data = has_signature && concurrency > 1;
+
+    let (total_stmts, total_errs) = run_streaming_import(
+        &app, &opts, target, &control, &session_prelude, parallel_data, concurrency, &sample,
+    )
+    .await?;
 
     let done = ImportDone {
         statements_done: total_stmts,
@@ -185,29 +165,7 @@ pub async fn run_import(
     Ok(done)
 }
 
-/// Reads every `.sql` entry of a ZIP into memory, sorted by name. Done before
-/// any await because `ZipFile` isn't `Send`. (V2: stream per-entry to temp.)
-fn read_zip_entries(path: &std::path::Path) -> Result<Vec<(String, String)>, String> {
-    let f = std::fs::File::open(path).map_err(|e| format!("abrir zip: {}", e))?;
-    let mut zip = zip::ZipArchive::new(f).map_err(|e| format!("ler zip: {}", e))?;
-    let mut names: Vec<String> = (0..zip.len())
-        .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
-        .filter(|n| n.to_lowercase().ends_with(".sql"))
-        .collect();
-    names.sort();
-    let mut out = Vec::with_capacity(names.len());
-    for name in names {
-        let mut entry = zip
-            .by_name(&name)
-            .map_err(|e| format!("ler entry {}: {}", name, e))?;
-        let mut buf = String::new();
-        entry
-            .read_to_string(&mut buf)
-            .map_err(|e| format!("ler entry {}: {}", name, e))?;
-        out.push((name, buf));
-    }
-    Ok(out)
-}
+// ============================================================ detection / peek
 
 /// True if the text carries the BaseMaster dump signature on its first lines.
 fn sql_has_signature(sql: &str) -> bool {
@@ -216,110 +174,62 @@ fn sql_has_signature(sql: &str) -> bool {
         .any(|l| l.trim_start().starts_with(crate::sql_dump::DUMP_SIGNATURE))
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn process_sql(
-    app: &AppHandle,
-    opts: &ImportOptions,
-    target: &dyn Driver,
-    control: &Arc<TransferControl>,
-    sql: &str,
-    source_name: &str,
-    session_prelude: &str,
-    total_stmts: &mut u64,
-    total_errs: &mut u32,
-) -> Result<(), String> {
-    let stmts = split_statements(sql);
-    let target_dialect = Dialect::from_driver_name(target.dialect());
-    // Detect the file's dialect once (cheaper than per-stmt).
-    let source_dialect = detect_dialect(sql);
-    let needs_translate = source_dialect != Dialect::Unknown
-        && target_dialect != Dialect::Unknown
-        && source_dialect != target_dialect;
-    let target_is_pg = target_dialect == Dialect::Postgres;
-    for stmt in stmts {
-        if !control.check().await {
-            break;
-        }
-        let trimmed = stmt.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if is_duplicate_session_set(trimmed) {
-            continue;
-        }
-        // Translate if source != target. If the dialect is undetectable, pass-through.
-        let translated: String = if needs_translate {
-            normalize_for(trimmed, source_dialect, target_dialect)
-        } else {
-            trimmed.to_string()
-        };
-        let final_sql = translated.trim();
-        if final_sql.is_empty() {
-            continue;
-        }
-        // Skip statements known to be incompatible with the target
-        // and that have no analog (e.g., LOCK TABLES on PG). Not counted as an error.
-        if should_skip_for_target(final_sql, target_dialect) {
-            continue;
-        }
-        *total_stmts += 1;
-        // Prepend the prelude only if the target is MySQL — the SETs are MySQL-only.
-        let wrapped = if target_is_pg {
-            final_sql.to_string()
-        } else {
-            format!("{}{}", session_prelude, final_sql)
-        };
-        match target.execute(opts.schema.as_deref(), &wrapped).await {
-            Ok(_) => {}
-            Err(e) => {
-                *total_errs += 1;
-                let _ = app.emit(
-                    "sql_import:stmt_error",
-                    &ImportStmtError {
-                        index: *total_stmts,
-                        sql: trimmed.chars().take(500).collect(),
-                        message: e.to_string(),
-                    },
-                );
-                if !opts.continue_on_error {
-                    return Err(format!("stmt #{}: {}", *total_stmts, e));
-                }
-            }
-        }
-        if (*total_stmts).is_multiple_of(opts.emit_every as u64) {
-            let _ = app.emit(
-                "sql_import:progress",
-                &ImportProgress {
-                    statements_done: *total_stmts,
-                    errors: *total_errs,
-                    current_source: source_name.to_string(),
-                },
-            );
-        }
-    }
-    // Final emit for this source.
-    let _ = app.emit(
-        "sql_import:progress",
-        &ImportProgress {
-            statements_done: *total_stmts,
-            errors: *total_errs,
-            current_source: source_name.to_string(),
-        },
-    );
-    Ok(())
+/// Reads the first `SAMPLE_BYTES` of a file as lossy UTF-8 (signature + dialect).
+fn peek_head(path: &Path) -> Result<String, String> {
+    let mut f = std::fs::File::open(path).map_err(|e| format!("abrir arquivo: {}", e))?;
+    let mut buf = vec![0u8; SAMPLE_BYTES];
+    let n = f.read(&mut buf).map_err(|e| format!("ler arquivo: {}", e))?;
+    Ok(String::from_utf8_lossy(&buf[..n]).into_owned())
 }
 
-// ============================================================ parallel import
+/// Peeks a ZIP: reads `00_header.sql` (for the signature) and the head of the
+/// first table entry (for dialect detection — structure DDL disambiguates).
+fn peek_zip(path: &Path) -> Result<(bool, String), String> {
+    let f = std::fs::File::open(path).map_err(|e| format!("abrir zip: {}", e))?;
+    let mut zip = zip::ZipArchive::new(f).map_err(|e| format!("ler zip: {}", e))?;
+    let mut names: Vec<String> = (0..zip.len())
+        .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
+        .filter(|n| n.to_lowercase().ends_with(".sql"))
+        .collect();
+    names.sort();
 
-/// Regions of a BaseMaster `.sql` (or a single ZIP entry), carved by the
-/// `@BM:` markers. Each `ddls[i]` is one table's structure block, each
-/// `datas[i]` one table's INSERT block.
-#[derive(Default)]
-struct Regions {
-    header: String,
-    ddls: Vec<String>,
-    datas: Vec<String>,
-    footer: String,
+    let mut header = String::new();
+    if let Ok(mut e) = zip.by_name(
+        names
+            .iter()
+            .find(|n| n.ends_with("00_header.sql"))
+            .map(|s| s.as_str())
+            .unwrap_or("00_header.sql"),
+    ) {
+        let _ = e.read_to_string(&mut header);
+    }
+    let has_sig = sql_has_signature(&header);
+
+    // Dialect sample: header + head of the first table entry.
+    let mut sample = header.clone();
+    if let Some(first_table) = names.iter().find(|n| {
+        !n.ends_with("00_header.sql")
+            && !n.ends_with("zz_footer.sql")
+    }) {
+        if let Ok(mut e) = zip.by_name(first_table) {
+            let mut buf = vec![0u8; SAMPLE_BYTES];
+            if let Ok(n) = e.read(&mut buf) {
+                sample.push('\n');
+                sample.push_str(&String::from_utf8_lossy(&buf[..n]));
+            }
+        }
+    }
+    Ok((has_sig, sample))
+}
+
+// ============================================================ streaming engine
+
+/// One item produced by the streaming parser.
+enum ParseItem {
+    /// A complete statement (comments stripped, delimiter removed).
+    Stmt(String),
+    /// A `@BM:` region marker — switches the importer's phase.
+    Marker(Marker),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -345,36 +255,308 @@ fn classify_marker(line: &str) -> Option<Marker> {
     }
 }
 
-/// Splits a marked dump into regions. The body of each marker (bytes until the
-/// next marker) is routed by the marker's kind. Text before the first marker
-/// is ignored (none in practice). With no `T`/`D` markers, callers fall back
-/// to sequential import.
-fn parse_sql_regions(sql: &str) -> Regions {
-    // (marker kind, byte offset of the line, byte offset after the line).
-    let mut marks: Vec<(Marker, usize, usize)> = Vec::new();
-    let mut pos = 0usize;
-    for line in sql.split_inclusive('\n') {
-        let line_end = pos + line.len();
-        if let Some(m) = classify_marker(line) {
-            marks.push((m, pos, line_end));
+/// Lookahead reserved at a non-final chunk's tail so multi-byte tokens
+/// (`--`, `/*`, `*/`, the `DELIMITER` word, any delimiter) are never split
+/// across a chunk boundary. 16 covers any realistic delimiter.
+const SAFE_TAIL: usize = 16;
+
+#[derive(Clone, Copy)]
+enum SMode {
+    Normal,
+    Quote(u8),
+    Line,
+    Block,
+    Delim,
+}
+
+/// Incremental, quote/comment/`DELIMITER`-aware statement splitter. State
+/// persists across `feed` calls so a statement (or string literal) may span
+/// any number of chunks. Recognizes `-- @BM:` line comments as region markers.
+struct StreamSplitter {
+    delim: Vec<u8>,
+    buf: Vec<u8>,
+    comment: Vec<u8>,
+    delim_acc: Vec<u8>,
+    carry: Vec<u8>,
+    mode: SMode,
+}
+
+impl StreamSplitter {
+    fn new() -> Self {
+        Self {
+            delim: b";".to_vec(),
+            buf: Vec::with_capacity(4096),
+            comment: Vec::new(),
+            delim_acc: Vec::new(),
+            carry: Vec::new(),
+            mode: SMode::Normal,
         }
-        pos = line_end;
     }
 
-    let mut r = Regions::default();
-    for i in 0..marks.len() {
-        let (kind, _, body_start) = marks[i];
-        let body_end = marks.get(i + 1).map(|n| n.1).unwrap_or(sql.len());
-        let body = &sql[body_start..body_end];
-        match kind {
-            Marker::Dump => r.header.push_str(body),
-            Marker::Table => r.ddls.push(body.to_string()),
-            Marker::Data => r.datas.push(body.to_string()),
-            Marker::Footer => r.footer.push_str(body),
+    fn flush(&mut self, emit: &mut impl FnMut(ParseItem)) {
+        let s = String::from_utf8_lossy(&self.buf);
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            emit(ParseItem::Stmt(trimmed.to_string()));
+        }
+        self.buf.clear();
+    }
+
+    fn finish_comment(&mut self, emit: &mut impl FnMut(ParseItem)) {
+        let line = String::from_utf8_lossy(&self.comment);
+        if let Some(m) = classify_marker(&line) {
+            emit(ParseItem::Marker(m));
+        }
+        self.comment.clear();
+    }
+
+    /// Feeds a chunk. `final_chunk` flushes the trailing statement. The
+    /// `emit` callback receives statements and markers in source order.
+    fn feed(&mut self, chunk: &[u8], final_chunk: bool, emit: &mut impl FnMut(ParseItem)) {
+        let mut data = std::mem::take(&mut self.carry);
+        data.extend_from_slice(chunk);
+        let len = data.len();
+        let limit = if final_chunk {
+            len
+        } else {
+            len.saturating_sub(SAFE_TAIL)
+        };
+
+        let mut i = 0;
+        while i < limit {
+            match self.mode {
+                SMode::Normal => {
+                    let b = data[i];
+                    // DELIMITER directive (line start only).
+                    if (self.buf.is_empty() || self.buf.last() == Some(&b'\n'))
+                        && at_word_ci(&data, i, b"DELIMITER")
+                    {
+                        i += 9;
+                        self.delim_acc.clear();
+                        self.mode = SMode::Delim;
+                        continue;
+                    }
+                    if b == b'-' && data.get(i + 1) == Some(&b'-') {
+                        self.comment.clear();
+                        self.comment.extend_from_slice(b"--");
+                        i += 2;
+                        self.mode = SMode::Line;
+                        continue;
+                    }
+                    if b == b'#' {
+                        self.comment.clear();
+                        self.comment.push(b'#');
+                        i += 1;
+                        self.mode = SMode::Line;
+                        continue;
+                    }
+                    if b == b'/' && data.get(i + 1) == Some(&b'*') {
+                        i += 2;
+                        self.mode = SMode::Block;
+                        continue;
+                    }
+                    if b == b'\'' || b == b'"' || b == b'`' {
+                        self.buf.push(b);
+                        i += 1;
+                        self.mode = SMode::Quote(b);
+                        continue;
+                    }
+                    if at_str(&data, i, &self.delim) {
+                        self.flush(emit);
+                        i += self.delim.len();
+                        continue;
+                    }
+                    self.buf.push(b);
+                    i += 1;
+                }
+                SMode::Quote(q) => {
+                    let c = data[i];
+                    if c == b'\\' && i + 1 < len {
+                        // Backslash-escape (\' \" \\ etc) — keep both bytes.
+                        self.buf.push(c);
+                        self.buf.push(data[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+                    if c == q {
+                        if data.get(i + 1) == Some(&q) {
+                            // Doubled quote = escape (ANSI). Keep both.
+                            self.buf.push(c);
+                            self.buf.push(c);
+                            i += 2;
+                            continue;
+                        }
+                        self.buf.push(c);
+                        i += 1;
+                        self.mode = SMode::Normal;
+                        continue;
+                    }
+                    self.buf.push(c);
+                    i += 1;
+                }
+                SMode::Line => {
+                    // Comment runs until EOL. The `\n` is left for Normal mode
+                    // to push (preserves line-start tracking for DELIMITER).
+                    if data[i] == b'\n' {
+                        self.finish_comment(emit);
+                        self.mode = SMode::Normal;
+                        continue;
+                    }
+                    self.comment.push(data[i]);
+                    i += 1;
+                }
+                SMode::Block => {
+                    if data[i] == b'*' && data.get(i + 1) == Some(&b'/') {
+                        i += 2;
+                        self.mode = SMode::Normal;
+                        continue;
+                    }
+                    i += 1;
+                }
+                SMode::Delim => {
+                    let c = data[i];
+                    if c == b'\n' || c == b'\r' {
+                        let nd = String::from_utf8_lossy(&self.delim_acc).trim().to_string();
+                        if !nd.is_empty() {
+                            self.delim = nd.into_bytes();
+                        }
+                        self.delim_acc.clear();
+                        self.mode = SMode::Normal;
+                        i += 1;
+                        continue;
+                    }
+                    if self.delim_acc.is_empty() && (c == b' ' || c == b'\t') {
+                        i += 1;
+                        continue;
+                    }
+                    self.delim_acc.push(c);
+                    i += 1;
+                }
+            }
+        }
+
+        self.carry = data[i..].to_vec();
+
+        if final_chunk {
+            if matches!(self.mode, SMode::Line) {
+                self.finish_comment(emit);
+                self.mode = SMode::Normal;
+            }
+            if matches!(self.mode, SMode::Delim) {
+                let nd = String::from_utf8_lossy(&self.delim_acc).trim().to_string();
+                if !nd.is_empty() {
+                    self.delim = nd.into_bytes();
+                }
+                self.mode = SMode::Normal;
+            }
+            self.flush(emit);
         }
     }
-    r
 }
+
+/// Convenience wrapper used by tests (and as the reference for chunked
+/// equivalence): runs the whole string through the splitter in one feed.
+#[cfg(test)]
+fn split_statements(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut sp = StreamSplitter::new();
+    sp.feed(src.as_bytes(), true, &mut |item| {
+        if let ParseItem::Stmt(s) = item {
+            out.push(s);
+        }
+    });
+    out
+}
+
+// ============================================================ blocking parser
+
+/// Streams the source (file or every `.sql` zip entry) through the splitter,
+/// sending each item to `tx`. Runs on a blocking thread (`ZipFile`/file IO).
+/// Sets `abort` and returns if the receiver is gone (downstream stopped).
+fn parse_source_blocking(
+    path: &str,
+    tx: tokio::sync::mpsc::Sender<ParseItem>,
+    abort: &AtomicBool,
+) -> Result<(), String> {
+    let p = Path::new(path);
+    let is_zip = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.eq_ignore_ascii_case("zip"))
+        .unwrap_or(false);
+
+    let mut emit = |item: ParseItem| {
+        if tx.blocking_send(item).is_err() {
+            abort.store(true, Ordering::Relaxed);
+        }
+    };
+
+    if is_zip {
+        let f = std::fs::File::open(p).map_err(|e| format!("abrir zip: {}", e))?;
+        let mut zip = zip::ZipArchive::new(f).map_err(|e| format!("ler zip: {}", e))?;
+        let mut names: Vec<String> = (0..zip.len())
+            .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
+            .filter(|n| n.to_lowercase().ends_with(".sql"))
+            .collect();
+        names.sort();
+        for name in names {
+            if abort.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            // Synthetic marker sets the entry's base region; inner @BM markers
+            // (table entries carry @BM:T/@BM:D) refine it.
+            let base = if name.ends_with("00_header.sql") {
+                Marker::Dump
+            } else if name.ends_with("zz_footer.sql") {
+                Marker::Footer
+            } else {
+                // 00_schema.sql and table entries start in the DDL region.
+                Marker::Table
+            };
+            emit(ParseItem::Marker(base));
+
+            let mut entry = zip
+                .by_name(&name)
+                .map_err(|e| format!("ler entry {}: {}", name, e))?;
+            let mut sp = StreamSplitter::new();
+            let mut rbuf = [0u8; READ_CHUNK];
+            loop {
+                if abort.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                let n = entry
+                    .read(&mut rbuf)
+                    .map_err(|e| format!("ler entry {}: {}", name, e))?;
+                if n == 0 {
+                    break;
+                }
+                sp.feed(&rbuf[..n], false, &mut emit);
+            }
+            sp.feed(&[], true, &mut emit);
+        }
+    } else {
+        let f = std::fs::File::open(p).map_err(|e| format!("abrir arquivo: {}", e))?;
+        let mut reader = BufReader::new(f);
+        let mut sp = StreamSplitter::new();
+        let mut rbuf = [0u8; READ_CHUNK];
+        loop {
+            if abort.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let n = reader
+                .read(&mut rbuf)
+                .map_err(|e| format!("ler arquivo: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            sp.feed(&rbuf[..n], false, &mut emit);
+        }
+        sp.feed(&[], true, &mut emit);
+    }
+    Ok(())
+}
+
+// ============================================================ execution
 
 /// Per-statement execution context, cloned into each parallel worker.
 #[derive(Clone)]
@@ -384,15 +566,53 @@ struct ExecCtx {
     needs_translate: bool,
     source_dialect: Dialect,
     target_dialect: Dialect,
-    continue_on_error: bool,
     session_prelude: String,
 }
 
-/// Shared progress counters across phases/workers.
 #[derive(Default)]
 struct Prog {
     done: AtomicU64,
     errs: AtomicU32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Region {
+    Header,
+    Ddl,
+    Data,
+    Footer,
+}
+
+impl Region {
+    fn label(self) -> &'static str {
+        match self {
+            Region::Header => "header",
+            Region::Ddl => "structure",
+            Region::Data => "data",
+            Region::Footer => "footer",
+        }
+    }
+}
+
+fn build_exec_ctx(
+    opts: &ImportOptions,
+    target: &dyn Driver,
+    sample: &str,
+    session_prelude: &str,
+) -> ExecCtx {
+    let target_dialect = Dialect::from_driver_name(target.dialect());
+    let source_dialect = detect_dialect(sample);
+    let needs_translate = source_dialect != Dialect::Unknown
+        && target_dialect != Dialect::Unknown
+        && source_dialect != target_dialect;
+    ExecCtx {
+        schema: opts.schema.clone(),
+        target_is_pg: target_dialect == Dialect::Postgres,
+        needs_translate,
+        source_dialect,
+        target_dialect,
+        session_prelude: session_prelude.to_string(),
+    }
 }
 
 /// Runs one statement: skip-checks, translate, prelude, execute.
@@ -445,373 +665,159 @@ fn emit_stmt_error(app: &AppHandle, index: u64, stmt: &str, message: &str) {
     );
 }
 
-/// Runs a list of statements sequentially (header / DDL / footer phases).
+/// Drives the whole import: a blocking parser streams items, a coordinator
+/// executes header/DDL/footer inline (in order) and forwards data statements
+/// to a bounded worker pool. Memory is bounded by the channels, not the file.
 #[allow(clippy::too_many_arguments)]
-async fn run_phase_seq(
+async fn run_streaming_import(
     app: &AppHandle,
-    target: &dyn Driver,
-    ctx: &ExecCtx,
-    control: &Arc<TransferControl>,
-    prog: &Prog,
-    emit_every: u32,
-    source: &str,
-    stmts: &[String],
-) -> Result<(), String> {
-    for stmt in stmts {
-        if !control.check().await {
-            break;
-        }
-        match exec_one(target, ctx, stmt).await {
-            Ok(false) => {}
-            Ok(true) => {
-                let n = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
-                if emit_every > 0 && n.is_multiple_of(emit_every as u64) {
-                    emit_progress(app, prog, source);
-                }
-            }
-            Err(e) => {
-                let idx = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
-                prog.errs.fetch_add(1, Ordering::Relaxed);
-                emit_stmt_error(app, idx, stmt, &e);
-                if !ctx.continue_on_error {
-                    return Err(format!("stmt #{}: {}", idx, e));
-                }
-            }
-        }
-    }
-    emit_progress(app, prog, source);
-    Ok(())
-}
-
-/// Runs all data statements across N workers. Order is irrelevant (FK checks
-/// disabled, INSERTs independent), so a single queue + worker pool spreads a
-/// huge table's INSERTs and many small tables alike.
-#[allow(clippy::too_many_arguments)]
-async fn run_data_parallel(
-    app: &AppHandle,
+    opts: &ImportOptions,
     target: Arc<dyn Driver>,
-    ctx: ExecCtx,
     control: &Arc<TransferControl>,
-    prog: Arc<Prog>,
-    emit_every: u32,
-    stmts: Vec<String>,
+    session_prelude: &str,
+    parallel_data: bool,
     concurrency: usize,
-) -> Result<(), String> {
-    let (tx, rx) = async_channel::unbounded::<String>();
-    for s in stmts {
-        let _ = tx.send(s).await;
-    }
-    drop(tx);
-
+    sample: &str,
+) -> Result<(u64, u32), String> {
+    let ctx = build_exec_ctx(opts, &*target, sample, session_prelude);
+    let prog = Arc::new(Prog::default());
+    let abort = Arc::new(AtomicBool::new(false));
     let first_err: Arc<tokio::sync::Mutex<Option<String>>> =
         Arc::new(tokio::sync::Mutex::new(None));
-    let mut handles = Vec::with_capacity(concurrency);
-    for _ in 0..concurrency {
-        let rx = rx.clone();
-        let app = app.clone();
-        let target = target.clone();
-        let ctx = ctx.clone();
-        let control = control.clone();
-        let prog = prog.clone();
-        let first_err = first_err.clone();
-        handles.push(tokio::spawn(async move {
-            while let Ok(stmt) = rx.recv().await {
-                if !control.check().await {
-                    rx.close();
-                    break;
-                }
-                match exec_one(&*target, &ctx, &stmt).await {
-                    Ok(false) => {}
-                    Ok(true) => {
-                        let n = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
-                        if emit_every > 0 && n.is_multiple_of(emit_every as u64) {
-                            emit_progress(&app, &prog, "data");
+    let emit_every = opts.emit_every;
+    let continue_on_error = opts.continue_on_error;
+
+    // Blocking parser → coordinator. Bounded for backpressure (caps memory).
+    let (parse_tx, mut parse_rx) = tokio::sync::mpsc::channel::<ParseItem>(256);
+    let parser = {
+        let path = opts.path.clone();
+        let abort = abort.clone();
+        tokio::task::spawn_blocking(move || parse_source_blocking(&path, parse_tx, &abort))
+    };
+
+    // Data worker pool (parallel mode only).
+    let (data_tx, data_rx) = async_channel::bounded::<String>(concurrency.max(1) * 4);
+    let mut workers = Vec::new();
+    if parallel_data {
+        for _ in 0..concurrency {
+            let data_rx = data_rx.clone();
+            let app = app.clone();
+            let target = target.clone();
+            let ctx = ctx.clone();
+            let control = control.clone();
+            let prog = prog.clone();
+            let abort = abort.clone();
+            let first_err = first_err.clone();
+            workers.push(tokio::spawn(async move {
+                while let Ok(stmt) = data_rx.recv().await {
+                    if abort.load(Ordering::Relaxed) || !control.check().await {
+                        data_rx.close();
+                        break;
+                    }
+                    match exec_one(&*target, &ctx, &stmt).await {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            let n = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
+                            if emit_every > 0 && n.is_multiple_of(emit_every as u64) {
+                                emit_progress(&app, &prog, "data");
+                            }
+                        }
+                        Err(e) => {
+                            let idx = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
+                            prog.errs.fetch_add(1, Ordering::Relaxed);
+                            emit_stmt_error(&app, idx, &stmt, &e);
+                            if !continue_on_error {
+                                let mut g = first_err.lock().await;
+                                if g.is_none() {
+                                    *g = Some(format!("stmt #{}: {}", idx, e));
+                                }
+                                abort.store(true, Ordering::Relaxed);
+                                data_rx.close();
+                                break;
+                            }
                         }
                     }
-                    Err(e) => {
-                        let idx = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
-                        prog.errs.fetch_add(1, Ordering::Relaxed);
-                        emit_stmt_error(&app, idx, &stmt, &e);
-                        if !ctx.continue_on_error {
-                            let mut g = first_err.lock().await;
-                            if g.is_none() {
-                                *g = Some(format!("stmt #{}: {}", idx, e));
+                }
+            }));
+        }
+    }
+    drop(data_rx); // workers hold their own clones.
+
+    // Coordinator.
+    let mut region = Region::Header;
+    while let Some(item) = parse_rx.recv().await {
+        if abort.load(Ordering::Relaxed) || !control.check().await {
+            break;
+        }
+        match item {
+            ParseItem::Marker(m) => {
+                region = match m {
+                    Marker::Dump => Region::Header,
+                    Marker::Table => Region::Ddl,
+                    Marker::Data => Region::Data,
+                    Marker::Footer => Region::Footer,
+                };
+            }
+            ParseItem::Stmt(s) => {
+                if parallel_data && region == Region::Data {
+                    // Forward to workers (bounded send = backpressure).
+                    if data_tx.send(s).await.is_err() {
+                        break;
+                    }
+                } else {
+                    match exec_one(&*target, &ctx, &s).await {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            let n = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
+                            if emit_every > 0 && n.is_multiple_of(emit_every as u64) {
+                                emit_progress(app, &prog, region.label());
                             }
-                            rx.close();
-                            break;
+                        }
+                        Err(e) => {
+                            let idx = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
+                            prog.errs.fetch_add(1, Ordering::Relaxed);
+                            emit_stmt_error(app, idx, &s, &e);
+                            if !continue_on_error {
+                                let mut g = first_err.lock().await;
+                                if g.is_none() {
+                                    *g = Some(format!("stmt #{}: {}", idx, e));
+                                }
+                                abort.store(true, Ordering::Relaxed);
+                                break;
+                            }
                         }
                     }
                 }
             }
-        }));
+        }
     }
-    for h in handles {
-        let _ = h.await;
+
+    // Drop the receiver first : if we broke early (abort), this unblocks the
+    // parser's next `blocking_send` (which then sees the closed channel and
+    // returns) instead of letting it wait forever on a full queue.
+    drop(parse_rx);
+    drop(data_tx); // no more data : workers drain and exit.
+    for w in workers {
+        let _ = w.await;
     }
-    emit_progress(app, &prog, "data");
+    let parse_result = parser
+        .await
+        .map_err(|e| format!("parser join: {}", e))?;
+
+    emit_progress(app, &prog, "done");
+
     if let Some(e) = first_err.lock().await.take() {
         return Err(e);
     }
-    Ok(())
+    // Surface read/open errors only if nothing else failed first.
+    parse_result?;
+    Ok((
+        prog.done.load(Ordering::Relaxed),
+        prog.errs.load(Ordering::Relaxed),
+    ))
 }
 
-/// Builds the ExecCtx + dialect detection for a marked import.
-fn build_exec_ctx(opts: &ImportOptions, target: &dyn Driver, sample: &str, session_prelude: &str) -> ExecCtx {
-    let target_dialect = Dialect::from_driver_name(target.dialect());
-    let source_dialect = detect_dialect(sample);
-    let needs_translate = source_dialect != Dialect::Unknown
-        && target_dialect != Dialect::Unknown
-        && source_dialect != target_dialect;
-    ExecCtx {
-        schema: opts.schema.clone(),
-        target_is_pg: target_dialect == Dialect::Postgres,
-        needs_translate,
-        source_dialect,
-        target_dialect,
-        continue_on_error: opts.continue_on_error,
-        session_prelude: session_prelude.to_string(),
-    }
-}
-
-/// Runs the 4-phase parallel pipeline on pre-carved regions.
-async fn run_regions_parallel(
-    app: &AppHandle,
-    opts: &ImportOptions,
-    target: Arc<dyn Driver>,
-    control: &Arc<TransferControl>,
-    ctx: ExecCtx,
-    regions: Regions,
-    concurrency: usize,
-) -> Result<(u64, u32), String> {
-    let prog = Arc::new(Prog::default());
-
-    // Phase 1 : header (session SETs — mostly skipped, prelude handles them).
-    let header_stmts = split_statements(&regions.header);
-    run_phase_seq(app, &*target, &ctx, control, &prog, opts.emit_every, "header", &header_stmts).await?;
-
-    // Phase 2 : all DDL, in order, so every table exists before any INSERT.
-    for ddl in &regions.ddls {
-        if !control.check().await {
-            break;
-        }
-        let stmts = split_statements(ddl);
-        run_phase_seq(app, &*target, &ctx, control, &prog, opts.emit_every, "structure", &stmts)
-            .await?;
-    }
-
-    // Phase 3 : all data, parallel.
-    let mut data_stmts: Vec<String> = Vec::new();
-    for d in &regions.datas {
-        data_stmts.extend(split_statements(d));
-    }
-    run_data_parallel(
-        app, target.clone(), ctx.clone(), control, prog.clone(), opts.emit_every, data_stmts,
-        concurrency,
-    )
-    .await?;
-
-    // Phase 4 : footer (restore SETs).
-    let footer_stmts = split_statements(&regions.footer);
-    run_phase_seq(app, &*target, &ctx, control, &prog, opts.emit_every, "footer", &footer_stmts)
-        .await?;
-
-    Ok((prog.done.load(Ordering::Relaxed), prog.errs.load(Ordering::Relaxed)))
-}
-
-/// Parallel import of a single marked `.sql`.
-#[allow(clippy::too_many_arguments)]
-async fn run_sql_parallel(
-    app: &AppHandle,
-    opts: &ImportOptions,
-    target: Arc<dyn Driver>,
-    control: &Arc<TransferControl>,
-    sql: &str,
-    source_name: &str,
-    session_prelude: &str,
-    concurrency: usize,
-) -> Result<(u64, u32), String> {
-    let regions = parse_sql_regions(sql);
-    // Signature present but no table markers : not a structured dump we can
-    // carve : import sequentially.
-    if regions.ddls.is_empty() && regions.datas.is_empty() {
-        let (mut s, mut e) = (0u64, 0u32);
-        process_sql(app, opts, &*target, control, sql, source_name, session_prelude, &mut s, &mut e)
-            .await?;
-        return Ok((s, e));
-    }
-    let ctx = build_exec_ctx(opts, &*target, sql, session_prelude);
-    run_regions_parallel(app, opts, target, control, ctx, regions, concurrency).await
-}
-
-/// Parallel import of a marked `.zip`. Entries are classified by name
-/// (header/schema/footer) and table entries are carved by their inner markers.
-async fn run_zip_parallel(
-    app: &AppHandle,
-    opts: &ImportOptions,
-    target: Arc<dyn Driver>,
-    control: &Arc<TransferControl>,
-    entries: &[(String, String)],
-    session_prelude: &str,
-    concurrency: usize,
-) -> Result<(u64, u32), String> {
-    let mut regions = Regions::default();
-    for (name, content) in entries {
-        if name.ends_with("00_header.sql") {
-            regions.header.push_str(content);
-        } else if name.ends_with("zz_footer.sql") {
-            regions.footer.push_str(content);
-        } else if name.ends_with("00_schema.sql") {
-            regions.ddls.push(content.clone());
-        } else {
-            // Table entry : carve DDL/data from its inner @BM:T / @BM:D markers.
-            let r = parse_sql_regions(content);
-            if r.ddls.is_empty() && r.datas.is_empty() {
-                // No markers (older/foreign entry) : run whole as DDL phase.
-                if !content.trim().is_empty() {
-                    regions.ddls.push(content.clone());
-                }
-            } else {
-                regions.ddls.extend(r.ddls);
-                regions.datas.extend(r.datas);
-            }
-        }
-    }
-    // Detect dialect from header + structure (data alone is ambiguous).
-    let sample = format!("{}\n{}", regions.header, regions.ddls.join("\n"));
-    let ctx = build_exec_ctx(opts, &*target, &sample, session_prelude);
-    run_regions_parallel(app, opts, target, control, ctx, regions, concurrency).await
-}
-
-/// Naive but reasonable splitter: respects single/double quotes,
-/// backticks, line comments `-- ...` and block `/* ... */`, and the
-/// `DELIMITER xxx` directive that mysqldump uses on triggers/procedures.
-fn split_statements(src: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    // Accumulate raw bytes, not `b as char`: casting each byte to a char
-    // mangles multibyte UTF-8 (an 'á' would become two Latin-1 chars and
-    // re-encode as garbage), corrupting non-ASCII data on import. All the
-    // boundary markers below (delimiter, comment, quote) are ASCII, so a
-    // multibyte sequence is always copied whole — the buffer stays valid UTF-8.
-    let mut buf: Vec<u8> = Vec::with_capacity(256);
-    let mut delim: String = ";".to_string();
-    let bytes = src.as_bytes();
-    let mut i = 0usize;
-    let len = bytes.len();
-
-    let flush = |buf: &mut Vec<u8>, out: &mut Vec<String>| {
-        let s = String::from_utf8_lossy(buf);
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            out.push(trimmed.to_string());
-        }
-        buf.clear();
-    };
-
-    while i < len {
-        let b = bytes[i];
-
-        // DELIMITER directive — case-insensitive, at the start of the line
-        // (allowing whitespace before).
-        if (buf.is_empty() || buf.last() == Some(&b'\n'))
-            && at_word_ci(bytes, i, b"DELIMITER")
-        {
-            // Advance past DELIMITER.
-            i += 9;
-            // Skip whitespace.
-            while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
-                i += 1;
-            }
-            // Read until EOL.
-            let mut new_delim: Vec<u8> = Vec::new();
-            while i < len && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                new_delim.push(bytes[i]);
-                i += 1;
-            }
-            let new_delim = String::from_utf8_lossy(&new_delim).trim().to_string();
-            if !new_delim.is_empty() {
-                delim = new_delim;
-            }
-            // Consume newline.
-            while i < len && (bytes[i] == b'\n' || bytes[i] == b'\r') {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Line comment.
-        if b == b'-' && i + 1 < len && bytes[i + 1] == b'-' {
-            // Skip until EOL.
-            while i < len && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        if b == b'#' {
-            while i < len && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Block comment.
-        if b == b'/' && i + 1 < len && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            if i + 1 < len {
-                i += 2;
-            }
-            continue;
-        }
-
-        // String / quoted identifier — consume until closing.
-        if b == b'\'' || b == b'"' || b == b'`' {
-            let quote = b;
-            buf.push(b);
-            i += 1;
-            while i < len {
-                let c = bytes[i];
-                if c == b'\\' && i + 1 < len {
-                    // Backslash-escape (\' \" \\ etc).
-                    buf.push(c);
-                    buf.push(bytes[i + 1]);
-                    i += 2;
-                    continue;
-                }
-                if c == quote {
-                    // Doubled = escape (MySQL ANSI). Keep.
-                    if i + 1 < len && bytes[i + 1] == quote {
-                        buf.push(c);
-                        buf.push(c);
-                        i += 2;
-                        continue;
-                    }
-                    buf.push(c);
-                    i += 1;
-                    break;
-                }
-                buf.push(c);
-                i += 1;
-            }
-            continue;
-        }
-
-        // Delimiter match — end of statement.
-        if at_str(bytes, i, delim.as_bytes()) {
-            flush(&mut buf, &mut out);
-            i += delim.len();
-            continue;
-        }
-
-        buf.push(b);
-        i += 1;
-    }
-
-    // Leftovers.
-    flush(&mut buf, &mut out);
-    out
-}
+// ============================================================ skip/translate
 
 /// Skips statements clearly incompatible with the target that have no
 /// trivial analog — silent, doesn't count as an error. Prevents
@@ -898,6 +904,30 @@ fn at_word_ci(bytes: &[u8], i: usize, needle: &[u8]) -> bool {
 mod tests {
     use super::*;
 
+    /// Feeds `src` through the splitter in `chunk` byte slices, collecting
+    /// statements. Used to assert chunk-size independence.
+    fn split_chunked(src: &str, chunk: usize) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut sp = StreamSplitter::new();
+        let bytes = src.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let end = (i + chunk).min(bytes.len());
+            sp.feed(&bytes[i..end], false, &mut |item| {
+                if let ParseItem::Stmt(s) = item {
+                    out.push(s);
+                }
+            });
+            i = end;
+        }
+        sp.feed(&[], true, &mut |item| {
+            if let ParseItem::Stmt(s) = item {
+                out.push(s);
+            }
+        });
+        out
+    }
+
     #[test]
     fn signature_detected_on_first_line() {
         assert!(sql_has_signature("-- @BM:DUMP v1\n/* ... */\nSET NAMES utf8mb4;"));
@@ -918,48 +948,30 @@ mod tests {
     }
 
     #[test]
-    fn parse_regions_splits_by_marker() {
+    fn stream_emits_markers_in_order() {
         let sql = "-- @BM:DUMP v1\n\
                    SET NAMES utf8mb4;\n\
                    -- @BM:T idx=0 schema=s table=a\n\
                    CREATE TABLE a (id INT);\n\
                    -- @BM:D idx=0\n\
                    INSERT INTO s.a VALUES (1);\n\
-                   -- @BM:T idx=1 schema=s table=b\n\
-                   CREATE TABLE b (id INT);\n\
-                   -- @BM:D idx=1\n\
-                   INSERT INTO s.b VALUES (2);\n\
                    -- @BM:F\n\
                    SET FOREIGN_KEY_CHECKS = 1;\n";
-        let r = parse_sql_regions(sql);
-        assert!(r.header.contains("SET NAMES"));
-        assert_eq!(r.ddls.len(), 2);
-        assert!(r.ddls[0].contains("CREATE TABLE a"));
-        assert!(r.ddls[1].contains("CREATE TABLE b"));
-        assert_eq!(r.datas.len(), 2);
-        assert!(r.datas[0].contains("INSERT INTO s.a"));
-        assert!(r.datas[1].contains("INSERT INTO s.b"));
-        assert!(r.footer.contains("FOREIGN_KEY_CHECKS = 1"));
-        // DDL must not leak into data and vice-versa.
-        assert!(!r.ddls[0].contains("INSERT"));
-        assert!(!r.datas[0].contains("CREATE TABLE"));
-    }
-
-    #[test]
-    fn parse_regions_structure_only_table_has_no_data() {
-        let sql = "-- @BM:DUMP v1\n\
-                   -- @BM:T idx=0 schema=s table=a\n\
-                   CREATE TABLE a (id INT);\n\
-                   -- @BM:F\n";
-        let r = parse_sql_regions(sql);
-        assert_eq!(r.ddls.len(), 1);
-        assert!(r.datas.is_empty());
-    }
-
-    #[test]
-    fn parse_regions_no_markers_is_empty() {
-        let r = parse_sql_regions("SELECT 1; SELECT 2;");
-        assert!(r.ddls.is_empty() && r.datas.is_empty());
+        let mut markers = Vec::new();
+        let mut stmts = Vec::new();
+        let mut sp = StreamSplitter::new();
+        sp.feed(sql.as_bytes(), true, &mut |item| match item {
+            ParseItem::Marker(m) => markers.push(m),
+            ParseItem::Stmt(s) => stmts.push(s),
+        });
+        assert_eq!(markers.len(), 4); // DUMP, T, D, F
+        assert!(matches!(markers[0], Marker::Dump));
+        assert!(matches!(markers[1], Marker::Table));
+        assert!(matches!(markers[2], Marker::Data));
+        assert!(matches!(markers[3], Marker::Footer));
+        // Statements: SET NAMES, CREATE, INSERT, SET FK=1.
+        assert!(stmts.iter().any(|s| s.contains("CREATE TABLE a")));
+        assert!(stmts.iter().any(|s| s.contains("INSERT INTO s.a")));
     }
 
     #[test]
@@ -1028,8 +1040,6 @@ mod tests {
 
     #[test]
     fn split_preserves_multibyte_utf8() {
-        // Bytes must survive verbatim — the old `b as char` path mangled
-        // accented/CJK/emoji data into mojibake.
         let out = split_statements(
             "INSERT INTO t VALUES ('café', 'açúcar', '日本語', '😀'); SELECT 1;",
         );
@@ -1042,10 +1052,54 @@ mod tests {
 
     #[test]
     fn split_handles_escaped_quotes() {
-        // `\'` inside a MySQL string — splitter can't close there.
         let out = split_statements("INSERT INTO t VALUES ('it\\'s; a test'); SELECT 1;");
         assert_eq!(out.len(), 2);
         assert!(out[0].contains("it\\'s; a test"));
+    }
+
+    #[test]
+    fn chunked_matches_whole_for_tricky_input() {
+        // Spans quotes, comments, DELIMITER, multibyte, escapes. The result
+        // must be identical no matter the chunk boundary.
+        let src = "-- @BM:DUMP v1\n\
+                   SET NAMES utf8mb4;\n\
+                   /* block; with; semis */\n\
+                   INSERT INTO t VALUES ('a;b', 'esc\\'aped', 'café日本😀');\n\
+                   DELIMITER $$\n\
+                   CREATE TRIGGER x BEGIN SELECT 1; END$$\n\
+                   DELIMITER ;\n\
+                   -- @BM:D idx=0\n\
+                   INSERT INTO t VALUES (1),(2);\n";
+        let whole = split_statements(src);
+        for chunk in [1usize, 2, 3, 5, 7, 13, 64] {
+            assert_eq!(split_chunked(src, chunk), whole, "chunk size {}", chunk);
+        }
+    }
+
+    #[test]
+    fn chunked_emits_markers_regardless_of_boundary() {
+        let src = "-- @BM:DUMP v1\nA;\n-- @BM:T idx=0 schema=s table=a\nB;\n-- @BM:D idx=0\nC;\n-- @BM:F\nD;\n";
+        for chunk in [1usize, 2, 3, 4, 9, 32] {
+            let mut markers = Vec::new();
+            let mut sp = StreamSplitter::new();
+            let bytes = src.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() {
+                let end = (i + chunk).min(bytes.len());
+                sp.feed(&bytes[i..end], false, &mut |item| {
+                    if let ParseItem::Marker(m) = item {
+                        markers.push(m);
+                    }
+                });
+                i = end;
+            }
+            sp.feed(&[], true, &mut |item| {
+                if let ParseItem::Marker(m) = item {
+                    markers.push(m);
+                }
+            });
+            assert_eq!(markers.len(), 4, "chunk {}", chunk);
+        }
     }
 
     #[test]
