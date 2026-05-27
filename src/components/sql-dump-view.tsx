@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
   AlertCircle,
+  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -34,6 +35,8 @@ import { appConfirm } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
 import { useTabs } from "@/state/tabs";
+
+type Step = "settings" | "tables" | "progress";
 
 interface Props {
   tabId: string;
@@ -78,6 +81,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
     Map<string, DumpTableNote[]>
   >(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [step, setStep] = useState<Step>("settings");
 
   const defaultName = useMemo(() => {
     if (scopes.length === 1) {
@@ -153,18 +157,6 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
       return next;
     });
 
-  // Dirty + label.
-  useEffect(() => {
-    patchTab(tabId, {
-      label: running
-        ? t("sqlDump.labelRunning")
-        : done
-          ? t("sqlDump.labelDone")
-          : t("sqlDump.labelIdle"),
-      dirty: running,
-    });
-  }, [running, done, tabId, patchTab, t]);
-
   // On format change, update the extension of the already-chosen path
   // (swap .sql <-> .zip). If there was no path, nothing happens.
   useEffect(() => {
@@ -226,6 +218,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
     setNotesByTable(new Map());
     setExpanded(new Set());
     setRunning(true);
+    setStep("progress");
     try {
       await ipc.sqlDump.start(opts);
     } catch (e) {
@@ -279,21 +272,73 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
     0,
   );
 
+  // Weighted-by-table overall percent, mirroring the data-transfer wizard:
+  // each table is 100/N% and a running table contributes its own done/total.
+  const overallPct = useMemo(() => {
+    if (totalTables === 0) return 0;
+    const weight = 100 / totalTables;
+    let pct = 0;
+    for (const { schema, table } of allTables) {
+      const k = tableKey(schema, table);
+      const d = doneTable.get(k);
+      if (d) {
+        if (!d.error) pct += weight;
+        continue;
+      }
+      const p = perTable.get(k);
+      if (p && p.total > 0) pct += Math.min(1, p.done / p.total) * weight;
+    }
+    return Math.min(100, pct);
+  }, [allTables, perTable, doneTable, totalTables]);
+
+  // Tab title with % while running : feedback even when the tab is in the
+  // background. Falls back to a static label idle/done.
+  useEffect(() => {
+    if (running) {
+      patchTab(tabId, {
+        label: `Dump · ${Math.floor(overallPct)}%`,
+        dirty: true,
+      });
+    } else if (done) {
+      const suffix = done.failed > 0 ? ` · ${done.failed} err` : " · ok";
+      patchTab(tabId, { label: `Dump${suffix}`, dirty: false });
+    } else {
+      patchTab(tabId, { label: t("sqlDump.labelIdle"), dirty: false });
+    }
+  }, [running, done, overallPct, tabId, patchTab, t]);
+
+  // Progress bar on the taskbar icon : feedback even with the window
+  // minimized. Clears a few seconds after finishing.
+  useEffect(() => {
+    if (running) {
+      ipc.taskbar.setProgress("normal", Math.floor(overallPct)).catch(() => {});
+    } else if (done) {
+      const status = done.failed > 0 ? "error" : "normal";
+      ipc.taskbar.setProgress(status, 100).catch(() => {});
+      const id = window.setTimeout(() => {
+        ipc.taskbar.setProgress("none").catch(() => {});
+      }, 4000);
+      return () => window.clearTimeout(id);
+    } else {
+      ipc.taskbar.setProgress("none").catch(() => {});
+    }
+  }, [running, done, overallPct]);
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-card/30 px-6 text-sm">
-        <FileText className="h-4 w-4 text-muted-foreground" />
-        <h2 className="font-semibold">{t("sqlDump.header")}</h2>
-        <span className="text-muted-foreground">·</span>
-        <span className="text-muted-foreground">{conn?.name}</span>
-        <span className="text-muted-foreground">·</span>
-        <span className="text-muted-foreground">
-          {scopes.map((s) => s.schema).join(", ")}
-        </span>
-      </header>
+      <StepperHeader step={step} onJump={running ? undefined : setStep} />
 
       <div className="min-h-0 flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-3xl space-y-4">
+          {step === "settings" && (
+            <>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <FileText className="h-3.5 w-3.5" />
+            {t("sqlDump.contextSubtitle", {
+              conn: conn?.name ?? "",
+              schemas: scopes.map((s) => s.schema).join(", "),
+            })}
+          </div>
           {/* Formato */}
           <Card title={t("sqlDump.section.format")}>
             <div className="grid grid-cols-2 gap-2">
@@ -443,95 +488,245 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
               </span>
             </div>
           </Card>
-
-          {/* Execution */}
-          {startError && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
-              <pre className="whitespace-pre-wrap break-all font-mono">
-                {startError}
-              </pre>
-            </div>
+            </>
           )}
 
-          {(running || done) && (
-            <Card title={t("sqlDump.section.progress")}>
-              <div className="flex items-baseline justify-between text-xs">
-                <span className="tabular-nums text-muted-foreground">
-                  {t("sqlDump.tablesProgress", { done: tablesDone, total: totalTables })}
-                </span>
-                <span className="tabular-nums text-muted-foreground">
-                  {t("sqlDump.rowsCount", { n: totalRows.toLocaleString() })}
-                </span>
-              </div>
-              <div className="space-y-1 text-xs">
-                {allTables.length > 0 ? (
-                  allTables.map(({ schema, table }) => {
-                    const k = tableKey(schema, table);
-                    return (
-                      <TableRow
-                        key={k}
-                        schema={schema}
-                        table={table}
-                        progress={perTable.get(k)}
-                        done={doneTable.get(k)}
-                        workers={workersByTable.get(k)}
-                        notes={notesByTable.get(k)}
-                        expanded={expanded.has(k)}
-                        onToggle={() => toggleExpand(k)}
-                      />
-                    );
-                  })
-                ) : (
-                  <div className="text-muted-foreground">
-                    {t("sqlDump.discoveringTables")}
-                  </div>
-                )}
-              </div>
-              {done && (
-                <div
-                  className={cn(
-                    "mt-3 rounded-md border p-3 text-xs",
-                    done.failed > 0
-                      ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
-                      : "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
-                  )}
-                >
-                  {t("sqlDump.doneSummary", {
-                    status:
-                      done.failed > 0
-                        ? t("sqlDump.doneWithErrors")
-                        : t("sqlDump.doneOk"),
-                    rows: done.total_rows.toLocaleString(),
-                    seconds: (done.elapsed_ms / 1000).toFixed(1),
-                  })}
+          {step === "tables" && (
+            <TablesReview scopes={scopes} known={allTables} />
+          )}
+
+          {step === "progress" && (
+            <>
+              {startError && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                  <pre className="whitespace-pre-wrap break-all font-mono">
+                    {startError}
+                  </pre>
                 </div>
               )}
-            </Card>
+              <Card title={t("sqlDump.section.progress")}>
+                <div className="flex items-baseline justify-between text-xs">
+                  <span className="tabular-nums text-muted-foreground">
+                    {t("sqlDump.tablesProgress", { done: tablesDone, total: totalTables })}
+                  </span>
+                  <span className="tabular-nums text-muted-foreground">
+                    {t("sqlDump.rowsCount", { n: totalRows.toLocaleString() })}
+                  </span>
+                </div>
+                <div className="space-y-1 text-xs">
+                  {allTables.length > 0 ? (
+                    allTables.map(({ schema, table }) => {
+                      const k = tableKey(schema, table);
+                      return (
+                        <TableRow
+                          key={k}
+                          schema={schema}
+                          table={table}
+                          progress={perTable.get(k)}
+                          done={doneTable.get(k)}
+                          workers={workersByTable.get(k)}
+                          notes={notesByTable.get(k)}
+                          expanded={expanded.has(k)}
+                          onToggle={() => toggleExpand(k)}
+                        />
+                      );
+                    })
+                  ) : (
+                    <div className="text-muted-foreground">
+                      {t("sqlDump.discoveringTables")}
+                    </div>
+                  )}
+                </div>
+                {done && (
+                  <div
+                    className={cn(
+                      "mt-3 rounded-md border p-3 text-xs",
+                      done.failed > 0
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
+                    )}
+                  >
+                    {t("sqlDump.doneSummary", {
+                      status:
+                        done.failed > 0
+                          ? t("sqlDump.doneWithErrors")
+                          : t("sqlDump.doneOk"),
+                      rows: done.total_rows.toLocaleString(),
+                      seconds: (done.elapsed_ms / 1000).toFixed(1),
+                    })}
+                  </div>
+                )}
+              </Card>
+            </>
           )}
         </div>
       </div>
 
-      <footer className="flex h-12 shrink-0 items-center justify-end gap-2 border-t border-border bg-card/30 px-6">
-        {running ? (
+      <footer className="flex h-12 shrink-0 items-center justify-end gap-2 border-t border-border bg-card/30 px-6 text-xs">
+        {step === "tables" && (
+          <button
+            type="button"
+            onClick={() => setStep("settings")}
+            className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {t("sqlDump.back")}
+          </button>
+        )}
+        {step === "progress" && !running && (
+          <button
+            type="button"
+            onClick={() => setStep("settings")}
+            className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {t("sqlDump.backToSettings")}
+          </button>
+        )}
+
+        {step === "settings" && (
+          <button
+            type="button"
+            onClick={() => setStep("tables")}
+            className="inline-flex items-center gap-1 rounded-md bg-conn-accent px-3 py-1.5 font-medium text-conn-accent-foreground hover:opacity-90"
+          >
+            {t("sqlDump.advance")}
+            <ArrowRight className="h-3 w-3" />
+          </button>
+        )}
+        {step === "tables" && (
+          <button
+            type="button"
+            onClick={handleStart}
+            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 font-medium text-white hover:opacity-90"
+          >
+            <Play className="h-3 w-3" />
+            {t("sqlDump.startBtn")}
+          </button>
+        )}
+        {step === "progress" && running && (
           <button
             type="button"
             onClick={handleStop}
-            className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20"
+            className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 font-medium text-destructive hover:bg-destructive/20"
           >
             <Square className="h-3 w-3" />
             {t("sqlDump.stopBtn")}
           </button>
-        ) : (
+        )}
+        {step === "progress" && !running && (
           <button
             type="button"
             onClick={handleStart}
-            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 font-medium text-white hover:opacity-90"
           >
             <Play className="h-3 w-3" />
             {done ? t("sqlDump.runAgainBtn") : t("sqlDump.startBtn")}
           </button>
         )}
       </footer>
+    </div>
+  );
+}
+
+function StepperHeader({
+  step,
+  onJump,
+}: {
+  step: Step;
+  onJump?: (s: Step) => void;
+}) {
+  const t = useT();
+  const steps: Array<{ id: Step; label: string }> = [
+    { id: "settings", label: t("sqlDump.stepSettings") },
+    { id: "tables", label: t("sqlDump.stepTables") },
+    { id: "progress", label: t("sqlDump.stepRun") },
+  ];
+  const activeIdx = steps.findIndex((s) => s.id === step);
+  return (
+    <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card/30 px-6 text-xs">
+      {steps.map((s, i) => {
+        const done = i < activeIdx;
+        const active = i === activeIdx;
+        // Jump only to already-visited steps : never skip ahead, never into run.
+        const clickable = !!onJump && done && s.id !== "progress";
+        return (
+          <div
+            key={s.id}
+            className={cn(
+              "flex items-center gap-2",
+              clickable && "cursor-pointer rounded-md px-1 hover:bg-accent/40",
+            )}
+            onClick={clickable ? () => onJump!(s.id) : undefined}
+          >
+            <div
+              className={cn(
+                "grid h-5 w-5 place-items-center rounded-full text-[10px] font-bold",
+                active
+                  ? "bg-conn-accent text-conn-accent-foreground"
+                  : done
+                    ? "bg-emerald-500 text-white"
+                    : "bg-muted text-muted-foreground",
+              )}
+            >
+              {done ? <Check className="h-3 w-3" /> : i + 1}
+            </div>
+            <span
+              className={cn(
+                "font-medium",
+                active ? "text-foreground" : "text-muted-foreground",
+              )}
+            >
+              {s.label}
+            </span>
+            {i < steps.length - 1 && (
+              <ArrowRight className="h-3 w-3 text-muted-foreground/40" />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TablesReview({
+  scopes,
+  known,
+}: {
+  scopes: Array<{ schema: string; tables?: string[] }>;
+  known: Array<{ schema: string; table: string }>;
+}) {
+  const t = useT();
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Database className="h-4 w-4 text-muted-foreground" />
+        {t("sqlDump.tablesSelected", { n: known.length })}
+      </div>
+      <div className="grid max-h-[460px] grid-cols-2 gap-1 overflow-auto rounded-md border border-border p-2">
+        {known.map(({ schema, table }) => (
+          <div
+            key={`${schema}.${table}`}
+            className="flex items-center gap-2 rounded px-2 py-1 text-xs"
+          >
+            <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <span className="truncate font-mono">
+              {schema}.{table}
+            </span>
+          </div>
+        ))}
+      </div>
+      {scopes.some((s) => !s.tables || s.tables.length === 0) && (
+        <div className="flex items-start gap-2 rounded-md border border-border bg-card/30 p-3 text-xs text-muted-foreground">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div>
+            {scopes
+              .filter((s) => !s.tables || s.tables.length === 0)
+              .map((s) => s.schema)
+              .join(", ")}
+            {" : "}
+            {t("sqlDump.wholeSchema")}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
