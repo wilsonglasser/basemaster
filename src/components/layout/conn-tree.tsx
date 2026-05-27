@@ -37,7 +37,7 @@ import {
   buildMaintenanceSql,
   type MaintenanceAction,
 } from "@/lib/maintenance-sql";
-import { startTableExport } from "@/lib/export-table";
+import { startMultiTableExport, startTableExport } from "@/lib/export-table";
 import { ipc } from "@/lib/ipc";
 import {
   readTableClipboard,
@@ -2501,15 +2501,20 @@ function TableNode({
   const closeTabsForTable = useTabs((s) => s.closeMany);
 
   const runMaintenance = (action: MaintenanceAction) => {
+    const targets = bulkTargets();
     const sql = buildMaintenanceSql(
       conn.driver,
       action,
       table.schema,
-      [table.name],
+      targets,
     );
     if (!sql) return;
+    const label =
+      targets.length === 1
+        ? `${action.toLowerCase()} · ${targets[0]}`
+        : `${action.toLowerCase()} · ${targets.length} tables`;
     newTab({
-      label: `${action.toLowerCase()} · ${table.name}`,
+      label,
       kind: {
         kind: "query",
         connectionId: conn.id,
@@ -2551,98 +2556,127 @@ function TableNode({
   };
 
   const duplicate = async () => {
-    try {
-      // Suggest an available name and ask the user.
-      const suggested = await ipc.db.findAvailableTableName(
-        conn.id,
-        table.schema,
-        table.name,
-      );
-      const newName = await appPrompt(
-        t("tree.duplicatePrompt", { source: table.name }),
-        { defaultValue: suggested },
-      );
-      if (!newName || newName.trim() === "") return;
-      // Copy structure + data. V2 could ask for structure-only.
-      await ipc.db.duplicateTable(
-        conn.id,
-        table.schema,
-        table.name,
-        newName.trim(),
-        true,
-      );
-      // Refresh the tree to show the new table.
-      invalidateSchema(conn.id, table.schema);
-      ensureSnapshot(conn.id, table.schema).catch(() => {});
-    } catch (e) {
-      void appAlert(t("tree.duplicateFailed", { error: String(e) }));
+    const targets = bulkTargets();
+    if (targets.length === 1) {
+      try {
+        const suggested = await ipc.db.findAvailableTableName(
+          conn.id,
+          table.schema,
+          targets[0],
+        );
+        const newName = await appPrompt(
+          t("tree.duplicatePrompt", { source: targets[0] }),
+          { defaultValue: suggested },
+        );
+        if (!newName || newName.trim() === "") return;
+        await ipc.db.duplicateTable(
+          conn.id,
+          table.schema,
+          targets[0],
+          newName.trim(),
+          true,
+        );
+        invalidateSchema(conn.id, table.schema);
+        ensureSnapshot(conn.id, table.schema).catch(() => {});
+      } catch (e) {
+        void appAlert(t("tree.duplicateFailed", { error: String(e) }));
+      }
+      return;
+    }
+    // Bulk: auto-pick available names, no per-table prompt.
+    const failed: string[] = [];
+    for (const name of targets) {
+      try {
+        const avail = await ipc.db.findAvailableTableName(
+          conn.id,
+          table.schema,
+          name,
+        );
+        await ipc.db.duplicateTable(conn.id, table.schema, name, avail, true);
+      } catch (e) {
+        failed.push(`${name}: ${e}`);
+      }
+    }
+    invalidateSchema(conn.id, table.schema);
+    ensureSnapshot(conn.id, table.schema).catch(() => {});
+    if (failed.length > 0) {
+      void appAlert(t("tree.bulkOpFailures", { list: failed.join("\n") }));
     }
   };
 
   const openTable = () => {
-    newTab({
-      label: table.name,
-      kind: {
-        kind: "table",
-        connectionId: conn.id,
-        schema: table.schema,
-        table: table.name,
-      },
-      accentColor: conn.color,
-    });
+    const targets = bulkTargets();
+    for (const name of targets) {
+      newTab({
+        label: name,
+        kind: {
+          kind: "table",
+          connectionId: conn.id,
+          schema: table.schema,
+          table: name,
+        },
+        accentColor: conn.color,
+      });
+    }
   };
 
   const editTable = () => {
-    // If the tab is already open, drive it via the bridge so we end up
-    // on the Structure sub-tab in edit mode without remounting it.
-    const tabsSt = useTabs.getState();
-    const existing = tabsSt.tabs.find(
-      (x) =>
-        x.kind.kind === "table" &&
-        x.kind.connectionId === conn.id &&
-        x.kind.schema === table.schema &&
-        x.kind.table === table.name,
-    );
-    if (existing) {
-      tabsSt.setActive(existing.id);
-      const bridge = useTableViewBridge.getState();
-      const ok = bridge.setViewOf(existing.id, "structure");
-      if (ok) {
-        // Wait for StructurePane to mount before requesting edit.
-        setTimeout(() => bridge.startEditOf(existing.id), 50);
-        return;
+    const targets = bulkTargets();
+    if (targets.length === 1) {
+      // Single: drive existing tab via bridge if open.
+      const tabsSt = useTabs.getState();
+      const existing = tabsSt.tabs.find(
+        (x) =>
+          x.kind.kind === "table" &&
+          x.kind.connectionId === conn.id &&
+          x.kind.schema === table.schema &&
+          x.kind.table === targets[0],
+      );
+      if (existing) {
+        tabsSt.setActive(existing.id);
+        const bridge = useTableViewBridge.getState();
+        const ok = bridge.setViewOf(existing.id, "structure");
+        if (ok) {
+          setTimeout(() => bridge.startEditOf(existing.id), 50);
+          return;
+        }
       }
     }
-    newTab({
-      label: table.name,
-      kind: {
-        kind: "table",
-        connectionId: conn.id,
-        schema: table.schema,
-        table: table.name,
-        initialView: "structure",
-        initialEdit: true,
-      },
-      accentColor: conn.color,
-    });
+    for (const name of targets) {
+      newTab({
+        label: name,
+        kind: {
+          kind: "table",
+          connectionId: conn.id,
+          schema: table.schema,
+          table: name,
+          initialView: "structure",
+          initialEdit: true,
+        },
+        accentColor: conn.color,
+      });
+    }
   };
 
   const openSelectAll = () => {
+    const targets = bulkTargets();
     const isPg = conn.driver === "postgres";
-    const qi = isPg
-      ? `"${table.name.replace(/"/g, '""')}"`
-      : `\`${table.name.replace(/`/g, "``")}\``;
-    newTab({
-      label: t("tree.queryLabel", { name: table.name }),
-      kind: {
-        kind: "query",
-        connectionId: conn.id,
-        schema: table.schema,
-        initialSql: `SELECT *\n  FROM ${qi}\n LIMIT 200;`,
-        autoRun: true,
-      },
-      accentColor: conn.color,
-    });
+    for (const name of targets) {
+      const qi = isPg
+        ? `"${name.replace(/"/g, '""')}"`
+        : `\`${name.replace(/`/g, "``")}\``;
+      newTab({
+        label: t("tree.queryLabel", { name }),
+        kind: {
+          kind: "query",
+          connectionId: conn.id,
+          schema: table.schema,
+          initialSql: `SELECT *\n  FROM ${qi}\n LIMIT 200;`,
+          autoRun: true,
+        },
+        accentColor: conn.color,
+      });
+    }
   };
 
   const openEmptyQuery = () => {
@@ -2658,16 +2692,17 @@ function TableNode({
       await writeTableClipboard({
         connectionId: conn.id,
         schema: table.schema,
-        tables: [table.name],
+        tables: bulkTargets(),
       });
     } catch (e) {
       console.error("copy:", e);
     }
   };
 
-  /** Target tables for the destructive action: respects multi-select if the
-   *  clicked table is part of it; otherwise operates on itself only. */
-  const destructiveTargets = (): string[] => {
+  /** Target tables for bulk actions (dump, export, copy, maintenance,
+   *  destructive). Respects multi-select if the clicked table is part of it;
+   *  otherwise operates on itself only. Views are never multi-bulk. */
+  const bulkTargets = (): string[] => {
     if (isView) return [table.name];
     if (multiSelected && multiSelected.has(table.name) && multiSelected.size > 1) {
       return Array.from(multiSelected);
@@ -2693,7 +2728,7 @@ function TableNode({
   };
 
   const dropSelected = async () => {
-    const targets = destructiveTargets();
+    const targets = bulkTargets();
     const many = targets.length > 1;
     const ok = await confirmDestructive({
       title: many
@@ -2749,7 +2784,7 @@ function TableNode({
   };
 
   const truncateSelected = async () => {
-    const targets = destructiveTargets();
+    const targets = bulkTargets();
     const many = targets.length > 1;
     const ok = await confirmDestructive({
       title: many
@@ -2779,7 +2814,7 @@ function TableNode({
   };
 
   const emptySelected = async () => {
-    const targets = destructiveTargets();
+    const targets = bulkTargets();
     const many = targets.length > 1;
     const ok = await confirmDestructive({
       title: many
@@ -2842,18 +2877,30 @@ function TableNode({
   const createTableFolderInline = useTableFolders((s) => s.create);
   const currentTableFolderId = tableAssignmentsForSchema[table.name];
 
+  const moveBulk = async (folderId: string | null) => {
+    const targets = bulkTargets();
+    const failed: string[] = [];
+    for (const name of targets) {
+      try {
+        await moveTableToFolder(conn.id, table.schema, name, folderId);
+      } catch (e) {
+        failed.push(`${name}: ${e}`);
+      }
+    }
+    if (failed.length > 0) {
+      void appAlert(t("tree.moveFailed", { error: failed.join("\n") }));
+    }
+  };
+
   const moveTableItems: ContextEntry[] = [
     ...tableFolderList.map<ContextEntry>((f) => ({
       icon: <FolderIcon className="h-3.5 w-3.5" />,
       label: t("tree.moveToFolder", { name: f.name }),
-      onClick: async () => {
-        try {
-          await moveTableToFolder(conn.id, table.schema, table.name, f.id);
-        } catch (e) {
-          void appAlert(t("tree.moveFailed", { error: String(e) }));
-        }
-      },
-      disabled: currentTableFolderId === f.id,
+      onClick: () => void moveBulk(f.id),
+      // For single-row context, hide the redundant "move to current folder";
+      // for bulk, always enabled since other rows may differ.
+      disabled:
+        bulkTargets().length === 1 && currentTableFolderId === f.id,
     })),
     {
       icon: <FolderIcon className="h-3.5 w-3.5" />,
@@ -2867,7 +2914,7 @@ function TableNode({
             table.schema,
             name.trim(),
           );
-          await moveTableToFolder(conn.id, table.schema, table.name, f.id);
+          await moveBulk(f.id);
         } catch (e) {
           void appAlert(t("tree.moveFailed", { error: String(e) }));
         }
@@ -2878,137 +2925,156 @@ function TableNode({
           {
             icon: <FolderIcon className="h-3.5 w-3.5" />,
             label: t("tree.removeFromFolder"),
-            onClick: async () => {
-              try {
-                await moveTableToFolder(
-                  conn.id,
-                  table.schema,
-                  table.name,
-                  null,
-                );
-              } catch (e) {
-                void appAlert(t("tree.moveFailed", { error: String(e) }));
-              }
-            },
+            onClick: () => void moveBulk(null),
           } as ContextEntry,
         ]
       : []),
   ];
 
   const menu = useContextMenu([
-    {
-      icon: <TableIcon className="h-3.5 w-3.5" />,
-      label: t("tree.openTable"),
-      onClick: openTable,
-    },
-    {
-      icon: <Pencil className="h-3.5 w-3.5" />,
-      label: t("tree.editTable"),
-      shortcut: "Ctrl+D",
-      onClick: editTable,
-    },
-    {
-      submenu: true,
-      icon: <FolderIcon className="h-3.5 w-3.5" />,
-      label: t("tree.moveToFolderMenu"),
-      items: moveTableItems,
-    },
-    {
-      icon: <FileCode2 className="h-3.5 w-3.5" />,
-      label: t("tree.selectAll", { name: table.name }),
-      onClick: openSelectAll,
-    },
-    {
-      icon: <FileCode2 className="h-3.5 w-3.5" />,
-      label: t("tree.emptyQuery"),
-      onClick: openEmptyQuery,
-    },
+    ...((): ContextEntry[] => {
+      const targets = bulkTargets();
+      const many = targets.length > 1;
+      const countSuffix = many ? ` (${targets.length})` : "";
+      return [
+        {
+          icon: <TableIcon className="h-3.5 w-3.5" />,
+          label: `${t("tree.openTable")}${countSuffix}`,
+          onClick: openTable,
+        },
+        {
+          icon: <Pencil className="h-3.5 w-3.5" />,
+          label: `${t("tree.editTable")}${countSuffix}`,
+          shortcut: "Ctrl+D",
+          onClick: editTable,
+        },
+        {
+          submenu: true,
+          icon: <FolderIcon className="h-3.5 w-3.5" />,
+          label: `${t("tree.moveToFolderMenu")}${countSuffix}`,
+          items: moveTableItems,
+        },
+        {
+          icon: <FileCode2 className="h-3.5 w-3.5" />,
+          label: many
+            ? `${t("tree.selectAll", { name: table.name })} (${targets.length})`
+            : t("tree.selectAll", { name: table.name }),
+          onClick: openSelectAll,
+        },
+        {
+          icon: <FileCode2 className="h-3.5 w-3.5" />,
+          label: t("tree.emptyQuery"),
+          onClick: openEmptyQuery,
+        },
+      ];
+    })(),
     { separator: true },
-    {
-      icon: <Copy className="h-3.5 w-3.5" />,
-      label: t("tree.copy"),
-      shortcut: "Ctrl+C",
-      onClick: copyName,
-    },
-    {
-      icon: <Copy className="h-3.5 w-3.5" />,
-      label: t("tree.duplicate"),
-      onClick: duplicate,
-    },
-    {
-      icon: <Pencil className="h-3.5 w-3.5" />,
-      label: t("tree.rename"),
-      onClick: rename,
-    },
+    ...((): ContextEntry[] => {
+      const targets = bulkTargets();
+      const many = targets.length > 1;
+      const countSuffix = many ? ` (${targets.length})` : "";
+      return [
+        {
+          icon: <Copy className="h-3.5 w-3.5" />,
+          label: `${t("tree.copy")}${countSuffix}`,
+          shortcut: "Ctrl+C",
+          onClick: copyName,
+        },
+        {
+          icon: <Copy className="h-3.5 w-3.5" />,
+          label: `${t("tree.duplicate")}${countSuffix}`,
+          onClick: duplicate,
+        },
+        {
+          icon: <Pencil className="h-3.5 w-3.5" />,
+          label: t("tree.rename"),
+          onClick: rename,
+          disabled: many,
+        },
+        { separator: true },
+        {
+          submenu: true,
+          icon: <Wrench className="h-3.5 w-3.5" />,
+          label: `${t("tree.maintainLabel")}${countSuffix}`,
+          items: [
+            {
+              icon: <Wrench className="h-3.5 w-3.5" />,
+              label: t("tree.maintainOptimize"),
+              onClick: () => runMaintenance("OPTIMIZE"),
+            },
+            {
+              icon: <Wrench className="h-3.5 w-3.5" />,
+              label: t("tree.maintainAnalyze"),
+              onClick: () => runMaintenance("ANALYZE"),
+            },
+            {
+              icon: <Wrench className="h-3.5 w-3.5" />,
+              label: t("tree.maintainCheck"),
+              onClick: () => runMaintenance("CHECK"),
+            },
+            {
+              icon: <Wrench className="h-3.5 w-3.5" />,
+              label: t("tree.maintainRepair"),
+              onClick: () => runMaintenance("REPAIR"),
+            },
+          ],
+        },
+      ];
+    })(),
     { separator: true },
-    {
-      submenu: true,
-      icon: <Wrench className="h-3.5 w-3.5" />,
-      label: t("tree.maintainLabel"),
-      items: [
+    ...((): ContextEntry[] => {
+      const targets = bulkTargets();
+      const many = targets.length > 1;
+      const countSuffix = many ? ` (${targets.length})` : "";
+      const dumpLabel = many
+        ? `Dump · ${targets.length} tables`
+        : `Dump · ${table.name}`;
+      return [
         {
-          icon: <Wrench className="h-3.5 w-3.5" />,
-          label: t("tree.maintainOptimize"),
-          onClick: () => runMaintenance("OPTIMIZE"),
-        },
-        {
-          icon: <Wrench className="h-3.5 w-3.5" />,
-          label: t("tree.maintainAnalyze"),
-          onClick: () => runMaintenance("ANALYZE"),
-        },
-        {
-          icon: <Wrench className="h-3.5 w-3.5" />,
-          label: t("tree.maintainCheck"),
-          onClick: () => runMaintenance("CHECK"),
-        },
-        {
-          icon: <Wrench className="h-3.5 w-3.5" />,
-          label: t("tree.maintainRepair"),
-          onClick: () => runMaintenance("REPAIR"),
-        },
-      ],
-    },
-    { separator: true },
-    {
-      icon: <Download className="h-3.5 w-3.5" />,
-      label: t("tree.export"),
-      onClick: () =>
-        startTableExport(conn.id, table.schema, table.name),
-    },
-    {
-      icon: <Upload className="h-3.5 w-3.5" />,
-      label: t("tree.importData"),
-      onClick: () =>
-        newTab({
-          label: `Import · ${table.name}`,
-          kind: {
-            kind: "data-import",
-            connectionId: conn.id,
-            schema: table.schema,
-            table: table.name,
+          icon: <Download className="h-3.5 w-3.5" />,
+          label: `${t("tree.export")}${countSuffix}`,
+          onClick: () => {
+            if (targets.length === 1) {
+              void startTableExport(conn.id, table.schema, targets[0]);
+            } else {
+              void startMultiTableExport(conn.id, table.schema, targets);
+            }
           },
-        }),
-    },
-    {
-      icon: <FileText className="h-3.5 w-3.5" />,
-      label: t("tree.sqlDump"),
-      onClick: () =>
-        newTab({
-          label: `Dump · ${table.name}`,
-          kind: {
-            kind: "sql-dump",
-            sourceConnectionId: conn.id,
-            scopes: [
-              { schema: table.schema, tables: [table.name] },
-            ],
-          },
-          accentColor: conn.color,
-        }),
-    },
+        },
+        {
+          icon: <Upload className="h-3.5 w-3.5" />,
+          label: t("tree.importData"),
+          onClick: () =>
+            newTab({
+              label: `Import · ${table.name}`,
+              kind: {
+                kind: "data-import",
+                connectionId: conn.id,
+                schema: table.schema,
+                table: table.name,
+              },
+            }),
+        },
+        {
+          icon: <FileText className="h-3.5 w-3.5" />,
+          label: `${t("tree.sqlDump")}${countSuffix}`,
+          onClick: () =>
+            newTab({
+              label: dumpLabel,
+              kind: {
+                kind: "sql-dump",
+                sourceConnectionId: conn.id,
+                scopes: [{ schema: table.schema, tables: targets }],
+              },
+              accentColor: conn.color,
+            }),
+        },
+      ];
+    })(),
     { separator: true },
     // Truncate / Empty only make sense on tables; hidden on views.
     ...((): ContextEntry[] => {
-      const count = destructiveTargets().length;
+      const count = bulkTargets().length;
       const many = count > 1;
       const items: ContextEntry[] = [];
       if (!isView) {
