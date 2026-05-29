@@ -12,6 +12,7 @@ import {
 
 import { ipc } from "@/lib/ipc";
 import type {
+  ConnectionFolder,
   ConnectionProfile,
   InsertMode,
   SchemaInfo,
@@ -23,6 +24,7 @@ import type {
   TransferOptions,
   Uuid,
 } from "@/lib/types";
+import { SearchableSelect, type SearchableSelectOption } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
 import { useSchemaCache } from "@/state/schema-cache";
@@ -68,6 +70,7 @@ export function DataTransferWizard({
   const t = useT();
   const patchTab = useTabs((s) => s.patch);
   const connections = useConnections((s) => s.connections);
+  const folders = useConnections((s) => s.folders);
   const activeSet = useConnections((s) => s.active);
   const openConn = useConnections((s) => s.open);
 
@@ -693,6 +696,7 @@ export function DataTransferWizard({
         {step === "endpoints" && (
           <EndpointsStep
             connections={connections}
+            folders={folders}
             sourceConn={sourceConn}
             setSourceConn={setSourceConn}
             targetConn={targetConn}
@@ -705,6 +709,8 @@ export function DataTransferWizard({
             setTargetSchema={setTargetSchema}
             sourceConnInfo={sourceConnInfo}
             targetConnInfo={targetConnInfo}
+            createTargetSchema={createTargetSchema}
+            setCreateTargetSchema={setCreateTargetSchema}
           />
         )}
 
@@ -896,6 +902,7 @@ function StepperHeader({
 
 function EndpointsStep({
   connections,
+  folders,
   sourceConn,
   setSourceConn,
   targetConn,
@@ -908,8 +915,11 @@ function EndpointsStep({
   setTargetSchema,
   sourceConnInfo,
   targetConnInfo,
+  createTargetSchema,
+  setCreateTargetSchema,
 }: {
   connections: ConnectionProfile[];
+  folders: ConnectionFolder[];
   sourceConn: Uuid | null;
   setSourceConn: (v: Uuid) => void;
   targetConn: Uuid | null;
@@ -922,12 +932,33 @@ function EndpointsStep({
   setTargetSchema: (v: string) => void;
   sourceConnInfo: ConnectionProfile | undefined;
   targetConnInfo: ConnectionProfile | undefined;
+  createTargetSchema: boolean;
+  setCreateTargetSchema: (v: boolean) => void;
 }) {
+  // Pre-compute group order so folders appear in user-defined `sort_order`
+  // and "(no folder)" goes to the end.
+  const groupOrder = useMemo(() => {
+    const sorted = [...folders].sort((a, b) => a.sort_order - b.sort_order);
+    return sorted.map((f) => f.name);
+  }, [folders]);
+
+  const connOptions = useMemo<SearchableSelectOption<Uuid>[]>(() => {
+    const folderName = new Map(folders.map((f) => [f.id, f.name] as const));
+    return connections.map((c) => ({
+      value: c.id,
+      label: c.name,
+      hint: c.driver,
+      group: c.folder_id ? folderName.get(c.folder_id) ?? null : null,
+      keywords: [c.host, c.driver, c.user],
+    }));
+  }, [connections, folders]);
+
   return (
     <div className="mx-auto grid max-w-5xl grid-cols-[1fr_auto_1fr] items-start gap-6 pt-6">
       <EndpointCard
         title="Origem"
-        connections={connections}
+        connOptions={connOptions}
+        groupOrder={groupOrder}
         connId={sourceConn}
         onConn={setSourceConn}
         schemas={sourceSchemas}
@@ -942,13 +973,21 @@ function EndpointsStep({
       </div>
       <EndpointCard
         title="Destino"
-        connections={connections}
+        connOptions={connOptions}
+        groupOrder={groupOrder}
         connId={targetConn}
         onConn={setTargetConn}
         schemas={targetSchemas}
         schema={targetSchema}
         onSchema={setTargetSchema}
         connInfo={targetConnInfo}
+        // Target-only: allow free-form schema (custom name → create on run)
+        // and surface "create same schema" affordance when the source name
+        // doesn't exist on the target.
+        allowSchemaCreate
+        peerSchema={sourceSchema}
+        createTargetSchema={createTargetSchema}
+        setCreateTargetSchema={setCreateTargetSchema}
       />
     </div>
   );
@@ -956,61 +995,130 @@ function EndpointsStep({
 
 function EndpointCard({
   title,
-  connections,
+  connOptions,
+  groupOrder,
   connId,
   onConn,
   schemas,
   schema,
   onSchema,
   connInfo,
+  allowSchemaCreate,
+  peerSchema,
+  createTargetSchema,
+  setCreateTargetSchema,
 }: {
   title: string;
-  connections: ConnectionProfile[];
+  connOptions: SearchableSelectOption<Uuid>[];
+  groupOrder: string[];
   connId: Uuid | null;
   onConn: (v: Uuid) => void;
   schemas: SchemaInfo[];
   schema: string;
   onSchema: (v: string) => void;
   connInfo: ConnectionProfile | undefined;
+  allowSchemaCreate?: boolean;
+  peerSchema?: string;
+  createTargetSchema?: boolean;
+  setCreateTargetSchema?: (v: boolean) => void;
 }) {
   const t = useT();
+
+  const schemaOptions = useMemo<SearchableSelectOption<string>[]>(
+    () =>
+      schemas.map((s) => ({
+        value: s.name,
+        label: s.name,
+      })),
+    [schemas],
+  );
+
+  const schemaIsKnown = schemas.some((s) => s.name === schema);
+  const willCreateSchema =
+    !!allowSchemaCreate && !!schema && !schemaIsKnown;
+
+  const sourceMissingOnTarget =
+    !!allowSchemaCreate &&
+    !!peerSchema &&
+    !!connId &&
+    schemas.length > 0 &&
+    !schemas.some((s) => s.name === peerSchema);
+
   return (
     <div className="rounded-lg border border-border bg-card/40 p-5">
       <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </h3>
-      <label className="mb-1 block text-xs text-muted-foreground">{t("dataTransfer.connectionLabel")}</label>
-      <select
-        value={connId ?? ""}
-        onChange={(e) => onConn(e.target.value)}
-        className="mb-4 w-full rounded-md border border-border bg-popover px-3 py-2 text-sm text-popover-foreground focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40"
-      >
-        <option value="" disabled>
-          {t("dataTransfer.connectionSelect")}
-        </option>
-        {connections.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-          </option>
-        ))}
-      </select>
 
-      <label className="mb-1 block text-xs text-muted-foreground">{t("dataTransfer.databaseLabel")}</label>
-      <select
-        value={schema}
-        onChange={(e) => onSchema(e.target.value)}
-        disabled={schemas.length === 0}
-        className="w-full rounded-md border border-border bg-popover px-3 py-2 text-sm text-popover-foreground focus:border-conn-accent focus:outline-none focus:ring-1 focus:ring-conn-accent/40 disabled:opacity-50"
-      >
-        <option value="" disabled>
-          {t("dataTransfer.connectionSelect")}
-        </option>
-        {schemas.map((s) => (
-          <option key={s.name} value={s.name}>
-            {s.name}
-          </option>
-        ))}
-      </select>
+      <label className="mb-1 block text-xs text-muted-foreground">
+        {t("dataTransfer.connectionLabel")}
+      </label>
+      <div className="mb-4">
+        <SearchableSelect<Uuid>
+          value={connId}
+          options={connOptions}
+          onChange={onConn}
+          placeholder={t("dataTransfer.connectionSelect")}
+          groupOrder={groupOrder}
+          ungroupedLabel="(sem pasta)"
+        />
+      </div>
+
+      <label className="mb-1 block text-xs text-muted-foreground">
+        {t("dataTransfer.databaseLabel")}
+      </label>
+      <SearchableSelect<string>
+        value={schema || null}
+        options={schemaOptions}
+        onChange={(v) => {
+          onSchema(v);
+          if (allowSchemaCreate && setCreateTargetSchema) {
+            const known = schemas.some((s) => s.name === v);
+            if (!known) setCreateTargetSchema(true);
+          }
+        }}
+        placeholder={t("dataTransfer.connectionSelect")}
+        disabled={!connId}
+        sort="natural"
+        allowCustom={!!allowSchemaCreate}
+        customLabel={(v) => `Criar novo schema "${v}"`}
+      />
+
+      {willCreateSchema && (
+        <div className="mt-2 flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-300">
+          <Check className="h-3 w-3 shrink-0" />
+          <span className="flex-1">
+            Schema <span className="font-mono">{schema}</span> não existe : será
+            criado no destino.
+          </span>
+          {setCreateTargetSchema && !createTargetSchema && (
+            <button
+              type="button"
+              onClick={() => setCreateTargetSchema(true)}
+              className="rounded border border-emerald-500/40 px-1.5 py-0.5 text-[10px] hover:bg-emerald-500/20"
+            >
+              Habilitar
+            </button>
+          )}
+        </div>
+      )}
+
+      {sourceMissingOnTarget && schema !== peerSchema && (
+        <button
+          type="button"
+          onClick={() => {
+            onSchema(peerSchema!);
+            if (setCreateTargetSchema) setCreateTargetSchema(true);
+          }}
+          className="mt-2 flex w-full items-center gap-2 rounded-md border border-dashed border-conn-accent/40 px-2 py-1.5 text-left text-[11px] text-conn-accent hover:bg-conn-accent/10"
+        >
+          <ArrowRight className="h-3 w-3 shrink-0" />
+          <span className="flex-1 truncate">
+            Criar mesmo schema no destino:{" "}
+            <span className="font-mono">{peerSchema}</span>
+          </span>
+        </button>
+      )}
 
       {connInfo && (
         <div className="mt-5 rounded-md bg-muted/30 p-3 text-[11px] text-muted-foreground">
