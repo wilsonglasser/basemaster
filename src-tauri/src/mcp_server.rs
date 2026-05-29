@@ -360,6 +360,22 @@ fn tool_definitions() -> JsonValue {
                 },
                 "required": ["connection_id", "sql"]
             }
+        },
+        {
+            "name": "run_query_to_file",
+            "description": "Execute SQL and stream the result to a file (jsonl or csv). Returns path, row/byte count, sha256 and a small in-memory sample. Use this instead of run_query when you expect a large result or need to persist the output without round-tripping it through the model.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "connection_id": { "type": "string" },
+                    "schema": { "type": "string" },
+                    "sql": { "type": "string" },
+                    "path": { "type": "string", "description": "Absolute filesystem path where the result will be written." },
+                    "format": { "type": "string", "enum": ["jsonl", "csv"], "default": "jsonl" },
+                    "sample_rows": { "type": "integer", "default": 20, "description": "Number of rows to include verbatim in the return payload." }
+                },
+                "required": ["connection_id", "sql", "path"]
+            }
         }
     ])
 }
@@ -483,6 +499,37 @@ async fn call_tool(
                 "truncated": truncated,
                 "total_rows": result.rows.len(),
             }))
+        }
+        "run_query_to_file" => {
+            let id: Uuid = parse_uuid(&args, "connection_id")?;
+            let schema = args
+                .get("schema")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let sql = parse_str(&args, "sql")?;
+            let path = parse_str(&args, "path")?;
+            let format = args
+                .get("format")
+                .and_then(|v| v.as_str())
+                .unwrap_or("jsonl")
+                .to_string();
+            let sample_rows = args
+                .get("sample_rows")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20) as usize;
+            check_sql_allowed(&sql, &load_guardrail_policy(app).await)?;
+            let driver = get_active(app, id).await?;
+            let fmt = crate::query_export::ExportFormat::parse(&format)?;
+            let result = crate::query_export::export_query(
+                driver.as_ref(),
+                schema.as_deref(),
+                &sql,
+                std::path::Path::new(&path),
+                fmt,
+                sample_rows,
+            )
+            .await?;
+            Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
         }
         other => Err(format!("unknown tool: {}", other)),
     }

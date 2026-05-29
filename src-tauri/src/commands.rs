@@ -1230,6 +1230,31 @@ pub async fn query_run(
 }
 
 #[tauri::command]
+pub async fn query_run_to_file(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    schema: Option<String>,
+    sql: String,
+    path: String,
+    format: String,
+    sample_rows: Option<usize>,
+) -> R<crate::query_export::ExportResult> {
+    let d = driver_for(&state, connection_id).await?;
+    let fmt = crate::query_export::ExportFormat::parse(&format)?;
+    let p = std::path::PathBuf::from(path);
+    let sample = sample_rows.unwrap_or(20);
+    crate::query_export::export_query(
+        d.as_ref(),
+        schema.as_deref(),
+        &sql,
+        &p,
+        fmt,
+        sample,
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn query_cancel(
     state: State<'_, AppState>,
     request_id: Uuid,

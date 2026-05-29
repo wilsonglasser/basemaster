@@ -4,6 +4,7 @@ mod data_transfer;
 mod docker_discovery;
 mod http_proxy_tunnel;
 mod mcp_server;
+mod query_export;
 mod sql_dump;
 mod sql_import;
 mod sql_translate;
@@ -282,6 +283,7 @@ pub fn run() {
             commands::delete_table_rows,
             commands::insert_table_rows,
             commands::query_run,
+            commands::query_run_to_file,
             commands::query_cancel,
             commands::ssh_host_key_respond,
             commands::ssh_known_hosts_list,
