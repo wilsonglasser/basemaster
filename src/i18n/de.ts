@@ -46,6 +46,18 @@ export const de: Dict = {
   destructive: {
     onConnection: "Auf Verbindung:",
   },
+  executor: {
+    pending: "In Warteschlange",
+    running: "Läuft…",
+    ok: "OK",
+    error: "Fehler",
+    skipped: "Abgebrochen",
+    progress: "{done} / {total}",
+    summaryAllOk: "{count} erfolgreich abgeschlossen",
+    summaryWithErrors: "{ok} ok, {failed} fehlgeschlagen",
+    cancelling: "Wird abgebrochen…",
+    cancelRemaining: "Übrige abbrechen",
+  },
   appDialog: {
     alertTitle: "Hinweis",
     confirmTitle: "Bestätigen",
@@ -136,6 +148,10 @@ export const de: Dict = {
     view: "view",
     duplicate: "Duplizieren",
     duplicatePrompt: 'Name des Duplikats von "{source}":',
+    duplicateBulkConfirm:
+      "{count} Tabellen duplizieren? Jede wird zu einer neuen `_copy`-Tabelle.",
+    copyTablesBulkConfirm:
+      "{count} Tabellen in die Zwischenablage kopieren?",
     copy: "Kopieren",
     pasteTables: "Tabellen hier einfügen",
     copyTables: "Alle Tabellen kopieren",

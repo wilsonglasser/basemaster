@@ -9,6 +9,7 @@ import { AiApprovalDialog } from "@/components/ai-approval-dialog";
 import { AppDialog } from "@/components/app-dialog";
 import { DangerousQueryDialog } from "@/components/dangerous-query-dialog";
 import { DestructiveConfirmDialog } from "@/components/destructive-confirm-dialog";
+import { ExecutorDialog } from "@/components/executor-dialog";
 import { SshHostKeyDialog } from "@/components/ssh-host-key-dialog";
 import { UpdateDialog } from "@/components/update-dialog";
 import { AiSidebar } from "@/components/layout/ai-sidebar";
@@ -313,6 +314,7 @@ function MainApp() {
       <AiApprovalDialog />
       <AppDialog />
       <DestructiveConfirmDialog />
+      <ExecutorDialog />
       <SshHostKeyDialog />
       <DangerousQueryDialog />
       <ShortcutBindings />

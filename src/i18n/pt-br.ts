@@ -48,6 +48,18 @@ export const ptBR = {
   destructive: {
     onConnection: "Na conexão:",
   },
+  executor: {
+    pending: "Na fila",
+    running: "Executando…",
+    ok: "OK",
+    error: "Erro",
+    skipped: "Cancelado",
+    progress: "{done} / {total}",
+    summaryAllOk: "{count} concluído(s) com sucesso",
+    summaryWithErrors: "{ok} ok, {failed} com erro",
+    cancelling: "Cancelando…",
+    cancelRemaining: "Cancelar restantes",
+  },
   appDialog: {
     alertTitle: "Aviso",
     confirmTitle: "Confirmar",
@@ -138,6 +150,10 @@ export const ptBR = {
     view: "view",
     duplicate: "Duplicar",
     duplicatePrompt: 'Nome da duplicata de "{source}":',
+    duplicateBulkConfirm:
+      "Duplicar {count} tabelas? Cada uma vira uma nova tabela `_copy`.",
+    copyTablesBulkConfirm:
+      "Copiar {count} tabelas para a área de transferência?",
     copy: "Copiar",
     pasteTables: "Colar tabelas aqui",
     copyTables: "Copiar todas as tabelas",

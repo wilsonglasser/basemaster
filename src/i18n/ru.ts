@@ -46,6 +46,18 @@ export const ru: Dict = {
   destructive: {
     onConnection: "В подключении:",
   },
+  executor: {
+    pending: "В очереди",
+    running: "Выполняется…",
+    ok: "OK",
+    error: "Ошибка",
+    skipped: "Отменено",
+    progress: "{done} / {total}",
+    summaryAllOk: "{count} успешно завершено",
+    summaryWithErrors: "{ok} ок, {failed} с ошибкой",
+    cancelling: "Отмена…",
+    cancelRemaining: "Отменить остальные",
+  },
   appDialog: {
     alertTitle: "Уведомление",
     confirmTitle: "Подтвердить",
@@ -136,6 +148,10 @@ export const ru: Dict = {
     view: "представление",
     duplicate: "Дублировать",
     duplicatePrompt: 'Имя дубликата "{source}":',
+    duplicateBulkConfirm:
+      "Дублировать {count} таблиц? Каждая станет новой таблицей `_copy`.",
+    copyTablesBulkConfirm:
+      "Скопировать {count} таблиц в буфер обмена?",
     copy: "Копировать",
     pasteTables: "Вставить таблицы сюда",
     copyTables: "Копировать все таблицы",

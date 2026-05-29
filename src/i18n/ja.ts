@@ -46,6 +46,18 @@ export const ja: Dict = {
   destructive: {
     onConnection: "接続:",
   },
+  executor: {
+    pending: "待機中",
+    running: "実行中…",
+    ok: "OK",
+    error: "エラー",
+    skipped: "キャンセル",
+    progress: "{done} / {total}",
+    summaryAllOk: "{count} 件が正常に完了",
+    summaryWithErrors: "{ok} 件成功, {failed} 件失敗",
+    cancelling: "キャンセル中…",
+    cancelRemaining: "残りをキャンセル",
+  },
   appDialog: {
     alertTitle: "通知",
     confirmTitle: "確認",
@@ -136,6 +148,10 @@ export const ja: Dict = {
     view: "ビュー",
     duplicate: "複製",
     duplicatePrompt: '"{source}" の複製名:',
+    duplicateBulkConfirm:
+      "{count} 個のテーブルを複製しますか？それぞれ新しい `_copy` テーブルになります。",
+    copyTablesBulkConfirm:
+      "{count} 個のテーブルをクリップボードにコピーしますか？",
     copy: "コピー",
     pasteTables: "ここにテーブルを貼り付け",
     copyTables: "すべてのテーブルをコピー",

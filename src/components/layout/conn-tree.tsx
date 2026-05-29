@@ -68,6 +68,7 @@ import {
   useSidebarMultiSelect,
 } from "@/state/sidebar-multi-select";
 import { confirmDestructive } from "@/state/destructive-confirm";
+import { runExecutor, type ExecutorJob } from "@/state/executor";
 import { useTableViewBridge } from "@/state/table-view-bridge";
 import { useTabs } from "@/state/tabs";
 
@@ -2583,25 +2584,29 @@ function TableNode({
       }
       return;
     }
-    // Bulk: auto-pick available names, no per-table prompt.
-    const failed: string[] = [];
-    for (const name of targets) {
-      try {
+    // Bulk: confirm count first — multi-select can be invisible and a
+    // bulk duplicate on the wrong set creates many `_copy` tables.
+    const ok = await appConfirm(
+      t("tree.duplicateBulkConfirm", { count: String(targets.length) }),
+    );
+    if (!ok) return;
+    // Auto-pick available names, no per-table prompt. Run via the
+    // executor for per-table progress + ok/error feedback.
+    const jobs: ExecutorJob[] = targets.map((name) => ({
+      id: name,
+      label: name,
+      run: async () => {
         const avail = await ipc.db.findAvailableTableName(
           conn.id,
           table.schema,
           name,
         );
         await ipc.db.duplicateTable(conn.id, table.schema, name, avail, true);
-      } catch (e) {
-        failed.push(`${name}: ${e}`);
-      }
-    }
+      },
+    }));
+    await runExecutor(t("tree.duplicate"), jobs);
     invalidateSchema(conn.id, table.schema);
     ensureSnapshot(conn.id, table.schema).catch(() => {});
-    if (failed.length > 0) {
-      void appAlert(t("tree.bulkOpFailures", { list: failed.join("\n") }));
-    }
   };
 
   const openTable = () => {
@@ -2688,11 +2693,20 @@ function TableNode({
   };
 
   const copyName = async () => {
+    const targets = bulkTargets();
+    // Confirm when bulk to avoid pasting an unexpected set after a stale
+    // multi-select. Single click stays silent.
+    if (targets.length > 1) {
+      const ok = await appConfirm(
+        t("tree.copyTablesBulkConfirm", { count: String(targets.length) }),
+      );
+      if (!ok) return;
+    }
     try {
       await writeTableClipboard({
         connectionId: conn.id,
         schema: table.schema,
-        tables: bulkTargets(),
+        tables: targets,
       });
     } catch (e) {
       console.error("copy:", e);
@@ -2742,6 +2756,31 @@ function TableNode({
       checkboxLabel: t("tree.destructiveAck"),
     });
     if (!ok) return;
+    // Bulk (>1 tables): run via the executor so each DROP shows live
+    // progress + per-table ok/error instead of one opaque blocking call.
+    if (many && !isView) {
+      const jobs: ExecutorJob[] = targets.map((name) => ({
+        id: name,
+        label: name,
+        run: async () => {
+          const [res] = await ipc.db.dropTables(conn.id, table.schema, [name]);
+          if (res?.error) throw new Error(res.error);
+        },
+      }));
+      const { results } = await runExecutor(
+        t("tree.dropTableTitleMany", { count: targets.length }),
+        jobs,
+      );
+      const droppedOk = results
+        .filter((r) => r.error === null)
+        .map((r) => r.id);
+      closeTabsForTables(new Set(droppedOk));
+      if (droppedOk.length > 0) {
+        removeTablesFromCache(conn.id, table.schema, droppedOk);
+      }
+      clearMulti();
+      return;
+    }
     try {
       // View → DROP VIEW (single table + isView case).
       const results = isView
@@ -2798,6 +2837,25 @@ function TableNode({
       checkboxLabel: t("tree.destructiveAck"),
     });
     if (!ok) return;
+    if (many) {
+      const jobs: ExecutorJob[] = targets.map((name) => ({
+        id: name,
+        label: name,
+        run: async () => {
+          const [res] = await ipc.db.truncateTables(conn.id, table.schema, [
+            name,
+          ]);
+          if (res?.error) throw new Error(res.error);
+        },
+      }));
+      await runExecutor(
+        t("tree.truncateTableTitleMany", { count: targets.length }),
+        jobs,
+      );
+      invalidateSchema(conn.id, table.schema);
+      ensureSnapshot(conn.id, table.schema).catch(() => {});
+      return;
+    }
     try {
       const results = await ipc.db.truncateTables(
         conn.id,
@@ -2828,6 +2886,23 @@ function TableNode({
       checkboxLabel: t("tree.destructiveAck"),
     });
     if (!ok) return;
+    if (many) {
+      const jobs: ExecutorJob[] = targets.map((name) => ({
+        id: name,
+        label: name,
+        run: async () => {
+          const [res] = await ipc.db.emptyTables(conn.id, table.schema, [name]);
+          if (res?.error) throw new Error(res.error);
+        },
+      }));
+      await runExecutor(
+        t("tree.emptyTableTitleMany", { count: targets.length }),
+        jobs,
+      );
+      invalidateSchema(conn.id, table.schema);
+      ensureSnapshot(conn.id, table.schema).catch(() => {});
+      return;
+    }
     try {
       const results = await ipc.db.emptyTables(conn.id, table.schema, targets);
       invalidateSchema(conn.id, table.schema);

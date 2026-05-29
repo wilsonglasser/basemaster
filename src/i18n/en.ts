@@ -1,6 +1,18 @@
 import type { Dict } from "./pt-br";
 
 export const en: Dict = {
+  executor: {
+    pending: "Queued",
+    running: "Running…",
+    ok: "OK",
+    error: "Error",
+    skipped: "Cancelled",
+    progress: "{done} / {total}",
+    summaryAllOk: "{count} completed successfully",
+    summaryWithErrors: "{ok} ok, {failed} failed",
+    cancelling: "Cancelling…",
+    cancelRemaining: "Cancel remaining",
+  },
   common: {
     apply: "Apply",
     cancel: "Cancel",
@@ -136,6 +148,10 @@ export const en: Dict = {
     view: "view",
     duplicate: "Duplicate",
     duplicatePrompt: 'Name of duplicate of "{source}":',
+    duplicateBulkConfirm:
+      "Duplicate {count} tables? Each one becomes a new `_copy` table.",
+    copyTablesBulkConfirm:
+      "Copy {count} tables to the clipboard?",
     copy: "Copy",
     pasteTables: "Paste tables here",
     copyTables: "Copy all tables",

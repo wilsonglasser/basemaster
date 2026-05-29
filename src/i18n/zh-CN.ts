@@ -46,6 +46,18 @@ export const zhCN: Dict = {
   destructive: {
     onConnection: "连接:",
   },
+  executor: {
+    pending: "排队中",
+    running: "执行中…",
+    ok: "OK",
+    error: "错误",
+    skipped: "已取消",
+    progress: "{done} / {total}",
+    summaryAllOk: "{count} 项成功完成",
+    summaryWithErrors: "{ok} 成功, {failed} 失败",
+    cancelling: "正在取消…",
+    cancelRemaining: "取消剩余",
+  },
   appDialog: {
     alertTitle: "提示",
     confirmTitle: "确认",
@@ -136,6 +148,10 @@ export const zhCN: Dict = {
     view: "视图",
     duplicate: "复制",
     duplicatePrompt: '"{source}" 副本的名称：',
+    duplicateBulkConfirm:
+      "复制 {count} 个表？每个表会生成新的 `_copy` 表。",
+    copyTablesBulkConfirm:
+      "将 {count} 个表复制到剪贴板？",
     copy: "复制",
     pasteTables: "粘贴表到此",
     copyTables: "复制所有表",
