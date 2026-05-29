@@ -70,3 +70,6 @@ tsconfig.tsbuildinfo
 # Vite config transpiled by tsc -b composite (Vite reads the .ts directly).
 vite.config.js
 
+# Local code-index tool artifact (oxyris) — not part of the project.
+.oxyris/
+
