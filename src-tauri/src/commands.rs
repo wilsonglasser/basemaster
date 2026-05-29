@@ -566,7 +566,29 @@ pub async fn duplicate_table(
     let create_sql = format!("CREATE TABLE {} LIKE {}", tgt, src);
     d.execute(Some(&schema), &create_sql).await.map_err(err)?;
     if copy_data {
-        let insert_sql = format!("INSERT INTO {} SELECT * FROM {}", tgt, src);
+        // Exclude GENERATED columns: MySQL rejects INSERT that supplies
+        // a value for them ("The value specified for generated column ...").
+        let generated: std::collections::HashSet<String> = d
+            .list_generated_columns(&schema, &source)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        // Always build an explicit column list (never `SELECT *`): generated
+        // columns must be excluded from both sides or the engine rejects the
+        // INSERT, and an explicit list also stays correct if column order
+        // differs between the two tables.
+        let cols = d.describe_table(&schema, &source).await.map_err(err)?;
+        let col_list = cols
+            .iter()
+            .filter(|c| !generated.contains(&c.name))
+            .map(|c| d.quote_ident(&c.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let insert_sql = format!(
+            "INSERT INTO {} ({}) SELECT {} FROM {}",
+            tgt, col_list, col_list, src
+        );
         d.execute(Some(&schema), &insert_sql).await.map_err(err)?;
     }
     Ok(())
