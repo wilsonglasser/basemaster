@@ -11,6 +11,22 @@ type Handler = (e: KeyboardEvent) => void;
  *  global behavior when mounted. */
 const handlers: Record<string, Handler[]> = {};
 
+/** Last pane the user pointed at. The grid canvas (Glide) frequently does
+ *  not hold DOM focus, so `document.activeElement` can't tell us whether the
+ *  user is working in the grid or the sidebar. We track pointerdown instead. */
+let lastPane: "main" | "sidebar" | null = null;
+
+/** True when the user is currently working in the main panel (grid, editor,
+ *  table view) rather than the sidebar. Used to gate sidebar-scoped shortcuts
+ *  (Delete, F2). Falls back to activeElement when no pointer interaction has
+ *  happened yet. */
+export function activePaneIsMain(): boolean {
+  if (lastPane === "main") return true;
+  if (lastPane === "sidebar") return false;
+  const active = document.activeElement as HTMLElement | null;
+  return !!(active && typeof active.closest === "function" && active.closest("main"));
+}
+
 function push(actionId: string, h: Handler) {
   (handlers[actionId] ??= []).push(h);
 }
@@ -84,6 +100,10 @@ export function installGlobalShortcuts() {
       // each editor has its own keymap.
       if (action.scope !== "global") continue;
       if (editable && !action.allowInInputs) continue;
+      // Sidebar-scoped actions (Delete, F2) must NOT swallow the key while the
+      // user is working in the grid : skip without preventDefault so the event
+      // reaches Glide (e.g. Delete = delete grid row / set NULL).
+      if (action.sidebarOnly && activePaneIsMain()) continue;
 
       const arr = handlers[id];
       if (!arr || arr.length === 0) continue;
@@ -94,6 +114,17 @@ export function installGlobalShortcuts() {
       return;
     }
   };
+  const onPointer = (e: PointerEvent) => {
+    const tgt = e.target as HTMLElement | null;
+    if (!tgt || typeof tgt.closest !== "function") return;
+    if (tgt.closest("main")) lastPane = "main";
+    else if (tgt.closest("aside")) lastPane = "sidebar";
+  };
+
   document.addEventListener("keydown", onKey, true);
-  return () => document.removeEventListener("keydown", onKey, true);
+  document.addEventListener("pointerdown", onPointer, true);
+  return () => {
+    document.removeEventListener("keydown", onKey, true);
+    document.removeEventListener("pointerdown", onPointer, true);
+  };
 }

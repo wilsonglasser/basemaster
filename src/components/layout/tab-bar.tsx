@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowRightLeft,
+  CalendarClock,
   Container,
   Database,
   ExternalLink,
@@ -611,6 +612,8 @@ function iconFor(kind: TabKind) {
       return FileText;
     case "query-history":
       return History;
+    case "scheduled-backups":
+      return CalendarClock;
     case "processes":
       return Database;
     case "data-import":

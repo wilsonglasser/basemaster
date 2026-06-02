@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRightLeft,
+  CalendarClock,
   ChevronDown,
   ChevronRight,
   ClipboardPaste,
@@ -39,6 +40,7 @@ import {
 } from "@/lib/maintenance-sql";
 import { startMultiTableExport, startTableExport } from "@/lib/export-table";
 import { ipc } from "@/lib/ipc";
+import { fetchEditViewSql } from "@/lib/view-ddl";
 import {
   readTableClipboard,
   writeTableClipboard,
@@ -961,6 +963,19 @@ LIMIT 50;`;
     });
   };
 
+  const openScheduledBackups = () => {
+    openTab(
+      (tab) =>
+        tab.kind.kind === "scheduled-backups" &&
+        tab.kind.connectionId === conn.id,
+      () => ({
+        label: `${t("scheduledBackups.title")} · ${conn.name}`,
+        kind: { kind: "scheduled-backups", connectionId: conn.id },
+        accentColor: conn.color,
+      }),
+    );
+  };
+
   const createSchemaFolderForConn = useSchemaFolders((s) => s.create);
   const createSchemaFolder = async () => {
     const name = await appPrompt(t("tree.schemaFolderPrompt"));
@@ -991,6 +1006,7 @@ LIMIT 50;`;
           : []),
         { icon: <Cog className="h-3.5 w-3.5" />, label: t("tree.processes"), onClick: openProcesses },
         { icon: <Plug className="h-3.5 w-3.5" />, label: t("tree.users"), onClick: openUsers },
+        { icon: <CalendarClock className="h-3.5 w-3.5" />, label: t("scheduledBackups.title"), onClick: openScheduledBackups },
         { icon: <FolderIcon className="h-3.5 w-3.5" />, label: t("tree.newSchemaFolder"), onClick: createSchemaFolder },
         { icon: <RefreshCw className="h-3.5 w-3.5" />, label: t("common.refresh"), onClick: refresh },
         { icon: <Unplug className="h-3.5 w-3.5" />, label: t("tree.disconnect"), onClick: disconnect, variant: "warning" },
@@ -2663,6 +2679,29 @@ function TableNode({
     }
   };
 
+  const editView = async () => {
+    try {
+      const sql = await fetchEditViewSql(
+        conn.id,
+        conn.driver,
+        table.schema,
+        table.name,
+      );
+      newTab({
+        label: t("tree.viewEditLabel", { name: table.name }),
+        kind: {
+          kind: "query",
+          connectionId: conn.id,
+          schema: table.schema,
+          initialSql: sql,
+        },
+        accentColor: conn.color,
+      });
+    } catch (e) {
+      void appAlert(t("tree.editViewFailed", { error: String(e) }));
+    }
+  };
+
   const openSelectAll = () => {
     const targets = bulkTargets();
     const isPg = conn.driver === "postgres";
@@ -3006,7 +3045,66 @@ function TableNode({
       : []),
   ];
 
-  const menu = useContextMenu([
+  // Views get a tailored menu: structure-edit, duplicate, rename, maintenance,
+  // import and truncate/empty don't apply. Edit opens the view's DDL.
+  const viewMenuItems: ContextEntry[] = [
+    {
+      icon: <TableIcon className="h-3.5 w-3.5" />,
+      label: t("tree.openView"),
+      onClick: openTable,
+    },
+    {
+      icon: <Pencil className="h-3.5 w-3.5" />,
+      label: t("tree.editView"),
+      onClick: () => void editView(),
+    },
+    {
+      icon: <FileCode2 className="h-3.5 w-3.5" />,
+      label: t("tree.selectAll", { name: table.name }),
+      onClick: openSelectAll,
+    },
+    {
+      icon: <FileCode2 className="h-3.5 w-3.5" />,
+      label: t("tree.emptyQuery"),
+      onClick: openEmptyQuery,
+    },
+    { separator: true },
+    {
+      icon: <Copy className="h-3.5 w-3.5" />,
+      label: t("tree.copy"),
+      shortcut: "Ctrl+C",
+      onClick: copyName,
+    },
+    { separator: true },
+    {
+      icon: <Download className="h-3.5 w-3.5" />,
+      label: t("tree.export"),
+      onClick: () => void startTableExport(conn.id, table.schema, table.name),
+    },
+    {
+      icon: <FileText className="h-3.5 w-3.5" />,
+      label: t("tree.sqlDump"),
+      onClick: () =>
+        newTab({
+          label: `Dump · ${table.name}`,
+          kind: {
+            kind: "sql-dump",
+            sourceConnectionId: conn.id,
+            scopes: [{ schema: table.schema, tables: [table.name] }],
+          },
+          accentColor: conn.color,
+        }),
+    },
+    { separator: true },
+    {
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      label: t("tree.dropViewMenu"),
+      onClick: dropSelected,
+      variant: "destructive",
+    },
+  ];
+
+  const menu = useContextMenu(isView ? viewMenuItems : [
     ...((): ContextEntry[] => {
       const targets = bulkTargets();
       const many = targets.length > 1;

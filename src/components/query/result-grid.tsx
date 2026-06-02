@@ -269,15 +269,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
         });
       },
       deleteSelected() {
-        // Priority: whole-row selection → onDeleteRows.
-        // Otherwise, uses the current cursor row.
-        const rowSel = selection.rows.toArray();
-        if (rowSel.length > 0) {
-          onDeleteRows?.(rowSel);
-          return;
-        }
+        // Collect every row touched by the selection : whole-row markers AND
+        // any cell range / range-stack (Ctrl+A lands in `current.range`, not
+        // `rows`). Falls back to the cursor row if nothing else.
+        const rowSet = new Set<number>(selection.rows.toArray());
         if (selection.current) {
-          onDeleteRows?.([selection.current.cell[1]]);
+          const r = selection.current.range;
+          for (let y = r.y; y < r.y + r.height; y++) rowSet.add(y);
+          for (const st of selection.current.rangeStack) {
+            for (let y = st.y; y < st.y + st.height; y++) rowSet.add(y);
+          }
+        }
+        if (rowSet.size > 0) {
+          onDeleteRows?.(Array.from(rowSet));
         }
       },
       getSelectedCells() {
@@ -493,6 +497,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, ResultGridProps>(
     return (
       <div
         className="h-full w-full"
+        // Glide doesn't always grab DOM focus on click (row markers, empty
+        // area), which left keyboard shortcuts (Ctrl+A) going nowhere. Focus
+        // the editor on any pointer interaction so the grid owns the keyboard.
+        onPointerDownCapture={() => editorRef.current?.focus()}
         onContextMenuCapture={(e) => {
           ctxPosRef.current = { x: e.clientX, y: e.clientY };
         }}

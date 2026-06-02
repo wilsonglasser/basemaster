@@ -24,6 +24,7 @@ import type {
   DumpDone,
   DumpFormat,
   DumpOptions,
+  DumpPlan,
   DumpTableDone,
   DumpTableNote,
   DumpTableProgress,
@@ -63,11 +64,16 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
   const [concurrency, setConcurrency] = useState(4);
   const [intraWorkers, setIntraWorkers] = useState(1);
   const [intraMinRows, setIntraMinRows] = useState(100000);
+  const [deferSecondaryIndexes, setDeferSecondaryIndexes] = useState(true);
   const [path, setPath] = useState<string | null>(null);
 
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState<DumpDone | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  // Authoritative table list from the backend's `sql_dump:plan` event.
+  const [planTables, setPlanTables] = useState<
+    Array<{ schema: string; table: string }>
+  >([]);
   const [perTable, setPerTable] = useState<Map<string, DumpTableProgress>>(
     new Map(),
   );
@@ -98,6 +104,9 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
   // Listeners de eventos.
   useEffect(() => {
     if (!running) return;
+    const offPlan = listen<DumpPlan>("sql_dump:plan", (e) => {
+      setPlanTables(e.payload.tables);
+    });
     const offProgress = listen<DumpTableProgress>(
       "sql_dump:progress",
       (e) => {
@@ -141,6 +150,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
       setRunning(false);
     });
     return () => {
+      void offPlan.then((fn) => fn());
       void offProgress.then((fn) => fn());
       void offTableDone.then((fn) => fn());
       void offWorker.then((fn) => fn());
@@ -183,8 +193,9 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
   const handleStart = async () => {
     let target = path;
     if (!target) {
-      const ext = format === "zip" ? "zip" : "sql";
-      const label = format === "zip" ? "ZIP" : "SQL";
+      const ext =
+        format === "zip" ? "zip" : compression === "zstd" ? "sql.zst" : "sql";
+      const label = format === "zip" ? "ZIP" : compression === "zstd" ? "SQL.ZST" : "SQL";
       const p = await save({
         title: t("sqlDump.saveTitle"),
         defaultPath: `${defaultName}.${ext}`,
@@ -199,7 +210,7 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
       scopes,
       path: target,
       format,
-      compression: format === "zip" ? compression : undefined,
+      compression,
       content,
       drop_before_create: dropBeforeCreate,
       extended_inserts: extendedInserts,
@@ -209,9 +220,11 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
       concurrency,
       intra_table_workers: intraWorkers,
       intra_table_min_rows: intraMinRows,
+      defer_secondary_indexes: deferSecondaryIndexes,
     };
     setStartError(null);
     setDone(null);
+    setPlanTables([]);
     setPerTable(new Map());
     setDoneTable(new Map());
     setWorkersByTable(new Map());
@@ -243,29 +256,30 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
   const allTables = useMemo(() => {
     const seen = new Set<string>();
     const list: Array<{ schema: string; table: string }> = [];
-    for (const s of scopes) {
-      for (const t of s.tables ?? []) {
-        const k = `${s.schema}.${t}`;
-        if (!seen.has(k)) {
-          seen.add(k);
-          list.push({ schema: s.schema, table: t });
-        }
-      }
-    }
-    const addFromMap = (p: { schema: string; table: string }) => {
+    const add = (p: { schema: string; table: string }) => {
       const k = `${p.schema}.${p.table}`;
       if (!seen.has(k)) {
         seen.add(k);
         list.push({ schema: p.schema, table: p.table });
       }
     };
-    perTable.forEach(addFromMap);
-    doneTable.forEach(addFromMap);
+    // Backend plan is authoritative once it arrives. Before that, fall back to
+    // pre-known scope tables and any tables seen via events.
+    for (const p of planTables) add(p);
+    for (const s of scopes) {
+      for (const t of s.tables ?? []) add({ schema: s.schema, table: t });
+    }
+    perTable.forEach(add);
+    doneTable.forEach(add);
     return list;
-  }, [scopes, perTable, doneTable]);
+  }, [planTables, scopes, perTable, doneTable]);
 
   const totalTables =
-    allTables.length > 0 ? allTables.length : doneTable.size || 1;
+    planTables.length > 0
+      ? planTables.length
+      : allTables.length > 0
+        ? allTables.length
+        : doneTable.size || 1;
   const tablesDone = doneTable.size;
   const totalRows = Array.from(perTable.values()).reduce(
     (a, p) => a + p.done,
@@ -347,7 +361,10 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
                 icon={<FileText className="h-4 w-4" />}
                 label={t("sqlDump.formatSqlLabel")}
                 hint={t("sqlDump.formatSqlHint")}
-                onClick={() => setFormat("sql")}
+                onClick={() => {
+                  setFormat("sql");
+                  if (compression === "deflate") setCompression("stored");
+                }}
               />
               <FormatCard
                 active={format === "zip"}
@@ -357,15 +374,17 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
                 onClick={() => setFormat("zip")}
               />
             </div>
-            {format === "zip" && (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <FormatCard
-                  compact
-                  active={compression === "stored"}
-                  label={t("sqlDump.compressionStoredLabel")}
-                  hint={t("sqlDump.compressionStoredHint")}
-                  onClick={() => setCompression("stored")}
-                />
+            <div
+              className={`mt-3 grid gap-2 ${format === "zip" ? "grid-cols-3" : "grid-cols-2"}`}
+            >
+              <FormatCard
+                compact
+                active={compression === "stored"}
+                label={t("sqlDump.compressionStoredLabel")}
+                hint={t("sqlDump.compressionStoredHint")}
+                onClick={() => setCompression("stored")}
+              />
+              {format === "zip" && (
                 <FormatCard
                   compact
                   active={compression === "deflate"}
@@ -373,8 +392,15 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
                   hint={t("sqlDump.compressionDeflateHint")}
                   onClick={() => setCompression("deflate")}
                 />
-              </div>
-            )}
+              )}
+              <FormatCard
+                compact
+                active={compression === "zstd"}
+                label={t("sqlDump.compressionZstdLabel")}
+                hint={t("sqlDump.compressionZstdHint")}
+                onClick={() => setCompression("zstd")}
+              />
+            </div>
           </Card>
 
           {/* Content */}
@@ -407,6 +433,12 @@ export function SqlDumpView({ tabId, sourceConnectionId, scopes }: Props) {
               label={t("sqlDump.optDrop")}
               value={dropBeforeCreate}
               onChange={setDropBeforeCreate}
+              disabled={content === "data"}
+            />
+            <Toggle
+              label={t("sqlDump.optDeferIndexes")}
+              value={deferSecondaryIndexes}
+              onChange={setDeferSecondaryIndexes}
               disabled={content === "data"}
             />
             <Toggle

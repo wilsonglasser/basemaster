@@ -237,6 +237,7 @@ enum Marker {
     Dump,
     Table,
     Data,
+    Indexes,
     Footer,
 }
 
@@ -248,6 +249,8 @@ fn classify_marker(line: &str) -> Option<Marker> {
         Some(Marker::Table)
     } else if rest.starts_with("D ") || rest.starts_with("D\t") || rest.trim_end() == "D" {
         Some(Marker::Data)
+    } else if rest.trim_end() == "I" || rest.starts_with("I ") {
+        Some(Marker::Indexes)
     } else if rest.trim_end() == "F" || rest.starts_with("F ") {
         Some(Marker::Footer)
     } else {
@@ -509,6 +512,9 @@ fn parse_source_blocking(
                 Marker::Dump
             } else if name.ends_with("zz_footer.sql") {
                 Marker::Footer
+            } else if name.ends_with("zz_indexes.sql") {
+                // Deferred secondary indexes — run after the data barrier.
+                Marker::Indexes
             } else {
                 // 00_schema.sql and table entries start in the DDL region.
                 Marker::Table
@@ -580,6 +586,7 @@ enum Region {
     Header,
     Ddl,
     Data,
+    Indexes,
     Footer,
 }
 
@@ -589,6 +596,7 @@ impl Region {
             Region::Header => "header",
             Region::Ddl => "structure",
             Region::Data => "data",
+            Region::Indexes => "indexes",
             Region::Footer => "footer",
         }
     }
@@ -743,7 +751,10 @@ async fn run_streaming_import(
     }
     drop(data_rx); // workers hold their own clones.
 
-    // Coordinator.
+    // Coordinator. `data_tx`/`workers` are Options so the post-data barrier can
+    // drop the sender and join the pool mid-stream (see below).
+    let mut data_tx = Some(data_tx);
+    let mut workers = Some(workers);
     let mut region = Region::Header;
     while let Some(item) = parse_rx.recv().await {
         if abort.load(Ordering::Relaxed) || !control.check().await {
@@ -751,18 +762,38 @@ async fn run_streaming_import(
         }
         match item {
             ParseItem::Marker(m) => {
-                region = match m {
+                let new_region = match m {
                     Marker::Dump => Region::Header,
                     Marker::Table => Region::Ddl,
                     Marker::Data => Region::Data,
+                    Marker::Indexes => Region::Indexes,
                     Marker::Footer => Region::Footer,
                 };
+                // Barrier: the first marker that leaves the data region means
+                // every INSERT has been forwarded. Drain the worker pool before
+                // running post-data DDL (deferred `@BM:I` indexes, footer) so
+                // indexes build over complete tables, not a partial load.
+                if parallel_data
+                    && region == Region::Data
+                    && new_region != Region::Data
+                {
+                    if let Some(tx) = data_tx.take() {
+                        drop(tx);
+                    }
+                    if let Some(ws) = workers.take() {
+                        for w in ws {
+                            let _ = w.await;
+                        }
+                    }
+                }
+                region = new_region;
             }
             ParseItem::Stmt(s) => {
                 if parallel_data && region == Region::Data {
                     // Forward to workers (bounded send = backpressure).
-                    if data_tx.send(s).await.is_err() {
-                        break;
+                    match &data_tx {
+                        Some(tx) if tx.send(s).await.is_ok() => {}
+                        _ => break,
                     }
                 } else {
                     match exec_one(&*target, &ctx, &s).await {
@@ -796,9 +827,13 @@ async fn run_streaming_import(
     // parser's next `blocking_send` (which then sees the closed channel and
     // returns) instead of letting it wait forever on a full queue.
     drop(parse_rx);
-    drop(data_tx); // no more data : workers drain and exit.
-    for w in workers {
-        let _ = w.await;
+    if let Some(tx) = data_tx.take() {
+        drop(tx); // no more data : workers drain and exit.
+    }
+    if let Some(ws) = workers.take() {
+        for w in ws {
+            let _ = w.await;
+        }
     }
     let parse_result = parser
         .await
@@ -837,6 +872,13 @@ fn should_skip_for_target(stmt: &str, target: Dialect) -> bool {
                 || upper.starts_with("REPAIR TABLE")
                 || upper.starts_with("FLUSH ")
                 || upper.starts_with("USE ") // USE doesn't exist on PG (search_path already set)
+                // MySQL deferred-index ALTER (`ADD KEY`/`INDEX`/`FULLTEXT`/
+                // `SPATIAL`) has no PG analog — skip rather than error out.
+                || (upper.starts_with("ALTER TABLE")
+                    && (upper.contains(" ADD KEY")
+                        || upper.contains(" ADD INDEX")
+                        || upper.contains(" ADD FULLTEXT")
+                        || upper.contains(" ADD SPATIAL")))
                 || (upper.starts_with("SET ")
                     && (upper.contains("FOREIGN_KEY_CHECKS")
                         || upper.contains("UNIQUE_CHECKS")
@@ -942,6 +984,7 @@ mod tests {
             Some(Marker::Table)
         ));
         assert!(matches!(classify_marker("-- @BM:D idx=0"), Some(Marker::Data)));
+        assert!(matches!(classify_marker("-- @BM:I"), Some(Marker::Indexes)));
         assert!(matches!(classify_marker("-- @BM:F"), Some(Marker::Footer)));
         assert!(classify_marker("-- regular comment").is_none());
         assert!(classify_marker("INSERT INTO t VALUES (1);").is_none());

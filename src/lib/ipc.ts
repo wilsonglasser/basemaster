@@ -8,6 +8,8 @@ import type {
   ConnectionFolderDraft,
   ConnectionProfile,
   DockerCandidate,
+  DataExportDone,
+  DataExportOptions,
   DumpDone,
   ExportPayload,
   DumpOptions,
@@ -29,6 +31,8 @@ import type {
   QueryRunBatch,
   SavedQuery,
   SavedQueryDraft,
+  ScheduledBackup,
+  ScheduledBackupDraft,
   SchemaFolder,
   SchemaFolderAssignment,
   SchemaInfo,
@@ -102,6 +106,7 @@ export const ipc = {
       sshKeyPassphrase: string | null = null,
       sshJumpsSecrets: string | null = null,
       httpProxyPassword: string | null = null,
+      id: Uuid | null = null,
     ) =>
       invoke<void>("connection_test", {
         draft,
@@ -110,6 +115,7 @@ export const ipc = {
         sshKeyPassphrase,
         sshJumpsSecrets,
         httpProxyPassword,
+        id,
       }),
 
     open: (id: Uuid) => invoke<void>("connection_open", { id }),
@@ -315,6 +321,14 @@ export const ipc = {
       invoke<DumpDone>("sql_dump_start", { opts }),
   },
 
+  dataExport: {
+    /** Streams a tabular export (CSV/JSON/XLSX) entirely in the backend.
+     *  Resolves when the whole export finishes; progress arrives via
+     *  `data_export:*` events. */
+    start: (opts: DataExportOptions) =>
+      invoke<DataExportDone>("data_export_start", { opts }),
+  },
+
   sqlImport: {
     start: (opts: ImportOptions) =>
       invoke<ImportDone>("sql_import_start", { opts }),
@@ -415,6 +429,32 @@ export const ipc = {
     update: (id: Uuid, draft: SavedQueryDraft) =>
       invoke<SavedQuery>("saved_queries_update", { id, draft }),
     delete: (id: Uuid) => invoke<void>("saved_queries_delete", { id }),
+  },
+
+  scheduledBackups: {
+    list: () => invoke<ScheduledBackup[]>("scheduled_backups_list", {}),
+    listByConnection: (connectionId: Uuid) =>
+      invoke<ScheduledBackup[]>("scheduled_backups_list_by_connection", {
+        connectionId,
+      }),
+    create: (connectionId: Uuid, draft: ScheduledBackupDraft) =>
+      invoke<ScheduledBackup>("scheduled_backups_create", {
+        connectionId,
+        draft,
+      }),
+    update: (id: Uuid, draft: ScheduledBackupDraft) =>
+      invoke<ScheduledBackup>("scheduled_backups_update", { id, draft }),
+    setEnabled: (id: Uuid, enabled: boolean) =>
+      invoke<void>("scheduled_backups_set_enabled", { id, enabled }),
+    delete: (id: Uuid) => invoke<void>("scheduled_backups_delete", { id }),
+    /** Whether the OS scheduler currently has a task for this schedule. */
+    osStatus: (id: Uuid) =>
+      invoke<boolean>("scheduled_backups_os_status", { id }),
+    /** Force (re)register the OS task; rejects with the OS error on failure. */
+    registerOs: (id: Uuid) =>
+      invoke<void>("scheduled_backups_register_os", { id }),
+    /** Run the schedule now (dump + retention + record); returns the file path. */
+    runNow: (id: Uuid) => invoke<string>("scheduled_backups_run_now", { id }),
   },
 
   docker: {

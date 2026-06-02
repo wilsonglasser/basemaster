@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import { useShortcut } from "@/lib/shortcuts/use-shortcuts";
+import { activePaneIsMain, useShortcut } from "@/lib/shortcuts/use-shortcuts";
 import { useAiAgent } from "@/state/ai-agent";
 import { appAlert, appConfirm, appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
@@ -13,22 +13,6 @@ import { useSidebarSelection } from "@/state/sidebar-selection";
 import { useTableViewBridge } from "@/state/table-view-bridge";
 import { useTabs } from "@/state/tabs";
 import { useUiZoom } from "@/state/ui-zoom";
-
-/** True when the keyboard event originated from (or focus is currently in)
- *  the main panel — i.e. NOT the sidebar. Used to gate sidebar-scoped
- *  shortcuts (Delete, F2) so they don't fire while the user is interacting
- *  with the grid, query editor, etc. */
-function focusInMainPanel(e: KeyboardEvent): boolean {
-  const tgt = e.target as HTMLElement | null;
-  if (tgt && typeof tgt.closest === "function" && tgt.closest("main")) {
-    return true;
-  }
-  const active = document.activeElement as HTMLElement | null;
-  if (active && typeof active.closest === "function" && active.closest("main")) {
-    return true;
-  }
-  return false;
-}
 
 /** Registers global handlers for the shortcuts. Nothing rendered : hooks only. */
 export function ShortcutBindings() {
@@ -147,8 +131,8 @@ export function ShortcutBindings() {
   // --- F2 : rename the current selection (sidebar) ---
   useShortcut(
     "rename.selected",
-    useCallback(async (e: KeyboardEvent) => {
-      if (focusInMainPanel(e)) return;
+    useCallback(async () => {
+      if (activePaneIsMain()) return;
       const sel = useSidebarSelection.getState().selected;
       if (!sel) return;
       const t = useI18n.getState().t;
@@ -227,8 +211,8 @@ export function ShortcutBindings() {
   // --- Delete : remove the sidebar-selected item ---
   useShortcut(
     "delete.selected",
-    useCallback(async (e: KeyboardEvent) => {
-      if (focusInMainPanel(e)) return;
+    useCallback(async () => {
+      if (activePaneIsMain()) return;
       const sel = useSidebarSelection.getState().selected;
       if (!sel) return;
       const t = useI18n.getState().t;

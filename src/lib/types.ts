@@ -21,6 +21,52 @@ export interface SavedQueryDraft {
   schema?: string | null;
 }
 
+export interface ScheduledBackup {
+  id: Uuid;
+  connection_id: Uuid;
+  name: string;
+  /** "interval" (expr = seconds) | "daily" (expr = "HH:MM") | "cron" */
+  schedule_kind: string;
+  schedule_expr: string;
+  dest_dir: string;
+  /** "bmbak" | "sql" | "zip" */
+  format: string;
+  /** "stored" | "deflate" | "zstd" */
+  compression: string;
+  compression_level: number;
+  /** "structure" | "data" | "both" */
+  content: string;
+  /** JSON: Array<{ schema: string; tables: string[] }> */
+  scopes_json: string;
+  retention_keep_n: number | null;
+  retention_days: number | null;
+  enabled: boolean;
+  /** Headless runs auto-accept an unknown SSH host key (TOFU) when true. */
+  accept_ssh_hosts: boolean;
+  last_run_at: number | null;
+  last_status: string | null;
+  next_run_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ScheduledBackupDraft {
+  name: string;
+  schedule_kind: string;
+  schedule_expr: string;
+  dest_dir: string;
+  format: string;
+  compression?: string;
+  compression_level?: number;
+  content?: string;
+  scopes_json?: string;
+  retention_keep_n?: number | null;
+  retention_days?: number | null;
+  enabled?: boolean;
+  accept_ssh_hosts?: boolean;
+  next_run_at?: number | null;
+}
+
 export interface QueryHistoryEntry {
   id: Uuid;
   connection_id: Uuid;
@@ -351,6 +397,7 @@ export interface TransferOptions {
   copy_triggers?: boolean;
   intra_table_workers?: number;
   intra_table_min_rows?: number;
+  defer_secondary_indexes?: boolean;
 }
 
 export interface TableProgress {
@@ -375,7 +422,7 @@ export interface TableNote {
 }
 
 export type DumpFormat = "sql" | "zip";
-export type DumpCompression = "stored" | "deflate";
+export type DumpCompression = "stored" | "deflate" | "zstd";
 export type DumpContent = "structure" | "data" | "both";
 
 export interface DumpScope {
@@ -389,6 +436,8 @@ export interface DumpOptions {
   path: string;
   format: DumpFormat;
   compression?: DumpCompression;
+  /** zstd level (1-19) when compression is "zstd". Default 5. */
+  compression_level?: number;
   content?: DumpContent;
   drop_before_create?: boolean;
   extended_inserts?: boolean;
@@ -400,6 +449,11 @@ export interface DumpOptions {
   concurrency?: number;
   intra_table_workers?: number;
   intra_table_min_rows?: number;
+  defer_secondary_indexes?: boolean;
+}
+
+export interface DumpPlan {
+  tables: Array<{ schema: string; table: string }>;
 }
 
 export interface DumpTableProgress {
@@ -438,6 +492,56 @@ export interface DumpTableDone {
 }
 
 export interface DumpDone {
+  total_rows: number;
+  elapsed_ms: number;
+  tables_done: number;
+  failed: number;
+}
+
+export type DataExportFormat =
+  | "csv_comma"
+  | "csv_semicolon"
+  | "json"
+  | "xlsx";
+
+export interface DataExportTable {
+  schema: string;
+  table: string;
+  /** Columns in order; empty = all (backend resolves via describe). */
+  columns?: string[];
+}
+
+export interface DataExportOptions {
+  source_connection_id: Uuid;
+  tables: DataExportTable[];
+  format: DataExportFormat;
+  path: string;
+  /** CSV/JSON only: bundle each table as a ZIP entry. */
+  bundle_zip?: boolean;
+  chunk_size?: number;
+}
+
+export interface DataExportPlan {
+  tables: Array<{ schema: string; table: string }>;
+}
+
+export interface DataExportProgress {
+  schema: string;
+  table: string;
+  done: number;
+  total: number;
+  elapsed_ms: number;
+}
+
+export interface DataExportTableDone {
+  schema: string;
+  table: string;
+  rows: number;
+  elapsed_ms: number;
+  error: string | null;
+}
+
+export interface DataExportDone {
   total_rows: number;
   elapsed_ms: number;
   tables_done: number;

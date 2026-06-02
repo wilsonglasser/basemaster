@@ -13,6 +13,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 basemaster-core = { path = "../crates/core" }
+basemaster-backup = { path = "../crates/backup" }
 basemaster-driver-mysql = { path = "../crates/driver-mysql" }
 basemaster-driver-postgres = { path = "../crates/driver-postgres" }
 basemaster-driver-sqlite = { path = "../crates/driver-sqlite" }
@@ -51,7 +52,12 @@ async-trait = "0.1"
 async-channel = "2"
 # `zip` pra dump em ZIP. `default-features = false` pra evitar compressões
 # pesadas (bzip2 etc); inclui só `deflate` (standard) e `aes` opt-out.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "2", default-features = false, features = ["deflate", "zstd"] }
+zstd.workspace = true
+# Export de dados em XLSX. Pure-rust; bufferiza a planilha em memória até
+# save() — sem streaming verdadeiro, mas roda no backend (longe do teto de
+# memória do WebView). CSV/JSON cobrem tabelas realmente gigantes.
+rust_xlsxwriter = "0.79"
 # Usado no translator MySQL→PG do sql_import (stripping table options,
 # type remaps, etc). Padrões simples; não precisa de full parser.
 regex = "1"

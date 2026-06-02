@@ -32,9 +32,23 @@ use crate::ssh_known_hosts::{fingerprint_sha256, KnownHosts, Verdict};
 
 /// Shared context threaded into every SSH hop handler so a prompt can
 /// reach the frontend and get a response back.
+/// What to do when a server presents a host key we've never seen.
+#[derive(Clone)]
+pub enum HostKeyPolicy {
+    /// Interactive GUI: emit `ssh-host-key-prompt` and wait for the user.
+    Prompt(AppHandle),
+    /// Trust-on-first-use: accept + persist to known_hosts. Opt-in via the
+    /// `--accept-ssh-hosts` flag on headless scheduled runs. Weakens MITM
+    /// protection — only the FIRST contact is unverified; later key changes
+    /// still hit `Verdict::Mismatch` and are rejected.
+    AcceptNew,
+    /// No UI and no opt-in (default headless): reject. Known keys still pass.
+    Reject,
+}
+
 #[derive(Clone)]
 pub struct HostKeyPromptCtx {
-    pub app: AppHandle,
+    pub policy: HostKeyPolicy,
     pub known_hosts: Arc<KnownHosts>,
     pub prompts: Arc<TokioRwLock<HashMap<Uuid, oneshot::Sender<bool>>>>,
 }
@@ -62,6 +76,25 @@ struct VerifyingHostKeys {
     ctx: HostKeyPromptCtx,
 }
 
+impl VerifyingHostKeys {
+    /// Persist an accepted host key to known_hosts (best-effort; a write
+    /// failure only means the next connect re-prompts / re-accepts).
+    async fn persist_key(&self, key: &ssh_key::PublicKey) {
+        if let Err(e) = self
+            .ctx
+            .known_hosts
+            .add(&self.host, self.port, key.clone())
+            .await
+        {
+            tracing::warn!(
+                host = %self.host,
+                port = self.port,
+                "persist accepted SSH host key: {e}"
+            );
+        }
+    }
+}
+
 impl client::Handler for VerifyingHostKeys {
     type Error = russh::Error;
     async fn check_server_key(
@@ -76,6 +109,22 @@ impl client::Handler for VerifyingHostKeys {
             Verdict::Match => Ok(true),
             Verdict::Mismatch => Ok(false),
             Verdict::Unknown => {
+                let app = match &self.ctx.policy {
+                    // No UI and no opt-in → fail safe.
+                    HostKeyPolicy::Reject => return Ok(false),
+                    // TOFU: accept + persist so later runs verify against it.
+                    HostKeyPolicy::AcceptNew => {
+                        self.persist_key(server_public_key).await;
+                        tracing::warn!(
+                            host = %self.host,
+                            port = self.port,
+                            "auto-accepted new SSH host key (--accept-ssh-hosts)"
+                        );
+                        return Ok(true);
+                    }
+                    HostKeyPolicy::Prompt(app) => app.clone(),
+                };
+
                 let request_id = Uuid::new_v4();
                 let (tx, rx) = oneshot::channel();
                 self.ctx
@@ -94,7 +143,7 @@ impl client::Handler for VerifyingHostKeys {
                     algorithm,
                     fingerprint_sha256: fingerprint,
                 };
-                if let Err(e) = self.ctx.app.emit("ssh-host-key-prompt", payload) {
+                if let Err(e) = app.emit("ssh-host-key-prompt", payload) {
                     tracing::warn!("emit ssh-host-key-prompt: {e}");
                     // Can't prompt the user → fail safe (reject).
                     self.ctx.prompts.write().await.remove(&request_id);
@@ -115,18 +164,7 @@ impl client::Handler for VerifyingHostKeys {
                 };
 
                 if accepted {
-                    if let Err(e) = self
-                        .ctx
-                        .known_hosts
-                        .add(&self.host, self.port, server_public_key.clone())
-                        .await
-                    {
-                        tracing::warn!(
-                            host = %self.host,
-                            port = self.port,
-                            "persist accepted SSH host key: {e}"
-                        );
-                    }
+                    self.persist_key(server_public_key).await;
                 }
                 Ok(accepted)
             }
@@ -414,6 +452,10 @@ async fn forward_connection(
                     _ => {}
                 }
             }
+            // Local stream closed AND the channel ended (wait() -> None):
+            // both branches disabled. Without this, select! panics with
+            // "all branches are disabled" and panic=abort kills the app.
+            else => break,
         }
     }
     Ok(())

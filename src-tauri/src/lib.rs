@@ -1,7 +1,10 @@
 mod commands;
 mod conn_portability;
+mod data_export;
 mod data_transfer;
+mod defer_index;
 mod docker_discovery;
+mod headless;
 mod http_proxy_tunnel;
 mod mcp_server;
 mod query_export;
@@ -77,6 +80,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // OS-scheduler entry: when invoked as `<exe> schedule run <id>`, run that
+    // backup headlessly and exit before any window/Tauri init. Lets the GUI
+    // binary be the program the OS scheduler fires (no separate CLI needed).
+    headless::maybe_run_and_exit();
+
     install_panic_hook();
 
     tracing_subscriber::fmt()
@@ -296,8 +304,10 @@ pub fn run() {
             commands::data_transfer_stop,
             commands::set_taskbar_progress,
             commands::save_file,
+            commands::save_file_base64,
             commands::read_file_bytes,
             commands::sql_dump_start,
+            commands::data_export_start,
             commands::sql_import_start,
             commands::check_binlog_enabled,
             commands::saved_queries_list,
@@ -305,6 +315,15 @@ pub fn run() {
             commands::saved_queries_create,
             commands::saved_queries_update,
             commands::saved_queries_delete,
+            commands::scheduled_backups_list,
+            commands::scheduled_backups_list_by_connection,
+            commands::scheduled_backups_create,
+            commands::scheduled_backups_update,
+            commands::scheduled_backups_set_enabled,
+            commands::scheduled_backups_delete,
+            commands::scheduled_backups_os_status,
+            commands::scheduled_backups_register_os,
+            commands::scheduled_backups_run_now,
             commands::query_history_list,
             commands::query_history_insert,
             commands::query_history_delete,

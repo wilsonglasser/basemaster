@@ -288,6 +288,7 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
         sshEnabled && sshAuth === "key" ? sshKeyPassphrase || null : null,
         testJumpsBlob,
         proxyEnabled ? proxyPassword || null : null,
+        editingId ?? null,
       );
       setTest("ok");
       setTestMsg(t("connForm.testOk"));

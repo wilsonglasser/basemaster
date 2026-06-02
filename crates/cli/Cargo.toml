@@ -1,0 +1,25 @@
+[package]
+name = "basemaster-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "basemaster-cli"
+path = "src/main.rs"
+
+[dependencies]
+basemaster-core = { path = "../core" }
+basemaster-store = { path = "../store" }
+basemaster-backup = { path = "../backup" }
+basemaster-driver-mysql = { path = "../driver-mysql" }
+basemaster-driver-postgres = { path = "../driver-postgres" }
+basemaster-driver-sqlite = { path = "../driver-sqlite" }
+anyhow.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+clap = { version = "4", features = ["derive"] }
+url = "2"
+uuid.workspace = true
+serde_json.workspace = true

@@ -184,6 +184,16 @@ pub struct TransferOptions {
     /// pay off. Default 50k.
     #[serde(default = "default_intra_min_rows")]
     pub intra_table_min_rows: u64,
+    /// Build secondary indexes AFTER the bulk load instead of inline in
+    /// CREATE TABLE. On InnoDB/Postgres the post-load sorted build is far
+    /// cheaper than per-row index maintenance during INSERT — the other half
+    /// of the load-time write amplification that `disable_fk_checks` removes.
+    /// Same-dialect copies strip the inline KEY lines; cross-dialect copies
+    /// re-emit them in the target dialect (the DDL translator would otherwise
+    /// drop MySQL `KEY` lines). PK/UNIQUE/FK-backing indexes always stay
+    /// inline.
+    #[serde(default = "default_true")]
+    pub defer_secondary_indexes: bool,
 }
 
 fn default_true() -> bool {
@@ -590,6 +600,8 @@ async fn transfer_one(
     // applies to the current connection, and the sqlx pool may hand out a
     // different conn between calls. Multi-statement "SET FK=0; DROP..." in a
     // single execute is the only way to guarantee the same conn.
+    // Secondary indexes deferred at CREATE time, run after the load below.
+    let mut deferred_indexes: Vec<String> = Vec::new();
     if opts.drop_target {
         // PG: CASCADE removes FKs that would block the DROP (equivalent to
         // MySQL's SET FOREIGN_KEY_CHECKS=0).
@@ -626,10 +638,43 @@ async fn transfer_one(
             ddl
         };
 
-        let create_body = if opts.drop_target {
-            ddl
+        // Defer secondary indexes so they build in one pass after the load.
+        // Same-dialect: strip inline KEYs into an ALTER. Cross-dialect: the
+        // translator already dropped the KEY lines, so rebuild them from the
+        // source's structured index list in the target dialect.
+        let create_ddl = if opts.defer_secondary_indexes
+            && target_d != crate::sql_translate::Dialect::Unknown
+        {
+            if source_d == target_d {
+                let s = crate::defer_index::split(&ddl, target_d, &target.quote_ident(table));
+                deferred_indexes = s.deferred;
+                s.create
+            } else {
+                let idxs = source
+                    .list_indexes(&opts.source_schema, table)
+                    .await
+                    .unwrap_or_default();
+                let fks = source
+                    .list_foreign_keys(&opts.source_schema, table)
+                    .await
+                    .unwrap_or_default();
+                deferred_indexes = crate::defer_index::deferred_for_target(
+                    &idxs,
+                    &fks,
+                    target_d,
+                    &opts.target_schema,
+                    table,
+                );
+                ddl
+            }
         } else {
-            ddl.replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
+            ddl
+        };
+
+        let create_body = if opts.drop_target {
+            create_ddl
+        } else {
+            create_ddl.replacen("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
         };
         // On PG target, skip session_prelude (it's MySQL-only).
         let create_sql = if matches!(
@@ -915,6 +960,25 @@ async fn transfer_one(
     }
     if eff_lock_target {
         let _ = target.execute(Some(&opts.target_schema), "UNLOCK TABLES").await;
+    }
+
+    // Deferred secondary indexes: build now that the data is loaded (sorted
+    // build, one pass). Soft — a failure (e.g. a cross-dialect index-name
+    // clash) leaves the table without that index, but the data is already
+    // committed, so we warn instead of failing the table.
+    if final_result.is_ok() && !deferred_indexes.is_empty() {
+        for stmt in &deferred_indexes {
+            if let Err(e) = target.execute(Some(&opts.target_schema), stmt).await {
+                let _ = app.emit(
+                    "transfer:table_note",
+                    &TableNote {
+                        table: table.to_string(),
+                        message: format!("Índice adiado falhou ({}): {}", table, e),
+                        level: "warn".to_string(),
+                    },
+                );
+            }
+        }
     }
 
     // Triggers : only if the table transfer didn't fail. Emitted AFTER the

@@ -34,6 +34,7 @@ import { ProcessListView } from "@/components/process-list-view";
 import { UsersView } from "@/components/users-view";
 import { QueryHistoryView } from "@/components/query-history-view";
 import { SavedQueriesListView } from "@/components/saved-queries-list-view";
+import { ScheduledBackupsView } from "@/components/scheduled-backups-view";
 import { SettingsView } from "@/components/settings-view";
 import { SqlDumpView } from "@/components/sql-dump-view";
 import { SqlImportView } from "@/components/sql-import-view";
@@ -471,6 +472,8 @@ function TabContent({ tab }: { tab: Tab }) {
       );
     case "query-history":
       return <QueryHistoryView connectionId={tab.kind.connectionId} />;
+    case "scheduled-backups":
+      return <ScheduledBackupsView connectionId={tab.kind.connectionId} />;
     case "processes":
       return <ProcessListView connectionId={tab.kind.connectionId} />;
     case "users":

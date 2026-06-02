@@ -1,0 +1,24 @@
+[package]
+name = "basemaster-backup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+basemaster-core = { path = "../core" }
+basemaster-store = { path = "../store" }
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zstd.workspace = true
+uuid.workspace = true
+crc32fast = "1"
+
+[dev-dependencies]
+tokio = { workspace = true }
+basemaster-driver-sqlite = { path = "../driver-sqlite" }
+uuid.workspace = true

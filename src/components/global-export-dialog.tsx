@@ -4,6 +4,7 @@ import {
   streamTableToFile,
 } from "@/lib/export-table";
 import { writeInMemory } from "@/lib/export";
+import { ipc } from "@/lib/ipc";
 import { useExport } from "@/state/export-state";
 
 /** Mounted once at the root — routes to memory, stream, or multi-stream
@@ -48,6 +49,7 @@ export function GlobalExportDialog() {
         // XLSX would need a different bundle strategy (one workbook with
         // multiple sheets) — stick to chunkable CSV/JSON for v1.
         allowedFormats={["csv_comma", "csv_semicolon", "json"]}
+        onStop={() => void ipc.transfer.stop()}
         onExport={async ({ format, path }, setProgress) => {
           await streamMultiTablesToZip(
             ctx.connectionId,
@@ -70,6 +72,7 @@ export function GlobalExportDialog() {
       onClose={close}
       columns={request.columns}
       defaultName={request.defaultName}
+      onStop={() => void ipc.transfer.stop()}
       onExport={async ({ format, columns, path }, setProgress) => {
         await streamTableToFile(
           ctx.connectionId,

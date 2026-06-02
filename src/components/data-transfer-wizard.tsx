@@ -171,6 +171,9 @@ export function DataTransferWizard({
   const [intraTableMinRows, setIntraTableMinRows] = useState(
     get("intraTableMinRows"),
   );
+  const [deferSecondaryIndexes, setDeferSecondaryIndexes] = useState(
+    get("deferSecondaryIndexes"),
+  );
 
   // Persist to localStorage on every change : native debouncing via React
   // batching; to avoid slider thrash, saving on unmount is also unnecessary
@@ -202,6 +205,7 @@ export function DataTransferWizard({
       copyTriggers,
       intraTableWorkers,
       intraTableMinRows,
+      deferSecondaryIndexes,
     });
   }, [
     dropTarget, createTables, emptyTarget, chunkSize, continueOnError,
@@ -209,7 +213,7 @@ export function DataTransferWizard({
     disableBinlog, useTransaction, lockTarget, maxStmtKb, useKeyset,
     createTargetSchema, createRecords, completeInserts, extendedInserts,
     hexBlob, singleTransaction, lockSource, preserveZeroAutoInc,
-    copyTriggers, intraTableWorkers, intraTableMinRows,
+    copyTriggers, intraTableWorkers, intraTableMinRows, deferSecondaryIndexes,
   ]);
 
   // --- progress
@@ -583,6 +587,7 @@ export function DataTransferWizard({
         copy_triggers: copyTriggers,
         intra_table_workers: intraTableWorkers,
         intra_table_min_rows: intraTableMinRows,
+        defer_secondary_indexes: deferSecondaryIndexes,
       };
       await ipc.transfer.start(opts);
     } catch (e) {
@@ -782,6 +787,8 @@ export function DataTransferWizard({
             setIntraTableWorkers={setIntraTableWorkers}
             intraTableMinRows={intraTableMinRows}
             setIntraTableMinRows={setIntraTableMinRows}
+            deferSecondaryIndexes={deferSecondaryIndexes}
+            setDeferSecondaryIndexes={setDeferSecondaryIndexes}
             targetIsMysql={targetIsMysql}
             crossDialect={crossDialect}
           />

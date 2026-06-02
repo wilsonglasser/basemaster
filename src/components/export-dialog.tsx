@@ -45,6 +45,9 @@ interface Props {
     choice: ExportChoice,
     setProgress: (p: ExportProgress | null) => void,
   ) => Promise<void>;
+  /** When set, a Stop button shows while running. Used by the streaming
+   *  (backend) modes to cancel mid-export. */
+  onStop?: () => void;
 }
 
 export function ExportDialog({
@@ -58,6 +61,7 @@ export function ExportDialog({
   saveExtension,
   saveLabel,
   onExport,
+  onStop,
 }: Props) {
   const t = useT();
   const formats = useMemo(
@@ -319,14 +323,25 @@ export function ExportDialog({
         </div>
 
         <footer className="flex h-12 shrink-0 items-center justify-end gap-2 border-t border-border px-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={running}
-            className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {t("exportDialog.cancel")}
-          </button>
+          {running && onStop ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20"
+            >
+              <X className="h-3 w-3" />
+              {t("exportDialog.stop")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={running}
+              className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("exportDialog.cancel")}
+            </button>
+          )}
           <button
             type="button"
             onClick={handleExport}

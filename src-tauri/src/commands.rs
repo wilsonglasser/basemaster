@@ -15,8 +15,8 @@ use basemaster_core::{
 use basemaster_store::{
     secrets, ConnectionDraft, ConnectionFolder, ConnectionFolderDraft,
     ConnectionProfile, QueryHistoryDraft, QueryHistoryEntry, SavedQuery,
-    SavedQueryDraft, SchemaFolder, SchemaFolderAssignment, TableFolder,
-    TableFolderAssignment,
+    SavedQueryDraft, ScheduledBackup, ScheduledBackupDraft, SchemaFolder,
+    SchemaFolderAssignment, TableFolder, TableFolderAssignment,
 };
 use chrono::Utc;
 use serde::Serialize;
@@ -177,6 +177,10 @@ pub async fn connection_test(
     ssh_key_passphrase: Option<String>,
     ssh_jumps_secrets: Option<String>,
     http_proxy_password: Option<String>,
+    // When testing an existing connection, the form leaves secret fields
+    // blank to mean "keep the saved value". `id` lets us fall back to the
+    // keyring for any secret the user didn't retype, mirroring open.
+    id: Option<Uuid>,
 ) -> R<()> {
     let driver = make_driver(&draft.driver)
         .ok_or_else(|| format!("driver desconhecido: {}", draft.driver))?;
@@ -212,7 +216,7 @@ pub async fn connection_test(
             p.password = http_proxy_password.filter(|s| !s.is_empty());
         }
     }
-    let cfg = basemaster_core::ConnectionConfig {
+    let mut cfg = basemaster_core::ConnectionConfig {
         id: Uuid::nil(),
         name: draft.name,
         color: draft.color,
@@ -227,8 +231,22 @@ pub async fn connection_test(
         http_proxy,
     };
 
+    // Typed values above take priority; for anything still blank, fall
+    // back to the saved secrets so testing an unchanged connection works
+    // without re-typing every password.
+    if let Some(id) = id {
+        if cfg.password.is_none() {
+            cfg.password = secrets::get_password(id).map_err(err)?;
+        }
+        let ssh_pwd = secrets::get_ssh_password(id).map_err(err)?;
+        let ssh_kp = secrets::get_ssh_key_passphrase(id).map_err(err)?;
+        let jumps = secrets::get_ssh_jumps_secrets(id).map_err(err)?;
+        let proxy = secrets::get_http_proxy_password(id).map_err(err)?;
+        inject_ssh_secrets(&mut cfg, ssh_pwd, ssh_kp, jumps, proxy);
+    }
+
     let ctx = crate::ssh_tunnel::HostKeyPromptCtx {
-        app: app.clone(),
+        policy: crate::ssh_tunnel::HostKeyPolicy::Prompt(app.clone()),
         known_hosts: state.known_hosts.clone(),
         prompts: state.ssh_key_prompts.clone(),
     };
@@ -337,13 +355,24 @@ fn effective_config(
     cfg
 }
 
-#[tauri::command]
-pub async fn connection_open(
-    app: AppHandle,
-    state: State<'_, AppState>,
+/// Resolve a profile + keyring secrets into a connected driver, opening the
+/// SSH/HTTP-proxy tunnel if configured. Shared by `connection_open` (UI, with a
+/// prompt ctx) and the headless scheduled-backup path (`app: None`, so an
+/// unknown SSH host key fails safe instead of hanging on a prompt). Returns the
+/// driver, the live tunnel (keep it alive while the driver is in use), and the
+/// effective config.
+pub(crate) async fn open_driver_with_tunnel(
+    store: &basemaster_store::Store,
+    known_hosts: Arc<crate::ssh_known_hosts::KnownHosts>,
+    prompts: Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<Uuid, tokio::sync::oneshot::Sender<bool>>,
+        >,
+    >,
+    policy: crate::ssh_tunnel::HostKeyPolicy,
     id: Uuid,
-) -> R<()> {
-    let profile = state.store.connections().get(id).await.map_err(err)?;
+) -> R<(Arc<dyn Driver>, Option<Tunnel>, basemaster_core::ConnectionConfig)> {
+    let profile = store.connections().get(id).await.map_err(err)?;
     let password = secrets::get_password(id).map_err(err)?;
     let ssh_pwd = secrets::get_ssh_password(id).map_err(err)?;
     let ssh_key_pass = secrets::get_ssh_key_passphrase(id).map_err(err)?;
@@ -356,9 +385,9 @@ pub async fn connection_open(
     inject_ssh_secrets(&mut cfg, ssh_pwd, ssh_key_pass, ssh_jumps_blob, proxy_pwd);
 
     let ctx = crate::ssh_tunnel::HostKeyPromptCtx {
-        app: app.clone(),
-        known_hosts: state.known_hosts.clone(),
-        prompts: state.ssh_key_prompts.clone(),
+        policy,
+        known_hosts,
+        prompts,
     };
     let tunnel = open_tunnel(&cfg, ctx).await?;
     let effective = effective_config(cfg, tunnel.as_ref());
@@ -370,6 +399,23 @@ pub async fn connection_open(
         }
         return Err(err(e));
     }
+    Ok((driver, tunnel, effective))
+}
+
+#[tauri::command]
+pub async fn connection_open(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<()> {
+    let (driver, tunnel, _effective) = open_driver_with_tunnel(
+        &state.store,
+        state.known_hosts.clone(),
+        state.ssh_key_prompts.clone(),
+        crate::ssh_tunnel::HostKeyPolicy::Prompt(app),
+        id,
+    )
+    .await?;
 
     state.active.write().await.insert(id, driver);
     if let Some(t) = tunnel {
@@ -1454,6 +1500,28 @@ pub async fn sql_dump_start(
     crate::sql_dump::run_dump(app, opts, source, conn_label, control).await
 }
 
+/// Kicks off a tabular data export (CSV/JSON/XLSX). Streams rows to disk in
+/// the backend — no row data crosses the IPC bridge. Reuses `TransferControl`
+/// (stop applies, same as dump/transfer). Events: `data_export:plan`,
+/// `data_export:progress`, `data_export:table_done`, `data_export:done`.
+#[tauri::command]
+pub async fn data_export_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    opts: crate::data_export::DataExportOptions,
+) -> R<crate::data_export::DataExportDone> {
+    let source = {
+        let active = state.active.read().await;
+        active
+            .get(&opts.source_connection_id)
+            .cloned()
+            .ok_or_else(|| "conexão de origem não está aberta".to_string())?
+    };
+    state.transfer_control.reset();
+    let control = state.transfer_control.clone();
+    crate::data_export::run_export(app, opts, source, control).await
+}
+
 // -------------------------------------------------------- MCP server
 
 #[derive(Serialize)]
@@ -1799,6 +1867,32 @@ pub async fn save_file(
         std::fs::File::create(&path).map_err(err)?
     };
     f.write_all(&data).map_err(err)?;
+    Ok(())
+}
+
+/// Like `save_file` but takes the payload as base64. A JSON array of byte
+/// integers (what `Array.from(bytes)` produces) explodes ~4-10x in size on
+/// the IPC bridge and can OOM the WebView renderer; base64 stays ~1.33x.
+#[tauri::command]
+pub async fn save_file_base64(
+    path: String,
+    data_base64: String,
+    append: Option<bool>,
+) -> R<()> {
+    use base64::Engine;
+    use std::io::Write;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("base64 decode: {e}"))?;
+    let mut f = if append.unwrap_or(false) {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .map_err(err)?
+    } else {
+        std::fs::File::create(&path).map_err(err)?
+    };
+    f.write_all(&bytes).map_err(err)?;
     Ok(())
 }
 
@@ -2177,6 +2271,168 @@ pub async fn saved_queries_delete(
     id: Uuid,
 ) -> R<()> {
     state.store.saved_queries().delete(id).await.map_err(err)
+}
+
+// -------------------------------------------------------- scheduled backups
+
+#[tauri::command]
+pub async fn scheduled_backups_list(
+    state: State<'_, AppState>,
+) -> R<Vec<ScheduledBackup>> {
+    state.store.scheduled_backups().list_all().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn scheduled_backups_list_by_connection(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> R<Vec<ScheduledBackup>> {
+    state
+        .store
+        .scheduled_backups()
+        .list_by_connection(connection_id)
+        .await
+        .map_err(err)
+}
+
+/// Register/replace (or, when disabled, remove) this schedule's OS-scheduler
+/// task so the GUI fully owns what the OS fires. Best-effort: an OS failure
+/// must not roll back the store write — `scheduled_backups_os_status` lets the
+/// UI surface a missing task and `scheduled_backups_register_os` retries it.
+fn sync_os_task(sched: &ScheduledBackup) {
+    use basemaster_backup::os_schedule::{cadence_from, register, unregister, TaskSpec};
+    let id = sched.id.to_string();
+    let cadence = match (sched.enabled, cadence_from(&sched.schedule_kind, &sched.schedule_expr)) {
+        (true, Some(c)) => c,
+        _ => {
+            let _ = unregister(&id, false);
+            return;
+        }
+    };
+    let Ok(program) = std::env::current_exe() else {
+        return;
+    };
+    let mut args = vec!["schedule".into(), "run".into(), id.clone()];
+    if sched.accept_ssh_hosts {
+        args.push("--accept-ssh-hosts".into());
+    }
+    let spec = TaskSpec {
+        id,
+        program,
+        args,
+        cadence,
+    };
+    let _ = register(&spec, false);
+}
+
+#[tauri::command]
+pub async fn scheduled_backups_create(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    draft: ScheduledBackupDraft,
+) -> R<ScheduledBackup> {
+    let saved = state
+        .store
+        .scheduled_backups()
+        .create(connection_id, draft)
+        .await
+        .map_err(err)?;
+    sync_os_task(&saved);
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn scheduled_backups_update(
+    state: State<'_, AppState>,
+    id: Uuid,
+    draft: ScheduledBackupDraft,
+) -> R<ScheduledBackup> {
+    let saved = state
+        .store
+        .scheduled_backups()
+        .update(id, draft)
+        .await
+        .map_err(err)?;
+    sync_os_task(&saved);
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn scheduled_backups_set_enabled(
+    state: State<'_, AppState>,
+    id: Uuid,
+    enabled: bool,
+) -> R<()> {
+    state
+        .store
+        .scheduled_backups()
+        .set_enabled(id, enabled)
+        .await
+        .map_err(err)?;
+    if let Ok(sched) = state.store.scheduled_backups().get(id).await {
+        sync_os_task(&sched);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn scheduled_backups_delete(
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<()> {
+    let _ = basemaster_backup::os_schedule::unregister(&id.to_string(), false);
+    state.store.scheduled_backups().delete(id).await.map_err(err)
+}
+
+/// Whether the OS scheduler currently has a task for this schedule.
+#[tauri::command]
+pub async fn scheduled_backups_os_status(id: Uuid) -> R<bool> {
+    Ok(basemaster_backup::os_schedule::is_registered(&id.to_string()))
+}
+
+/// Force (re)registration of the OS task; returns the OS error if it fails so
+/// the UI can show why (e.g. no permission, scheduler unavailable).
+#[tauri::command]
+pub async fn scheduled_backups_register_os(
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<()> {
+    use basemaster_backup::os_schedule::{cadence_from, register, TaskSpec};
+    let sched = state.store.scheduled_backups().get(id).await.map_err(err)?;
+    let cadence = cadence_from(&sched.schedule_kind, &sched.schedule_expr)
+        .ok_or_else(|| "this cadence can't be registered with the OS scheduler".to_string())?;
+    let program = std::env::current_exe().map_err(|e| e.to_string())?;
+    let id_s = id.to_string();
+    let mut args = vec!["schedule".into(), "run".into(), id_s.clone()];
+    if sched.accept_ssh_hosts {
+        args.push("--accept-ssh-hosts".into());
+    }
+    let spec = TaskSpec {
+        id: id_s,
+        program,
+        args,
+        cadence,
+    };
+    register(&spec, false).map_err(|e| format!("{e:#}"))
+}
+
+/// Run a schedule immediately (same code path the OS scheduler triggers):
+/// dump + retention + record the run. Tunnel-aware, so SSH connections work.
+/// Returns the written file path.
+#[tauri::command]
+pub async fn scheduled_backups_run_now(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<String> {
+    crate::headless::run_now(
+        &state.store,
+        state.known_hosts.clone(),
+        state.ssh_key_prompts.clone(),
+        app,
+        id,
+    )
+    .await
 }
 
 /// Controls the progress bar on the taskbar icon (Windows) or dock

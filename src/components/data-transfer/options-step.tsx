@@ -54,6 +54,8 @@ export function OptionsStep(props: {
   setIntraTableWorkers: (v: number) => void;
   intraTableMinRows: number;
   setIntraTableMinRows: (v: number) => void;
+  deferSecondaryIndexes: boolean;
+  setDeferSecondaryIndexes: (v: boolean) => void;
   targetIsMysql: boolean;
   crossDialect: boolean;
 }) {
@@ -108,6 +110,8 @@ export function OptionsStep(props: {
     setIntraTableWorkers,
     intraTableMinRows,
     setIntraTableMinRows,
+    deferSecondaryIndexes,
+    setDeferSecondaryIndexes,
     targetIsMysql,
     crossDialect,
   } = props;
@@ -149,6 +153,14 @@ export function OptionsStep(props: {
             value={copyTriggers}
             onChange={setCopyTriggers}
             hint={t("dataTransfer.optCopyTriggersHint")}
+          />
+        )}
+        {createTables && (
+          <Toggle
+            label={t("dataTransfer.optDeferIndexes")}
+            value={deferSecondaryIndexes}
+            onChange={setDeferSecondaryIndexes}
+            hint={t("dataTransfer.optDeferIndexesHint")}
           />
         )}
       </Card>

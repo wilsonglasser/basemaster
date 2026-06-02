@@ -140,6 +140,9 @@ pub enum DumpCompression {
     Stored,
     /// Standard deflate (zlib).
     Deflate,
+    /// Zstandard — best ratio/speed tradeoff. For `Sql` format produces a
+    /// single `.sql.zst`; for `Zip` uses the zstd method per entry.
+    Zstd,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -158,6 +161,9 @@ pub struct DumpOptions {
     pub format: DumpFormat,
     #[serde(default)]
     pub compression: DumpCompression,
+    /// zstd level when `compression == Zstd`. 5 = consensus sweet spot.
+    #[serde(default = "default_zstd_level")]
+    pub compression_level: i32,
     #[serde(default)]
     pub content: DumpContent,
     /// DROP TABLE IF EXISTS before CREATE (if content includes structure).
@@ -195,14 +201,37 @@ pub struct DumpOptions {
     /// connections overhead).
     #[serde(default = "default_intra_min_rows")]
     pub intra_table_min_rows: u64,
+    /// Emit secondary indexes as `ALTER TABLE ADD`/`CREATE INDEX` AFTER the
+    /// data (deferred build) instead of inline in CREATE TABLE. A sequential
+    /// importer (and BaseMaster's parallel importer, via the `@BM:I` region)
+    /// builds them in one sorted pass once the rows are loaded — far cheaper
+    /// than per-row index maintenance. PK/UNIQUE/FK-backing indexes stay
+    /// inline.
+    #[serde(default = "default_true")]
+    pub defer_secondary_indexes: bool,
 }
 
 fn default_true() -> bool { true }
 fn default_chunk() -> u64 { 1000 }
 fn default_max_stmt_kb() -> u64 { 1024 }
 fn default_concurrency() -> u32 { 4 }
+fn default_zstd_level() -> i32 { 5 }
 fn default_intra_workers() -> u32 { 1 }
 fn default_intra_min_rows() -> u64 { 100_000 }
+
+/// Emitted once at dump start with the full resolved table list, so the UI
+/// can show an exact total instead of inferring it from arriving events
+/// (which made the count climb during schema-level dumps).
+#[derive(Clone, Debug, Serialize)]
+pub struct DumpPlan {
+    pub tables: Vec<DumpPlanTable>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DumpPlanTable {
+    pub schema: String,
+    pub table: String,
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DumpTableProgress {
@@ -265,8 +294,9 @@ pub struct DumpTableNote {
 // 377-byte overhead doesn't justify Box (clippy::large_enum_variant).
 #[allow(clippy::large_enum_variant)]
 enum DumpSink {
-    /// Everything in a single file.
-    Sql(std::fs::File),
+    /// Everything in a single file. Boxed so it can be a raw file or a
+    /// zstd-wrapping encoder (`.sql.zst`) behind the same `Write`.
+    Sql(Box<dyn Write + Send>),
     /// ZIP with multiple entries.
     Zip {
         zip: zip::ZipWriter<std::fs::File>,
@@ -281,13 +311,27 @@ impl DumpSink {
         let f = std::fs::File::create(&opts.path)
             .map_err(|e| format!("criar arquivo: {}", e))?;
         match opts.format {
-            DumpFormat::Sql => Ok(DumpSink::Sql(f)),
-            DumpFormat::Zip => {
-                let method = match opts.compression {
-                    DumpCompression::Stored => CompressionMethod::Stored,
-                    DumpCompression::Deflate => CompressionMethod::Deflated,
+            DumpFormat::Sql => {
+                let w: Box<dyn Write + Send> = match opts.compression {
+                    DumpCompression::Zstd => Box::new(
+                        zstd::stream::write::Encoder::new(f, opts.compression_level)
+                            .map_err(|e| format!("zstd encoder: {}", e))?
+                            .auto_finish(),
+                    ),
+                    // Deflate alone makes no sense for a single .sql; keep it plain.
+                    _ => Box::new(f),
                 };
-                let options = SimpleFileOptions::default().compression_method(method);
+                Ok(DumpSink::Sql(w))
+            }
+            DumpFormat::Zip => {
+                let mut options = SimpleFileOptions::default();
+                options = match opts.compression {
+                    DumpCompression::Stored => options.compression_method(CompressionMethod::Stored),
+                    DumpCompression::Deflate => options.compression_method(CompressionMethod::Deflated),
+                    DumpCompression::Zstd => options
+                        .compression_method(CompressionMethod::Zstd)
+                        .compression_level(Some(opts.compression_level as i64)),
+                };
                 Ok(DumpSink::Zip {
                     zip: zip::ZipWriter::new(f),
                     options,
@@ -325,7 +369,7 @@ impl DumpSink {
     /// path used for temp files.
     fn writer(&mut self) -> &mut (dyn Write + Send) {
         match self {
-            DumpSink::Sql(f) => f,
+            DumpSink::Sql(f) => f.as_mut(),
             DumpSink::Zip { zip, .. } => zip,
         }
     }
@@ -385,6 +429,9 @@ struct TableArtifact {
     ddl_path: Option<PathBuf>,
     /// Data shard temp files in PK-ascending order. Empty when no data.
     data_paths: Vec<PathBuf>,
+    /// Deferred secondary-index statements (built after all data, in the
+    /// `@BM:I` region). Empty when deferral is off or the table has none.
+    deferred: Vec<String>,
 }
 
 pub async fn run_dump(
@@ -416,6 +463,19 @@ pub async fn run_dump(
             work.push((work.len(), scope.schema.clone(), t));
         }
     }
+
+    let _ = app.emit(
+        "sql_dump:plan",
+        &DumpPlan {
+            tables: work
+                .iter()
+                .map(|(_, schema, table)| DumpPlanTable {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                })
+                .collect(),
+        },
+    );
 
     // Serial mode (1 table at a time, no intra sharding) streams straight to
     // the output: no temp files, no extra disk. Parallel mode stages tables in
@@ -565,6 +625,7 @@ async fn run_serial_dump(
     let mut sink = open_sink_with_preamble(opts, conn_label, source_is_pg)?;
     let mut last_schema: Option<String> = None;
     let (mut total_rows, mut tables_done, mut failed) = (0u64, 0u32, 0u32);
+    let mut all_deferred: Vec<(String, String)> = Vec::new();
 
     for (idx, schema, table) in work {
         if !control.check().await {
@@ -593,7 +654,10 @@ async fn run_serial_dump(
             sink.end_file()?;
         }
         let (rows, error) = match res {
-            Ok(r) => (r, None),
+            Ok((r, deferred)) => {
+                all_deferred.extend(deferred.into_iter().map(|s| (schema.clone(), s)));
+                (r, None)
+            }
             Err(e) => (0, Some(e)),
         };
         if error.is_some() {
@@ -613,6 +677,7 @@ async fn run_serial_dump(
         tables_done += 1;
     }
 
+    write_deferred_indexes(&mut sink, opts, source, source_is_pg, &all_deferred)?;
     write_footer_and_finish(sink, opts, source_is_pg)?;
     Ok((total_rows, tables_done, failed))
 }
@@ -630,25 +695,34 @@ async fn dump_table_direct(
     sink: &mut DumpSink,
     source_is_pg: bool,
     control: &Arc<TransferControl>,
-) -> Result<u64, String> {
+) -> Result<(u64, Vec<String>), String> {
+    let mut deferred: Vec<String> = Vec::new();
     if matches!(opts.content, DumpContent::Structure | DumpContent::Both) {
         let ddl = source
             .get_table_ddl(schema, table)
             .await
             .map_err(|e| format!("ddl {}.{}: {}", schema, table, e))?;
+        let create = if opts.defer_secondary_indexes {
+            let d = crate::sql_translate::Dialect::from_driver_name(source.dialect());
+            let s = crate::defer_index::split(&ddl, d, &source.quote_ident(table));
+            deferred = s.deferred;
+            s.create
+        } else {
+            ddl
+        };
         write_structure_header(sink, opts, source, source_is_pg, table)?;
-        sink.write(format!("{};\n\n", ddl.trim().trim_end_matches(';')).as_bytes())?;
+        sink.write(format!("{};\n\n", create.trim().trim_end_matches(';')).as_bytes())?;
     }
 
     if !matches!(opts.content, DumpContent::Data | DumpContent::Both) {
-        return Ok(0);
+        return Ok((0, deferred));
     }
     let total = source
         .count_table_rows(schema, table, None)
         .await
         .map_err(|e| format!("count {}.{}: {}", schema, table, e))?;
     if total == 0 {
-        return Ok(0);
+        return Ok((0, deferred));
     }
     let generated_cols: HashSet<String> = source
         .list_generated_columns(schema, table)
@@ -661,7 +735,7 @@ async fn dump_table_direct(
     sink.write(marker_data(idx).as_bytes())?;
     sink.write(section_header("Records of", table).as_bytes())?;
     let started = Instant::now();
-    write_table_data(
+    let rows = write_table_data(
         sink.writer(),
         app,
         opts,
@@ -675,7 +749,8 @@ async fn dump_table_direct(
         &generated_cols,
         control,
     )
-    .await
+    .await?;
+    Ok((rows, deferred))
 }
 
 // -------------------------------------------------- parallel (temp + merge)
@@ -767,30 +842,37 @@ async fn merge_stream(
     let mut next = 0usize;
     let mut last_schema: Option<String> = None;
     let (mut total_rows, mut tables_done, mut failed) = (0u64, 0u32, 0u32);
+    // Deferred secondary indexes from every table, emitted in one `@BM:I`
+    // region after all data so the importer can build them post-load. Each
+    // carries its schema for the per-group `USE`/search_path.
+    let mut all_deferred: Vec<(String, String)> = Vec::new();
 
     while let Some(art) = art_rx.recv().await {
         buffer.insert(art.idx, art);
         // Drain every contiguous artifact from `next` upward.
-        while let Some(a) = buffer.remove(&next) {
+        while let Some(mut a) = buffer.remove(&next) {
             total_rows += a.rows;
             tables_done += 1;
             if a.error.is_some() {
                 failed += 1;
             }
             merge_table(&mut sink, opts, source, source_is_pg, &mut last_schema, &a)?;
+            all_deferred.extend(a.deferred.drain(..).map(|s| (a.schema.clone(), s)));
             next += 1;
         }
     }
     // Drain any leftovers (idx gaps from cancelled tables) in sorted order.
-    for (_idx, a) in std::mem::take(&mut buffer) {
+    for (_idx, mut a) in std::mem::take(&mut buffer) {
         total_rows += a.rows;
         tables_done += 1;
         if a.error.is_some() {
             failed += 1;
         }
         merge_table(&mut sink, opts, source, source_is_pg, &mut last_schema, &a)?;
+        all_deferred.extend(a.deferred.drain(..).map(|s| (a.schema.clone(), s)));
     }
 
+    write_deferred_indexes(&mut sink, opts, source, source_is_pg, &all_deferred)?;
     write_footer_and_finish(sink, opts, source_is_pg)?;
     Ok((total_rows, tables_done, failed))
 }
@@ -858,6 +940,60 @@ fn marker_table(idx: usize, schema: &str, table: &str) -> String {
 /// the data off and parallelize it (intra-table).
 fn marker_data(idx: usize) -> String {
     format!("-- @BM:D idx={}\n", idx)
+}
+
+/// Marker: start of the deferred secondary-index region. Always comes after
+/// every table's data, so the importer can barrier all data before building
+/// indexes. A sequential consumer just sees the statements in order.
+const MARKER_INDEXES: &str = "-- @BM:I\n";
+
+/// `USE`/`SET search_path` so an unqualified deferred index resolves to the
+/// right schema (the index region is one block after all the per-schema data).
+fn schema_context_stmt(source: &dyn Driver, source_is_pg: bool, schema: &str) -> String {
+    if source_is_pg {
+        format!("SET search_path TO {};\n", source.quote_ident(schema))
+    } else {
+        format!("USE {};\n", source.quote_ident(schema))
+    }
+}
+
+/// Writes the accumulated deferred-index statements (after all data, before
+/// the footer). For SQL it is an inline `@BM:I` region; for ZIP a dedicated
+/// `zz_indexes.sql` entry (sorts after the table entries). Each item carries
+/// its schema; when `create_schema` is on we emit a schema-context statement
+/// per group so unqualified `ALTER TABLE`s land in the right schema even in a
+/// multi-schema dump.
+fn write_deferred_indexes(
+    sink: &mut DumpSink,
+    opts: &DumpOptions,
+    source: &dyn Driver,
+    source_is_pg: bool,
+    deferred: &[(String, String)],
+) -> Result<(), String> {
+    if deferred.is_empty() {
+        return Ok(());
+    }
+    let mut body = String::new();
+    body.push_str(MARKER_INDEXES);
+    let mut last_schema: Option<&str> = None;
+    for (schema, stmt) in deferred {
+        if opts.create_schema && last_schema != Some(schema.as_str()) {
+            body.push_str(&schema_context_stmt(source, source_is_pg, schema));
+            last_schema = Some(schema);
+        }
+        body.push_str(stmt);
+        body.push('\n');
+    }
+    body.push('\n');
+
+    if matches!(opts.format, DumpFormat::Sql) {
+        sink.write(body.as_bytes())?;
+    } else {
+        sink.begin_file("zz_indexes.sql")?;
+        sink.write(body.as_bytes())?;
+        sink.end_file()?;
+    }
+    Ok(())
 }
 
 fn build_preamble(
@@ -936,6 +1072,7 @@ async fn dump_table_to_temp(
         error: None,
         ddl_path: None,
         data_paths: Vec::new(),
+        deferred: Vec::new(),
     };
 
     // 1. Structure (DDL) → temp file. Raw CREATE only; the merge adds the
@@ -943,9 +1080,19 @@ async fn dump_table_to_temp(
     if matches!(opts.content, DumpContent::Structure | DumpContent::Both) {
         match source.get_table_ddl(schema, table).await {
             Ok(ddl) => {
+                // Defer secondary indexes: strip them out of the CREATE and
+                // stash the build statements for the post-data `@BM:I` region.
+                let (create, deferred) = if opts.defer_secondary_indexes {
+                    let d = crate::sql_translate::Dialect::from_driver_name(source.dialect());
+                    let s = crate::defer_index::split(&ddl, d, &source.quote_ident(table));
+                    (s.create, s.deferred)
+                } else {
+                    (ddl, Vec::new())
+                };
+                artifact.deferred = deferred;
                 let path = tmp_dir.join(format!("{:05}.ddl", idx));
                 // Normalize: driver may or may not terminate with `;`.
-                let body = format!("{};\n\n", ddl.trim().trim_end_matches(';'));
+                let body = format!("{};\n\n", create.trim().trim_end_matches(';'));
                 if let Err(e) = std::fs::write(&path, body.as_bytes()) {
                     artifact.error = Some(format!("ddl write {}.{}: {}", schema, table, e));
                     return artifact;

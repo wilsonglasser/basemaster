@@ -37,6 +37,7 @@ import {
   readTableClipboard,
   writeTableClipboard,
 } from "@/lib/table-clipboard";
+import { fetchEditViewSql } from "@/lib/view-ddl";
 import type { Uuid } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { appAlert, appPrompt } from "@/state/app-dialog";
@@ -690,6 +691,51 @@ export function TablesListView({
     });
   };
 
+  const deleteView = async (name: string) => {
+    const ok = await confirmDestructive({
+      title: t("tree.dropTableTitleOne"),
+      description: t("tree.dropTableBody"),
+      items: [name],
+      confirmLabel: t("tree.dropTableConfirmOne"),
+      checkboxLabel: t("tree.destructiveAck"),
+    });
+    if (!ok) return;
+    try {
+      const qi =
+        conn?.driver === "postgres"
+          ? `"${name.replace(/"/g, '""')}"`
+          : `\`${name.replace(/`/g, "``")}\``;
+      await ipc.db.runQuery(connectionId, `DROP VIEW ${qi}`, schema);
+      invalidateSchema(connectionId, schema);
+      await ensureSnapshot(connectionId, schema);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(name);
+        return next;
+      });
+    } catch (e) {
+      void appAlert(t("tablesList.deleteFailed", { error: String(e) }));
+    }
+  };
+
+  const editViewRow = async (name: string) => {
+    try {
+      const sql = await fetchEditViewSql(
+        connectionId,
+        conn?.driver ?? "mysql",
+        schema,
+        name,
+      );
+      newTab({
+        label: t("tree.viewEditLabel", { name }),
+        kind: { kind: "query", connectionId, schema, initialSql: sql },
+        accentColor: conn?.color,
+      });
+    } catch (e) {
+      void appAlert(t("tree.editViewFailed", { error: String(e) }));
+    }
+  };
+
   const openImportFor = (name: string) => {
     newTab({
       label: `Import · ${name}`,
@@ -709,6 +755,62 @@ export function TablesListView({
       setSelected(new Set([name]));
       setLastSelected(name);
     }
+
+    const rowKind = tables?.find((x) => x.name === name)?.kind;
+    const isView = rowKind === "view" || rowKind === "materialized_view";
+    if (isView) {
+      // Views: no structure-edit, duplicate, rename, maintenance, import or
+      // truncate/empty. Edit opens the view's DDL.
+      setCtxItems([
+        {
+          icon: <TableIcon className="h-3.5 w-3.5" />,
+          label: t("tree.openView"),
+          onClick: () => openTable(name, "data"),
+        },
+        {
+          icon: <Pencil className="h-3.5 w-3.5" />,
+          label: t("tree.editView"),
+          onClick: () => void editViewRow(name),
+        },
+        {
+          icon: <FileCode2 className="h-3.5 w-3.5" />,
+          label: t("tree.selectAll", { name }),
+          onClick: () => openSelectAllForTable(name),
+        },
+        {
+          icon: <FileCode2 className="h-3.5 w-3.5" />,
+          label: t("tree.emptyQuery"),
+          onClick: openEmptyQuery,
+        },
+        { separator: true },
+        {
+          icon: <Copy className="h-3.5 w-3.5" />,
+          label: t("tablesList.copy"),
+          onClick: () => void handleCopy(),
+        },
+        { separator: true },
+        {
+          icon: <Download className="h-3.5 w-3.5" />,
+          label: t("tree.export"),
+          onClick: () => void startTableExport(connectionId, schema, name),
+        },
+        {
+          icon: <FileText className="h-3.5 w-3.5" />,
+          label: t("tree.sqlDump"),
+          onClick: () => openSqlDumpFor([name]),
+        },
+        { separator: true },
+        {
+          icon: <Trash2 className="h-3.5 w-3.5" />,
+          label: t("tree.dropViewMenu"),
+          variant: "destructive",
+          onClick: () => void deleteView(name),
+        },
+      ]);
+      ctxMenu.openAt(e);
+      return;
+    }
+
     const copyCount = bulkTargets(name).length;
     const openLabel =
       copyCount > 1

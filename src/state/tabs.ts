@@ -45,6 +45,7 @@ export type TabKind =
       schema?: string;
     }
   | { kind: "query-history"; connectionId: Uuid }
+  | { kind: "scheduled-backups"; connectionId: Uuid }
   | { kind: "processes"; connectionId: Uuid }
   | { kind: "users"; connectionId: Uuid }
   | {

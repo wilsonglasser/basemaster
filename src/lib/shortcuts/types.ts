@@ -14,4 +14,8 @@ export interface ShortcutAction {
   scope: ShortcutScope;
   /** If true, fires even when focus is in input/textarea (useful for Ctrl+K). */
   allowInInputs?: boolean;
+  /** If true, the action only fires while the user is interacting with the
+   *  sidebar : when focus/pointer is in the main panel the key is left alone
+   *  so the grid/editor can handle it (e.g. Delete on a grid row). */
+  sidebarOnly?: boolean;
 }

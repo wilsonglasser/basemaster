@@ -150,6 +150,7 @@ export const SHORTCUTS: ShortcutAction[] = [
     description: "Renomeia tabela/schema/conexão/pasta selecionado",
     defaultBinding: "F2",
     scope: "global",
+    sidebarOnly: true,
   },
   {
     id: "delete.selected",
@@ -159,6 +160,7 @@ export const SHORTCUTS: ShortcutAction[] = [
       "Abre o prompt de remoção da tabela/schema/conexão/saved-query selecionado",
     defaultBinding: "Delete",
     scope: "global",
+    sidebarOnly: true,
   },
 
   // --- Global ---

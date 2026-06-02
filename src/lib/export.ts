@@ -100,15 +100,28 @@ export function buildXlsx(
   return new Uint8Array(out);
 }
 
-/** Write bytes to a path — wrapper for the Rust command. */
+/** base64-encode bytes without blowing the call stack on large inputs
+ *  (`String.fromCharCode(...bytes)` overflows the arg list past ~100k). */
+function toBase64(data: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < data.length; i += CHUNK) {
+    binary += String.fromCharCode(...data.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/** Write bytes to a path — wrapper for the Rust command. Sends base64
+ *  rather than a JSON byte-array: the latter explodes on the IPC bridge
+ *  and can OOM the WebView renderer on large files. */
 export async function writeFile(
   path: string,
   data: Uint8Array,
   append = false,
 ): Promise<void> {
-  await invoke("save_file", {
+  await invoke("save_file_base64", {
     path,
-    data: Array.from(data),
+    dataBase64: toBase64(data),
     append,
   });
 }

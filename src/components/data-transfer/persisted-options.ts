@@ -28,6 +28,7 @@ export interface PersistedTransferOptions {
   copyTriggers: boolean;
   intraTableWorkers: number;
   intraTableMinRows: number;
+  deferSecondaryIndexes: boolean;
 }
 
 const TRANSFER_OPTS_KEY = "basemaster.transferOptions";
@@ -61,6 +62,7 @@ export function buildDefaultTransferOptions(
     copyTriggers: true,
     intraTableWorkers: 1,
     intraTableMinRows: 10000,
+    deferSecondaryIndexes: true,
   };
 }
 
