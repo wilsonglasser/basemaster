@@ -69,16 +69,22 @@ export function Sidebar({ className }: SidebarProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
 
-  // Typing-to-search: any letter/number typed outside an
-  // input/textarea/contenteditable/CodeMirror goes to the sidebar's search
-  // field. Doesn't require focus literally inside the aside — in the normal
-  // state focus is on `body`, which isn't a descendant.
+  // Typing-to-search: a letter/number typed while nothing meaningful is focused
+  // routes to the sidebar's search field. Allowlist, not blocklist: only fire
+  // when focus is on `body` (the normal idle state) or already inside the
+  // sidebar. Anything that grabs focus to consume keystrokes itself - the data
+  // grid canvas, an edit overlay, inputs, CodeMirror - is left alone, so typing
+  // to fill a grid column no longer leaks into this box.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key.length !== 1) return;
       if (!/[\p{L}\p{N}]/u.test(e.key)) return;
       const t = e.target as HTMLElement | null;
+      const sidebar = sidebarRef.current;
+      const inScope =
+        t === document.body || (!!t && !!sidebar && sidebar.contains(t));
+      if (!inScope) return;
       if (t) {
         const tag = t.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
