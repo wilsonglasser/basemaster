@@ -190,6 +190,45 @@ pub trait Driver: Send + Sync {
     async fn query(&self, schema: Option<&str>, sql: &str) -> Result<QueryResult>;
     async fn execute(&self, schema: Option<&str>, sql: &str) -> Result<ExecuteResult>;
 
+    /// Runs `pre` (session prelude, e.g. `SET FOREIGN_KEY_CHECKS=0`) then every
+    /// statement in `statements` inside ONE transaction on a SINGLE pooled
+    /// connection, committing once at the end. Bulk import uses this so a dump
+    /// pays one commit per batch instead of one per row (the dominant cost on
+    /// InnoDB/SQLite, where each autocommit is an fsync), and the prelude runs
+    /// once per batch instead of being prepended to every statement.
+    ///
+    /// All-or-nothing: on the first failing statement the tx rolls back (sqlx
+    /// rolls back automatically when the handle drops) and the error is
+    /// returned. The caller is expected to fall back to per-statement execution
+    /// to isolate/skip the offender. Returns total `rows_affected`.
+    ///
+    /// Default: no real tx — prepends `pre` to each statement and runs them via
+    /// `execute` (autocommit). Correct but slow; real drivers override.
+    ///
+    /// Drivers that override do the actual `sqlx::Transaction` work inside a
+    /// `tokio::spawn`ed `'static` task: a `&mut *tx` executor call cannot live
+    /// in a boxed `Send + 'a` future (the `for<'a>` HRTB on
+    /// `Executor for &mut Connection` fails — the wall that also blocks
+    /// `begin_txn`), but a concrete `'static` spawned future sidesteps it.
+    async fn execute_batch_tx(
+        &self,
+        schema: Option<&str>,
+        pre: &[String],
+        statements: &[String],
+    ) -> Result<u64> {
+        let prelude = pre.join("; ");
+        let mut total = 0u64;
+        for s in statements {
+            let sql = if prelude.is_empty() {
+                s.clone()
+            } else {
+                format!("{}; {}", prelude, s)
+            };
+            total += self.execute(schema, &sql).await?.rows_affected;
+        }
+        Ok(total)
+    }
+
     /// Aborts any currently-running query whose SQL contains `marker` —
     /// a caller-provided tag that's been embedded as a SQL comment in
     /// the target statement. Each driver queries its respective system

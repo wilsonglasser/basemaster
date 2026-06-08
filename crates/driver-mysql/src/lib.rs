@@ -539,6 +539,16 @@ impl Driver for MysqlDriver {
         })
     }
 
+    async fn execute_batch_tx(
+        &self,
+        schema: Option<&str>,
+        pre: &[String],
+        statements: &[String],
+    ) -> Result<u64> {
+        let pool = self.pool().await?;
+        batch_on_pool(pool, schema.map(str::to_string), pre.to_vec(), statements.to_vec()).await
+    }
+
     async fn cancel_by_marker(&self, marker: &str) -> Result<()> {
         let pool = self.pool().await?;
         // Processlist.Info contains the SQL with our /* marker */ comment
@@ -798,6 +808,46 @@ impl Driver for MysqlDriver {
 
 fn escape_ident(s: &str) -> String {
     s.replace('`', "``")
+}
+
+/// Runs `pre` + `statements` in one `sqlx::Transaction` (auto-rollback on drop).
+///
+/// A `&mut *tx` executor borrow held across `.await` can't satisfy the `Send`
+/// bound `async_trait` requires (the `for<'a> Executor for &mut Connection`
+/// HRTB wall that also blocks `begin_txn`). Escape hatch: drive the tx future
+/// with `Handle::block_on` (no `Send` requirement) inside a `spawn_blocking`
+/// thread, so blocking a runtime worker is not an issue. The import counts
+/// logical statements itself, so the returned `rows_affected` is unused (0).
+async fn batch_on_pool(
+    pool: MySqlPool,
+    schema: Option<String>,
+    pre: Vec<String>,
+    statements: Vec<String>,
+) -> Result<u64> {
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        handle.block_on(async move {
+            let mut tx = pool.begin().await.map_err(|e| Error::Sql(e.to_string()))?;
+            if let Some(s) = schema.as_deref() {
+                if !s.is_empty() {
+                    sqlx::raw_sql(&format!("USE `{}`", escape_ident(s)))
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| Error::Sql(e.to_string()))?;
+                }
+            }
+            for sql in pre.iter().chain(&statements) {
+                sqlx::raw_sql(sql)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| Error::Sql(e.to_string()))?;
+            }
+            tx.commit().await.map_err(|e| Error::Sql(e.to_string()))?;
+            Ok::<u64, Error>(0)
+        })
+    })
+    .await
+    .map_err(|e| Error::Sql(format!("batch task join: {}", e)))?
 }
 
 /// Keepalive loop: every 30s sends SELECT 1 on a pool connection.

@@ -74,6 +74,44 @@ fn quote_ident_raw(ident: &str) -> String {
     format!("\"{}\"", ident.replace('"', "\"\""))
 }
 
+/// Runs `pre` + `statements` in one `sqlx::Transaction` (auto-rollback on drop).
+/// Driven by `Handle::block_on` inside `spawn_blocking` to dodge the
+/// `async_trait` `Send`/HRTB wall on the `&mut *tx` executor borrow — see the
+/// MySQL/SQLite drivers' `batch_on_pool` for the full rationale. The import
+/// counts logical statements itself, so the returned count is unused (0).
+async fn batch_on_pool(
+    pool: PgPool,
+    schema: Option<String>,
+    pre: Vec<String>,
+    statements: Vec<String>,
+) -> Result<u64> {
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        handle.block_on(async move {
+            let mut tx = pool.begin().await.map_err(|e| Error::Sql(e.to_string()))?;
+            if let Some(s) = schema.as_deref() {
+                if !s.is_empty() {
+                    let sql = format!("SET search_path TO {}, public", quote_ident_raw(s));
+                    sqlx::query(&sql)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| Error::Sql(e.to_string()))?;
+                }
+            }
+            for sql in pre.iter().chain(&statements) {
+                sqlx::query(sql)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| Error::Sql(e.to_string()))?;
+            }
+            tx.commit().await.map_err(|e| Error::Sql(e.to_string()))?;
+            Ok::<u64, Error>(0)
+        })
+    })
+    .await
+    .map_err(|e| Error::Sql(format!("batch task join: {}", e)))?
+}
+
 #[async_trait]
 impl Driver for PostgresDriver {
     fn dialect(&self) -> &'static str {
@@ -485,6 +523,16 @@ impl Driver for PostgresDriver {
             last_insert_id: None, // PG has no simple equivalent; RETURNING via query.
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
+    }
+
+    async fn execute_batch_tx(
+        &self,
+        schema: Option<&str>,
+        pre: &[String],
+        statements: &[String],
+    ) -> Result<u64> {
+        let pool = self.pool().await?;
+        batch_on_pool(pool, schema.map(str::to_string), pre.to_vec(), statements.to_vec()).await
     }
 
     async fn cancel_by_marker(&self, marker: &str) -> Result<()> {

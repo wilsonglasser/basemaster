@@ -286,6 +286,19 @@ impl Driver for SqliteDriver {
         })
     }
 
+    async fn execute_batch_tx(
+        &self,
+        _schema: Option<&str>,
+        pre: &[String],
+        statements: &[String],
+    ) -> Result<u64> {
+        // Biggest win here: SQLite fsyncs on every autocommit, so one COMMIT per
+        // batch instead of per row is a large speedup. The tx work runs in a
+        // spawned 'static task (owned args) — see `batch_on_pool`.
+        let pool = self.pool().await?;
+        batch_on_pool(pool, pre.to_vec(), statements.to_vec()).await
+    }
+
     async fn update_cell(
         &self,
         _schema: &str,
@@ -488,6 +501,41 @@ impl Driver for SqliteDriver {
         let total: i64 = row.try_get(0).map_err(|e| Error::Sql(e.to_string()))?;
         Ok(total.max(0) as u64)
     }
+}
+
+/// Runs one statement on an OWNED connection and hands the connection back
+/// (always, even on error). Taking `conn` by value keeps the `&mut *conn`
+/// executor borrow fully inside this fn's own frame — it never crosses an
+/// `.await` in the caller's future, which is what trips the
+/// `for<'a> Executor for &mut Connection` HRTB once that future must be `Send`.
+/// See <https://github.com/launchbadge/sqlx/issues/1170>.
+/// Runs `pre` + `statements` in one `sqlx::Transaction` (auto-rollback on drop).
+///
+/// A `&mut *tx` executor borrow held across `.await` makes the future fail the
+/// `Send` bound that `async_trait` requires (the `for<'a> Executor for &mut
+/// Connection` HRTB the compiler can't satisfy — the same wall that blocks
+/// `begin_txn`). The escape hatch: run the tx future via `Handle::block_on`,
+/// which has NO `Send` requirement, inside a `spawn_blocking` thread (so
+/// blocking the current runtime worker is not an issue).
+async fn batch_on_pool(pool: SqlitePool, pre: Vec<String>, statements: Vec<String>) -> Result<u64> {
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        handle.block_on(async move {
+            let mut tx = pool.begin().await.map_err(|e| Error::Sql(e.to_string()))?;
+            for sql in pre.iter().chain(&statements) {
+                sqlx::raw_sql(sql)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| Error::Sql(e.to_string()))?;
+            }
+            tx.commit().await.map_err(|e| Error::Sql(e.to_string()))?;
+            // rows_affected isn't tracked per-batch; the import counts logical
+            // statements itself. Return 0.
+            Ok::<u64, Error>(0)
+        })
+    })
+    .await
+    .map_err(|e| Error::Sql(format!("batch task join: {}", e)))?
 }
 
 fn build_where_clause<D: Driver + ?Sized>(

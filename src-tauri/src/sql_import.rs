@@ -573,7 +573,19 @@ struct ExecCtx {
     source_dialect: Dialect,
     target_dialect: Dialect,
     session_prelude: String,
+    /// Session SETs run ONCE at the start of a batched transaction (so the
+    /// per-statement `session_prelude` isn't paid per INSERT). MySQL-only —
+    /// empty for other targets, since the SETs are MySQL syntax.
+    batch_pre: Vec<String>,
 }
+
+/// Flush the pending insert batch once it reaches this many statements...
+const BATCH_MAX_STMTS: usize = 500;
+/// ...or this many bytes of accumulated SQL (whichever comes first).
+const BATCH_MAX_BYTES: usize = 4 * 1024 * 1024;
+/// Cap for a single coalesced INSERT — kept well under MySQL's default
+/// `max_allowed_packet` (4-64 MB) so a merged multi-row insert never overflows.
+const COALESCE_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Default)]
 struct Prog {
@@ -613,6 +625,20 @@ fn build_exec_ctx(
     let needs_translate = source_dialect != Dialect::Unknown
         && target_dialect != Dialect::Unknown
         && source_dialect != target_dialect;
+    // The batched-tx prelude mirrors `session_prelude`'s SETs, but as discrete
+    // statements (run once on the pinned conn) and only for MySQL targets.
+    let mut batch_pre = Vec::new();
+    if target_dialect == Dialect::Mysql {
+        if opts.disable_fk_checks {
+            batch_pre.push("SET FOREIGN_KEY_CHECKS=0".to_string());
+        }
+        if opts.disable_unique_checks {
+            batch_pre.push("SET UNIQUE_CHECKS=0".to_string());
+        }
+        if opts.preserve_zero_auto_increment {
+            batch_pre.push("SET sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO')".to_string());
+        }
+    }
     ExecCtx {
         schema: opts.schema.clone(),
         target_is_pg: target_dialect == Dialect::Postgres,
@@ -620,15 +646,17 @@ fn build_exec_ctx(
         source_dialect,
         target_dialect,
         session_prelude: session_prelude.to_string(),
+        batch_pre,
     }
 }
 
-/// Runs one statement: skip-checks, translate, prelude, execute.
-/// `Ok(true)` executed, `Ok(false)` skipped (not counted), `Err` db error.
-async fn exec_one(target: &dyn Driver, ctx: &ExecCtx, stmt: &str) -> Result<bool, String> {
+/// Normalizes a raw statement to the final SQL to run: drops empties and
+/// already-applied session SETs, translates dialects, and skips statements with
+/// no analog on the target. `None` means "skip" (not counted, not an error).
+fn prepare_stmt(ctx: &ExecCtx, stmt: &str) -> Option<String> {
     let trimmed = stmt.trim();
     if trimmed.is_empty() || is_duplicate_session_set(trimmed) {
-        return Ok(false);
+        return None;
     }
     let translated = if ctx.needs_translate {
         normalize_for(trimmed, ctx.source_dialect, ctx.target_dialect)
@@ -637,8 +665,14 @@ async fn exec_one(target: &dyn Driver, ctx: &ExecCtx, stmt: &str) -> Result<bool
     };
     let final_sql = translated.trim();
     if final_sql.is_empty() || should_skip_for_target(final_sql, ctx.target_dialect) {
-        return Ok(false);
+        return None;
     }
+    Some(final_sql.to_string())
+}
+
+/// Executes an already-prepared statement (autocommit), prepending the
+/// per-statement session prelude for non-PG targets.
+async fn run_prepared(target: &dyn Driver, ctx: &ExecCtx, final_sql: &str) -> Result<(), String> {
     let wrapped = if ctx.target_is_pg {
         final_sql.to_string()
     } else {
@@ -647,8 +681,254 @@ async fn exec_one(target: &dyn Driver, ctx: &ExecCtx, stmt: &str) -> Result<bool
     target
         .execute(ctx.schema.as_deref(), &wrapped)
         .await
-        .map(|_| true)
+        .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Max transient-error retries before giving up on a statement/batch.
+const TRANSIENT_MAX_RETRIES: u32 = 8;
+/// Base backoff, doubled each attempt and capped. Gives Windows TIME_WAIT
+/// slots time to drain and a dropped server time to come back.
+const TRANSIENT_BACKOFF_BASE_MS: u64 = 500;
+const TRANSIENT_BACKOFF_MAX_MS: u64 = 15_000;
+
+/// Transport-level failures — the link broke, the statement itself is fine.
+/// Distinct from a SQL error on a bad row: worth a backoff+retry rather than
+/// being skipped (silent data loss) or aborting the whole import. Covers the
+/// Windows socket errors (incl. 10048 = local ephemeral port exhausted, the
+/// cascade symptom of a reconnect storm after the server drops) plus the
+/// generic sqlx "communicating" / pool messages.
+fn is_transient(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("error communicating with database")
+        || m.contains("os error 10048") // address in use — local ports exhausted
+        || m.contains("os error 10053") // connection aborted by host
+        || m.contains("os error 10054") // connection reset by peer
+        || m.contains("os error 10060") // connect timed out
+        || m.contains("os error 10061") // connection refused
+        || m.contains("broken pipe")
+        || m.contains("connection reset")
+        || m.contains("connection refused")
+        || m.contains("pool timed out")
+}
+
+/// Sleeps an exponential backoff for retry `attempt` (0-based).
+async fn transient_backoff(attempt: u32) {
+    let ms = (TRANSIENT_BACKOFF_BASE_MS << attempt.min(5)).min(TRANSIENT_BACKOFF_MAX_MS);
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+}
+
+/// Runs an already-prepared statement, retrying transport failures with
+/// backoff. SQL errors (bad row) return immediately. Bails between retries if
+/// the transfer was cancelled/aborted so a dead server doesn't pin the import.
+async fn run_prepared_resilient(
+    target: &dyn Driver,
+    ctx: &ExecCtx,
+    final_sql: &str,
+    control: &TransferControl,
+    abort: &AtomicBool,
+) -> Result<(), String> {
+    let mut attempt = 0u32;
+    loop {
+        match run_prepared(target, ctx, final_sql).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if !is_transient(&e)
+                    || attempt >= TRANSIENT_MAX_RETRIES
+                    || abort.load(Ordering::Relaxed)
+                    || !control.check().await
+                {
+                    return Err(e);
+                }
+                transient_backoff(attempt).await;
+                attempt += 1;
+            }
+        }
+    }
+}
+
+/// `exec_one` with transport-failure retry (see [`run_prepared_resilient`]).
+async fn exec_one_resilient(
+    target: &dyn Driver,
+    ctx: &ExecCtx,
+    stmt: &str,
+    control: &TransferControl,
+    abort: &AtomicBool,
+) -> Result<bool, String> {
+    match prepare_stmt(ctx, stmt) {
+        None => Ok(false),
+        Some(final_sql) => run_prepared_resilient(target, ctx, &final_sql, control, abort)
+            .await
+            .map(|_| true),
+    }
+}
+
+/// True for data statements worth batching into a transaction: `INSERT`/
+/// `REPLACE ... `. Other statements (DDL, SET, LOCK…) run inline.
+fn is_batchable_insert(sql: &str) -> bool {
+    let b = sql.trim_start().as_bytes();
+    at_word_ci(b, 0, b"INSERT") || at_word_ci(b, 0, b"REPLACE")
+}
+
+/// Splits `INSERT/REPLACE ... VALUES (..)(,(..))*` into `(prefix, tuples)` where
+/// `prefix` ends at the `VALUES` keyword and `tuples` is the comma-separated
+/// row groups. Returns `None` for anything that isn't a clean multi-tuple VALUES
+/// insert (e.g. `INSERT ... SELECT`, `ON DUPLICATE KEY UPDATE`, `SET` form) so
+/// the caller skips coalescing it.
+fn split_insert(stmt: &str) -> Option<(&str, &str)> {
+    let bytes = stmt.as_bytes();
+    let n = bytes.len();
+    if !(at_word_ci(bytes, 0, b"INSERT") || at_word_ci(bytes, 0, b"REPLACE")) {
+        return None;
+    }
+    // Scan to the `VALUES` keyword at paren depth 0, outside quotes.
+    let mut i = 0usize;
+    let mut depth = 0i32;
+    let mut values_end = None;
+    while i < n {
+        let b = bytes[i];
+        match b {
+            b'\'' | b'"' | b'`' => i = skip_quoted(bytes, i),
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth -= 1;
+                i += 1;
+            }
+            _ => {
+                if depth == 0
+                    && (b == b'V' || b == b'v')
+                    && at_word_ci(bytes, i, b"VALUES")
+                    && (i == 0 || !is_ident_byte(bytes[i - 1]))
+                {
+                    values_end = Some(i + 6);
+                    break;
+                }
+                i += 1;
+            }
+        }
+    }
+    let ve = values_end?;
+    let prefix = stmt[..ve].trim_end();
+    let tuples = stmt[ve..].trim_start();
+    if !tuples.starts_with('(') || !tuples_are_clean(tuples) {
+        return None;
+    }
+    Some((prefix, tuples))
+}
+
+/// Validates `tuples` is exactly balanced `(...)` groups separated by commas
+/// with nothing trailing — rejects `ON DUPLICATE KEY UPDATE` and other tails.
+fn tuples_are_clean(s: &str) -> bool {
+    let b = s.as_bytes();
+    let n = b.len();
+    let mut i = 0;
+    loop {
+        while i < n && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= n || b[i] != b'(' {
+            return false;
+        }
+        let mut depth = 0i32;
+        while i < n {
+            match b[i] {
+                b'\'' | b'"' | b'`' => i = skip_quoted(b, i),
+                b'(' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    i += 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+        if depth != 0 {
+            return false;
+        }
+        while i < n && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            return true;
+        }
+        if b[i] == b',' {
+            i += 1;
+            continue;
+        }
+        return false;
+    }
+}
+
+/// Merges consecutive INSERTs that share an identical `... VALUES` prefix into
+/// one extended insert, capped at `max_bytes`. Non-coalescable statements pass
+/// through unchanged. This is the lookahead "prepare the next inserts" step:
+/// many single-row `INSERT INTO t VALUES (..)` become `INSERT INTO t VALUES
+/// (..),(..),...`, cutting per-statement parse/execute overhead on the server.
+fn coalesce_inserts(stmts: &[String], max_bytes: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    // (prefix, accumulated full SQL) of the insert being extended.
+    let mut cur: Option<(String, String)> = None;
+    for s in stmts {
+        match split_insert(s) {
+            Some((prefix, tuples)) => {
+                if let Some((cp, acc)) = &mut cur {
+                    if cp == prefix && acc.len() + 1 + tuples.len() <= max_bytes {
+                        acc.push(',');
+                        acc.push_str(tuples);
+                        continue;
+                    }
+                    out.push(cur.take().unwrap().1);
+                }
+                cur = Some((prefix.to_string(), format!("{} {}", prefix, tuples)));
+            }
+            None => {
+                if let Some((_, acc)) = cur.take() {
+                    out.push(acc);
+                }
+                out.push(s.clone());
+            }
+        }
+    }
+    if let Some((_, acc)) = cur {
+        out.push(acc);
+    }
+    out
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Returns the index just past a quoted span starting at `i` (quote char
+/// `'`/`"`/`` ` ``), honoring backslash and doubled-quote escapes.
+fn skip_quoted(bytes: &[u8], i: usize) -> usize {
+    let q = bytes[i];
+    let n = bytes.len();
+    let mut j = i + 1;
+    while j < n {
+        let c = bytes[j];
+        if c == b'\\' && q != b'`' {
+            j += 2;
+            continue;
+        }
+        if c == q {
+            if j + 1 < n && bytes[j + 1] == q {
+                j += 2;
+                continue;
+            }
+            return j + 1;
+        }
+        j += 1;
+    }
+    n
 }
 
 fn emit_progress(app: &AppHandle, prog: &Prog, source: &str) {
@@ -671,6 +951,95 @@ fn emit_stmt_error(app: &AppHandle, index: u64, stmt: &str, message: &str) {
             message: message.to_string(),
         },
     );
+}
+
+/// Commits the pending insert batch as ONE transaction (coalescing same-prefix
+/// inserts first). On success the whole batch counts as `batch.len()` done
+/// statements. On any DB error the batch is replayed statement-by-statement in
+/// autocommit so the offending row is isolated, reported, and (with
+/// `continue_on_error`) skipped while the rest still apply. Returns `false` when
+/// the caller should stop (fatal error without `continue_on_error`).
+#[allow(clippy::too_many_arguments)]
+async fn flush_batch(
+    app: &AppHandle,
+    target: &dyn Driver,
+    ctx: &ExecCtx,
+    prog: &Prog,
+    emit_every: u32,
+    continue_on_error: bool,
+    first_err: &tokio::sync::Mutex<Option<String>>,
+    abort: &AtomicBool,
+    control: &TransferControl,
+    batch: &mut Vec<String>,
+    batch_bytes: &mut usize,
+) -> bool {
+    if batch.is_empty() {
+        return true;
+    }
+    let coalesced = coalesce_inserts(batch, COALESCE_MAX_BYTES);
+    let mut keep_going = true;
+    // Retry the whole batch tx on transport failures (server drop / port
+    // exhaustion) before falling back to slow per-statement replay. The tx
+    // rolls back fully on error, so a retry re-applies the batch cleanly.
+    let mut attempt = 0u32;
+    let batch_result = loop {
+        match target
+            .execute_batch_tx(ctx.schema.as_deref(), &ctx.batch_pre, &coalesced)
+            .await
+        {
+            Ok(_) => break Ok(()),
+            Err(e) => {
+                if is_transient(&e.to_string())
+                    && attempt < TRANSIENT_MAX_RETRIES
+                    && !abort.load(Ordering::Relaxed)
+                    && control.check().await
+                {
+                    transient_backoff(attempt).await;
+                    attempt += 1;
+                    continue;
+                }
+                break Err(e);
+            }
+        }
+    };
+    match batch_result {
+        Ok(()) => {
+            let n = batch.len() as u64;
+            prog.done.fetch_add(n, Ordering::Relaxed);
+            if emit_every > 0 {
+                emit_progress(app, prog, "data");
+            }
+        }
+        Err(_batch_err) => {
+            // The tx rolled back (driver guarantees it) — nothing was applied.
+            // Replay each statement on its own to apply the good rows and pin
+            // the bad one.
+            for s in batch.iter() {
+                match run_prepared_resilient(target, ctx, s, control, abort).await {
+                    Ok(()) => {
+                        prog.done.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        let idx = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
+                        prog.errs.fetch_add(1, Ordering::Relaxed);
+                        emit_stmt_error(app, idx, s, &e);
+                        if !continue_on_error {
+                            let mut g = first_err.lock().await;
+                            if g.is_none() {
+                                *g = Some(format!("stmt #{}: {}", idx, e));
+                            }
+                            abort.store(true, Ordering::Relaxed);
+                            keep_going = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    batch.clear();
+    *batch_bytes = 0;
+    keep_going
 }
 
 /// Drives the whole import: a blocking parser streams items, a coordinator
@@ -722,7 +1091,7 @@ async fn run_streaming_import(
                         data_rx.close();
                         break;
                     }
-                    match exec_one(&*target, &ctx, &stmt).await {
+                    match exec_one_resilient(&*target, &ctx, &stmt, &control, &abort).await {
                         Ok(false) => {}
                         Ok(true) => {
                             let n = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
@@ -756,12 +1125,26 @@ async fn run_streaming_import(
     let mut data_tx = Some(data_tx);
     let mut workers = Some(workers);
     let mut region = Region::Header;
+    // Inline-path insert batcher (foreign dumps + non-data regions). The
+    // parallel BM-dump data path is untouched.
+    let mut batch: Vec<String> = Vec::new();
+    let mut batch_bytes = 0usize;
     while let Some(item) = parse_rx.recv().await {
         if abort.load(Ordering::Relaxed) || !control.check().await {
             break;
         }
         match item {
             ParseItem::Marker(m) => {
+                // Commit pending inserts before any phase change so they land in
+                // order (and before the parallel barrier drains the pool).
+                if !flush_batch(
+                    app, &*target, &ctx, &prog, emit_every, continue_on_error,
+                    &first_err, &abort, control, &mut batch, &mut batch_bytes,
+                )
+                .await
+                {
+                    break;
+                }
                 let new_region = match m {
                     Marker::Dump => Region::Header,
                     Marker::Table => Region::Ddl,
@@ -795,32 +1178,65 @@ async fn run_streaming_import(
                         Some(tx) if tx.send(s).await.is_ok() => {}
                         _ => break,
                     }
-                } else {
-                    match exec_one(&*target, &ctx, &s).await {
-                        Ok(false) => {}
-                        Ok(true) => {
-                            let n = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
-                            if emit_every > 0 && n.is_multiple_of(emit_every as u64) {
-                                emit_progress(app, &prog, region.label());
-                            }
+                } else if let Some(final_sql) = prepare_stmt(&ctx, &s) {
+                    if is_batchable_insert(&final_sql) {
+                        batch_bytes += final_sql.len();
+                        batch.push(final_sql);
+                        if (batch.len() >= BATCH_MAX_STMTS || batch_bytes >= BATCH_MAX_BYTES)
+                            && !flush_batch(
+                                app, &*target, &ctx, &prog, emit_every, continue_on_error,
+                                &first_err, &abort, control, &mut batch, &mut batch_bytes,
+                            )
+                            .await
+                        {
+                            break;
                         }
-                        Err(e) => {
-                            let idx = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
-                            prog.errs.fetch_add(1, Ordering::Relaxed);
-                            emit_stmt_error(app, idx, &s, &e);
-                            if !continue_on_error {
-                                let mut g = first_err.lock().await;
-                                if g.is_none() {
-                                    *g = Some(format!("stmt #{}: {}", idx, e));
+                    } else {
+                        // Non-insert (DDL/SET/…): commit pending inserts first so
+                        // ordering against this statement is preserved.
+                        if !flush_batch(
+                            app, &*target, &ctx, &prog, emit_every, continue_on_error,
+                            &first_err, &abort, control, &mut batch, &mut batch_bytes,
+                        )
+                        .await
+                        {
+                            break;
+                        }
+                        match run_prepared_resilient(&*target, &ctx, &final_sql, control, &abort).await {
+                            Ok(()) => {
+                                let n = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
+                                if emit_every > 0 && n.is_multiple_of(emit_every as u64) {
+                                    emit_progress(app, &prog, region.label());
                                 }
-                                abort.store(true, Ordering::Relaxed);
-                                break;
+                            }
+                            Err(e) => {
+                                let idx = prog.done.fetch_add(1, Ordering::Relaxed) + 1;
+                                prog.errs.fetch_add(1, Ordering::Relaxed);
+                                emit_stmt_error(app, idx, &final_sql, &e);
+                                if !continue_on_error {
+                                    let mut g = first_err.lock().await;
+                                    if g.is_none() {
+                                        *g = Some(format!("stmt #{}: {}", idx, e));
+                                    }
+                                    abort.store(true, Ordering::Relaxed);
+                                    break;
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    // Commit the trailing batch (unless we stopped early — then leave it
+    // uncommitted, matching the partial-import-on-cancel semantics).
+    if !abort.load(Ordering::Relaxed) {
+        let _ = flush_batch(
+            app, &*target, &ctx, &prog, emit_every, continue_on_error,
+            &first_err, &abort, control, &mut batch, &mut batch_bytes,
+        )
+        .await;
     }
 
     // Drop the receiver first : if we broke early (abort), this unblocks the
@@ -1162,5 +1578,106 @@ mod tests {
     fn at_word_ci_rejects_prefix_of_longer_word() {
         assert!(!at_word_ci(b"DELIMITERED", 0, b"DELIMITER"));
         assert!(!at_word_ci(b"DELIMITER_FOO", 0, b"DELIMITER"));
+    }
+
+    #[test]
+    fn batchable_recognizes_insert_and_replace() {
+        assert!(is_batchable_insert("INSERT INTO t VALUES (1)"));
+        assert!(is_batchable_insert("insert into t values (1)"));
+        assert!(is_batchable_insert("REPLACE INTO t VALUES (1)"));
+        assert!(!is_batchable_insert("CREATE TABLE t (id INT)"));
+        assert!(!is_batchable_insert("SELECT 1"));
+        assert!(!is_batchable_insert("INSERTED INTO t")); // word-boundary
+    }
+
+    #[test]
+    fn split_insert_basic() {
+        let (p, t) = split_insert("INSERT INTO `t` (`a`,`b`) VALUES (1,'x')").unwrap();
+        assert_eq!(p, "INSERT INTO `t` (`a`,`b`) VALUES");
+        assert_eq!(t, "(1,'x')");
+    }
+
+    #[test]
+    fn split_insert_multi_tuple() {
+        let (p, t) = split_insert("INSERT INTO t VALUES (1),(2),(3)").unwrap();
+        assert_eq!(p, "INSERT INTO t VALUES");
+        assert_eq!(t, "(1),(2),(3)");
+    }
+
+    #[test]
+    fn split_insert_ignores_keyword_inside_strings_and_idents() {
+        // `VALUES` as a column name and inside a string literal must not match.
+        let s = "INSERT INTO t (`values`) VALUES ('a (VALUES) ;b')";
+        let (p, t) = split_insert(s).unwrap();
+        assert_eq!(p, "INSERT INTO t (`values`) VALUES");
+        assert_eq!(t, "('a (VALUES) ;b')");
+    }
+
+    #[test]
+    fn split_insert_rejects_non_values_forms() {
+        // INSERT ... SELECT has no VALUES tuples.
+        assert!(split_insert("INSERT INTO t SELECT * FROM u").is_none());
+        // ON DUPLICATE KEY UPDATE leaves a trailing tail → not coalescable.
+        assert!(
+            split_insert("INSERT INTO t VALUES (1) ON DUPLICATE KEY UPDATE a=1").is_none()
+        );
+        // SET form.
+        assert!(split_insert("INSERT INTO t SET a=1").is_none());
+        assert!(split_insert("CREATE TABLE t (id INT)").is_none());
+    }
+
+    #[test]
+    fn coalesce_merges_same_prefix() {
+        let stmts = vec![
+            "INSERT INTO t VALUES (1)".to_string(),
+            "INSERT INTO t VALUES (2)".to_string(),
+            "INSERT INTO t VALUES (3)".to_string(),
+        ];
+        let out = coalesce_inserts(&stmts, COALESCE_MAX_BYTES);
+        assert_eq!(out, vec!["INSERT INTO t VALUES (1),(2),(3)"]);
+    }
+
+    #[test]
+    fn coalesce_breaks_on_different_prefix() {
+        let stmts = vec![
+            "INSERT INTO a VALUES (1)".to_string(),
+            "INSERT INTO a VALUES (2)".to_string(),
+            "INSERT INTO b VALUES (9)".to_string(),
+        ];
+        let out = coalesce_inserts(&stmts, COALESCE_MAX_BYTES);
+        assert_eq!(
+            out,
+            vec!["INSERT INTO a VALUES (1),(2)", "INSERT INTO b VALUES (9)"]
+        );
+    }
+
+    #[test]
+    fn coalesce_respects_byte_cap() {
+        let stmts = vec![
+            "INSERT INTO t VALUES (1)".to_string(),
+            "INSERT INTO t VALUES (2)".to_string(),
+        ];
+        // Cap below the merged size forces two separate statements.
+        let out = coalesce_inserts(&stmts, 24);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn coalesce_passes_through_non_inserts() {
+        let stmts = vec![
+            "INSERT INTO t VALUES (1)".to_string(),
+            "CREATE TABLE u (id INT)".to_string(),
+            "INSERT INTO t VALUES (2)".to_string(),
+        ];
+        let out = coalesce_inserts(&stmts, COALESCE_MAX_BYTES);
+        // The DDL breaks the run; the two inserts don't merge across it.
+        assert_eq!(
+            out,
+            vec![
+                "INSERT INTO t VALUES (1)",
+                "CREATE TABLE u (id INT)",
+                "INSERT INTO t VALUES (2)",
+            ]
+        );
     }
 }
