@@ -31,6 +31,9 @@ import type {
   QueryRunBatch,
   SavedQuery,
   SavedQueryDraft,
+  SavedTransfer,
+  SavedTransferDraft,
+  MultiTransferOptions,
   ScheduledBackup,
   ScheduledBackupDraft,
   SchemaFolder,
@@ -309,6 +312,8 @@ export const ipc = {
   transfer: {
     start: (opts: TransferOptions) =>
       invoke<TransferDone>("data_transfer_start", { opts }),
+    startMulti: (opts: MultiTransferOptions) =>
+      invoke<TransferDone>("data_transfer_start_multi", { opts }),
     pause: () => invoke<void>("data_transfer_pause"),
     resume: () => invoke<void>("data_transfer_resume"),
     stop: () => invoke<void>("data_transfer_stop"),
@@ -429,6 +434,16 @@ export const ipc = {
     update: (id: Uuid, draft: SavedQueryDraft) =>
       invoke<SavedQuery>("saved_queries_update", { id, draft }),
     delete: (id: Uuid) => invoke<void>("saved_queries_delete", { id }),
+  },
+
+  savedTransfers: {
+    list: () => invoke<SavedTransfer[]>("saved_transfers_list"),
+    get: (id: Uuid) => invoke<SavedTransfer>("saved_transfers_get", { id }),
+    create: (draft: SavedTransferDraft) =>
+      invoke<SavedTransfer>("saved_transfers_create", { draft }),
+    update: (id: Uuid, draft: SavedTransferDraft) =>
+      invoke<SavedTransfer>("saved_transfers_update", { id, draft }),
+    delete: (id: Uuid) => invoke<void>("saved_transfers_delete", { id }),
   },
 
   scheduledBackups: {

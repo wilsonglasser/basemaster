@@ -15,7 +15,8 @@ use basemaster_core::{
 use basemaster_store::{
     secrets, ConnectionDraft, ConnectionFolder, ConnectionFolderDraft,
     ConnectionProfile, QueryHistoryDraft, QueryHistoryEntry, SavedQuery,
-    SavedQueryDraft, ScheduledBackup, ScheduledBackupDraft, SchemaFolder,
+    SavedQueryDraft, SavedTransfer, SavedTransferDraft, ScheduledBackup,
+    ScheduledBackupDraft, SchemaFolder,
     SchemaFolderAssignment, TableFolder, TableFolderAssignment,
 };
 use chrono::Utc;
@@ -1427,6 +1428,31 @@ pub async fn data_transfer_start(
     crate::data_transfer::run_transfer(app, opts, source, target, control).await
 }
 
+/// Multi-schema variant: same source/target connection pair, N schema jobs.
+/// Emits `transfer:job_progress` between jobs plus the usual per-table events.
+#[tauri::command]
+pub async fn data_transfer_start_multi(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    opts: crate::data_transfer::MultiTransferOptions,
+) -> R<crate::data_transfer::TransferDone> {
+    let (source, target) = {
+        let active = state.active.read().await;
+        let src = active
+            .get(&opts.template.source_connection_id)
+            .cloned()
+            .ok_or_else(|| "conexão de origem não está aberta".to_string())?;
+        let tgt = active
+            .get(&opts.template.target_connection_id)
+            .cloned()
+            .ok_or_else(|| "conexão de destino não está aberta".to_string())?;
+        (src, tgt)
+    };
+    state.transfer_control.reset();
+    let control = state.transfer_control.clone();
+    crate::data_transfer::run_transfer_multi(app, opts, source, target, control).await
+}
+
 #[tauri::command]
 pub async fn data_transfer_pause(state: State<'_, AppState>) -> R<()> {
     state.transfer_control.pause();
@@ -2271,6 +2297,53 @@ pub async fn saved_queries_delete(
     id: Uuid,
 ) -> R<()> {
     state.store.saved_queries().delete(id).await.map_err(err)
+}
+
+// -------------------------------------------------------- saved transfers
+
+#[tauri::command]
+pub async fn saved_transfers_list(
+    state: State<'_, AppState>,
+) -> R<Vec<SavedTransfer>> {
+    state.store.saved_transfers().list().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn saved_transfers_get(
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<SavedTransfer> {
+    state.store.saved_transfers().get(id).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn saved_transfers_create(
+    state: State<'_, AppState>,
+    draft: SavedTransferDraft,
+) -> R<SavedTransfer> {
+    state.store.saved_transfers().create(draft).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn saved_transfers_update(
+    state: State<'_, AppState>,
+    id: Uuid,
+    draft: SavedTransferDraft,
+) -> R<SavedTransfer> {
+    state
+        .store
+        .saved_transfers()
+        .update(id, draft)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn saved_transfers_delete(
+    state: State<'_, AppState>,
+    id: Uuid,
+) -> R<()> {
+    state.store.saved_transfers().delete(id).await.map_err(err)
 }
 
 // -------------------------------------------------------- scheduled backups

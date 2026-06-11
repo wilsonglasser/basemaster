@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import type { Uuid } from "@/lib/types";
+import type { TransferJob, Uuid } from "@/lib/types";
 import { useTabState } from "@/state/tab-state";
 
 export type TabKind =
@@ -92,7 +92,12 @@ export type TabKind =
       /** When pasting a folder: after transfer, create a folder with this
        *  name on the target schema and assign the transferred tables. */
       targetFolderName?: string;
-    };
+      /** Pre-seeded schema jobs (e.g. loaded from a saved transfer). */
+      initialJobs?: TransferJob[];
+      /** If opened from a saved preset, its id : "Save" updates it in place. */
+      savedTransferId?: Uuid;
+    }
+  | { kind: "saved-transfers-list" };
 
 export interface Tab {
   id: string;

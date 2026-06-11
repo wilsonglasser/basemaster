@@ -14,6 +14,7 @@ pub mod connection_folders;
 pub mod connections;
 pub mod query_history;
 pub mod saved_queries;
+pub mod saved_transfers;
 pub mod scheduled_backups;
 pub mod schema_folders;
 pub mod secrets;
@@ -28,6 +29,7 @@ pub use query_history::{
     QueryHistoryDraft, QueryHistoryEntry, QueryHistoryRepo,
 };
 pub use saved_queries::{SavedQuery, SavedQueryDraft, SavedQueryRepo};
+pub use saved_transfers::{SavedTransfer, SavedTransferDraft, SavedTransferRepo};
 pub use scheduled_backups::{
     ScheduledBackup, ScheduledBackupDraft, ScheduledBackupRepo,
 };
@@ -140,6 +142,10 @@ impl Store {
 
     pub fn saved_queries(&self) -> SavedQueryRepo<'_> {
         SavedQueryRepo::new(&self.pool)
+    }
+
+    pub fn saved_transfers(&self) -> SavedTransferRepo<'_> {
+        SavedTransferRepo::new(&self.pool)
     }
 
     pub fn scheduled_backups(&self) -> ScheduledBackupRepo<'_> {

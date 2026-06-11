@@ -606,6 +606,8 @@ function iconFor(kind: TabKind) {
       return Save;
     case "data-transfer":
       return ArrowRightLeft;
+    case "saved-transfers-list":
+      return ArrowRightLeft;
     case "sql-dump":
       return FileText;
     case "sql-import":

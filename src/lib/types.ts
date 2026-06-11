@@ -400,6 +400,43 @@ export interface TransferOptions {
   defer_secondary_indexes?: boolean;
 }
 
+/** One schema-to-schema unit in a multi-schema transfer. */
+export interface TransferJob {
+  source_schema: string;
+  target_schema: string;
+  tables: string[];
+}
+
+/** Multi-schema transfer: a flattened `TransferOptions` (the shared template:
+ *  connection ids + option flags; its schema/tables fields are ignored) plus
+ *  the list of jobs. */
+export interface MultiTransferOptions extends TransferOptions {
+  jobs: TransferJob[];
+}
+
+/** Emitted as `transfer:job_progress` before each schema job starts. */
+export interface JobProgress {
+  index: number;
+  total: number;
+  source_schema: string;
+  target_schema: string;
+}
+
+/** A saved transfer preset. `config` is the JSON blob the wizard serializes
+ *  (endpoints + jobs + options); global, not bound to a connection. */
+export interface SavedTransfer {
+  id: Uuid;
+  name: string;
+  config: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface SavedTransferDraft {
+  name: string;
+  config: string;
+}
+
 export interface TableProgress {
   table: string;
   done: number;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Container, Database, Folder as FolderIcon, Moon, Plug, Plus, Search, Settings, Sun, Upload, X } from "lucide-react";
+import { ArrowRightLeft, Bookmark, Container, Database, Folder as FolderIcon, Moon, Plug, Plus, Search, Settings, Sun, Upload, X } from "lucide-react";
 
 import { useContextMenu, type ContextEntry } from "@/hooks/use-context-menu";
 import { ipc } from "@/lib/ipc";
@@ -147,6 +147,7 @@ export function Sidebar({ className }: SidebarProps) {
         <AddConnectionMenu />
         <NewFolderButton />
         <ImportConnectionsButton />
+        <DataTransferMenu />
       </div>
 
       <SidebarTreeArea>
@@ -328,6 +329,57 @@ function AddConnectionMenu() {
         title={t("sidebar.addMenuTitle")}
       >
         <Plus className="h-3.5 w-3.5" />
+      </button>
+      {menu.element}
+    </>
+  );
+}
+
+/** Header button : opens a new empty data-transfer tab or the saved-transfers
+ *  list. Saved transfers are global (span two connections), so they live here
+ *  rather than under a connection node. */
+function DataTransferMenu() {
+  const t = useT();
+  const openTab = useTabs((s) => s.open);
+  const openOrFocus = useTabs((s) => s.openOrFocus);
+
+  const newTransfer = () =>
+    openTab({
+      label: t("tree.dataTransfer"),
+      kind: { kind: "data-transfer" },
+    });
+
+  const openSaved = () =>
+    openOrFocus(
+      (tab) => tab.kind.kind === "saved-transfers-list",
+      () => ({
+        label: t("savedTransfers.title"),
+        kind: { kind: "saved-transfers-list" },
+      }),
+    );
+
+  const menu = useContextMenu([
+    {
+      icon: <ArrowRightLeft className="h-3.5 w-3.5" />,
+      label: t("savedTransfers.new"),
+      onClick: newTransfer,
+    },
+    {
+      icon: <Bookmark className="h-3.5 w-3.5" />,
+      label: t("savedTransfers.title"),
+      onClick: openSaved,
+    },
+  ]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => menu.openAt(e)}
+        className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title={t("savedTransfers.menuTitle")}
+      >
+        <ArrowRightLeft className="h-3.5 w-3.5" />
       </button>
       {menu.element}
     </>

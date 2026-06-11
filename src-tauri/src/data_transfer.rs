@@ -267,6 +267,85 @@ pub struct TransferDone {
     pub failed: u32,
 }
 
+/// One schema-to-schema unit inside a multi-schema transfer. Both schemas
+/// live on the same source/target connection pair (carried by
+/// `MultiTransferOptions`); only the schema names and table list vary.
+#[derive(Clone, Debug, Deserialize)]
+pub struct TransferJob {
+    pub source_schema: String,
+    pub target_schema: String,
+    pub tables: Vec<String>,
+}
+
+/// Multi-schema transfer. `template` carries the shared connection ids and
+/// all option flags (a normal `TransferOptions`); its `source_schema`,
+/// `target_schema` and `tables` fields are ignored — each job overrides them.
+/// Frontend flattens a `TransferOptions` and adds `jobs`, so the JSON shape
+/// of the options is unchanged.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MultiTransferOptions {
+    pub jobs: Vec<TransferJob>,
+    #[serde(flatten)]
+    pub template: TransferOptions,
+}
+
+impl MultiTransferOptions {
+    fn job_options(&self, job: &TransferJob) -> TransferOptions {
+        let mut o = self.template.clone();
+        o.source_schema = job.source_schema.clone();
+        o.target_schema = job.target_schema.clone();
+        o.tables = job.tables.clone();
+        o
+    }
+}
+
+/// Emitted as `transfer:job_progress` before each schema job starts. Lets the
+/// frontend group per-table events by the current job (events arrive strictly
+/// ordered, one job fully drains before the next begins).
+#[derive(Clone, Debug, Serialize)]
+pub struct JobProgress {
+    pub index: u32,
+    pub total: u32,
+    pub source_schema: String,
+    pub target_schema: String,
+}
+
+/// Aggregated outcome of one job's table loop. `aborted_error` is set when a
+/// table failed and `continue_on_error` is off, so the caller can stop and
+/// surface the error.
+#[derive(Default)]
+struct RunTotals {
+    rows: u64,
+    failed: u32,
+    aborted_error: Option<String>,
+}
+
+/// Creates the target schema/database if `create_target_schema` is on. MySQL:
+/// CREATE DATABASE; PostgreSQL: CREATE SCHEMA (schemas ≠ databases in PG).
+async fn create_target_schema_if_needed(
+    target: &Arc<dyn Driver>,
+    opts: &TransferOptions,
+) -> Result<(), String> {
+    if !opts.create_target_schema {
+        return Ok(());
+    }
+    let keyword = if target.dialect() == "postgres" {
+        "SCHEMA"
+    } else {
+        "DATABASE"
+    };
+    let sql = format!(
+        "CREATE {} IF NOT EXISTS {}",
+        keyword,
+        target.quote_ident(&opts.target_schema)
+    );
+    target
+        .execute(None, &sql)
+        .await
+        .map_err(|e| format!("create target schema: {}", e))?;
+    Ok(())
+}
+
 /// Runs the transfer on Tauri's Tokio runtime. Returns the global total.
 /// Progressive events are emitted via `AppHandle::emit`.
 ///
@@ -281,26 +360,7 @@ pub async fn run_transfer(
     control: Arc<TransferControl>,
 ) -> Result<TransferDone, String> {
     let total_started = Instant::now();
-    let concurrency = opts.concurrency.clamp(1, 16) as usize;
-
-    // Create the target schema/database. MySQL: CREATE DATABASE;
-    // PostgreSQL: CREATE SCHEMA (schemas ≠ databases in PG).
-    if opts.create_target_schema {
-        let keyword = if target.dialect() == "postgres" {
-            "SCHEMA"
-        } else {
-            "DATABASE"
-        };
-        let sql = format!(
-            "CREATE {} IF NOT EXISTS {}",
-            keyword,
-            target.quote_ident(&opts.target_schema)
-        );
-        target
-            .execute(None, &sql)
-            .await
-            .map_err(|e| format!("create target schema: {}", e))?;
-    }
+    create_target_schema_if_needed(&target, &opts).await?;
 
     // single_transaction: wrap the WHOLE transfer in a single tx on the target.
     // Disabled : same problem as per-table tx (see eff_use_tx in
@@ -308,40 +368,105 @@ pub async fn run_transfer(
     // and COMMIT, so the tx becomes orphan and pollutes the pool. To
     // reactivate, need to pin a connection via pool.acquire() for the whole
     // transfer.
-    // if opts.single_transaction {
-    //     let _ = target.execute(Some(&opts.target_schema), "START TRANSACTION").await;
-    // }
 
-    // If only 1 worker, simple path keeps the abort-on-error semantics.
-    let result = if concurrency == 1 {
-        run_sequential(
-            app.clone(),
-            opts.clone(),
-            source,
-            target.clone(),
-            total_started,
-            control.clone(),
-        )
-        .await
-    } else {
-        run_parallel(
-            app.clone(),
-            opts.clone(),
-            source,
-            target.clone(),
-            total_started,
-            concurrency,
-            control.clone(),
-        )
-        .await
+    let continue_on_error = opts.continue_on_error;
+    let totals = run_one_job(app.clone(), opts, source, target, control).await;
+
+    let done = TransferDone {
+        total_rows: totals.rows,
+        elapsed_ms: total_started.elapsed().as_millis() as u64,
+        failed: totals.failed,
     };
+    let _ = app.emit("transfer:done", &done);
 
-    // single_transaction disabled : see comment above. COMMIT/ROLLBACK here
-    // would go to a different conn from START, so it was a no-op most of
-    // the time and polluted the pool when the START happened to stick.
-    // if opts.single_transaction { ... }
+    match totals.aborted_error {
+        Some(e) if !continue_on_error => Err(e),
+        _ => Ok(done),
+    }
+}
 
-    result
+/// Runs all tables of a single schema job (sequential or parallel by
+/// `concurrency`). Emits per-table events but NOT `transfer:done` — the
+/// caller aggregates and emits the final summary.
+async fn run_one_job(
+    app: AppHandle,
+    opts: TransferOptions,
+    source: Arc<dyn Driver>,
+    target: Arc<dyn Driver>,
+    control: Arc<TransferControl>,
+) -> RunTotals {
+    let concurrency = opts.concurrency.clamp(1, 16) as usize;
+    if concurrency == 1 {
+        run_sequential(app, opts, source, target, control).await
+    } else {
+        run_parallel(app, opts, source, target, concurrency, control).await
+    }
+}
+
+/// Multi-schema transfer: runs each job sequentially (one drains fully before
+/// the next starts), creating the target schema per job. Concurrency still
+/// applies *within* each job. Emits `transfer:job_progress` before each job
+/// and a single aggregated `transfer:done` at the end.
+pub async fn run_transfer_multi(
+    app: AppHandle,
+    opts: MultiTransferOptions,
+    source: Arc<dyn Driver>,
+    target: Arc<dyn Driver>,
+    control: Arc<TransferControl>,
+) -> Result<TransferDone, String> {
+    let total_started = Instant::now();
+    let total = opts.jobs.len() as u32;
+    let continue_on_error = opts.template.continue_on_error;
+    let mut total_rows: u64 = 0;
+    let mut failed: u32 = 0;
+    let mut abort: Option<String> = None;
+
+    for (i, job) in opts.jobs.iter().enumerate() {
+        if !control.check().await {
+            break;
+        }
+        let _ = app.emit(
+            "transfer:job_progress",
+            &JobProgress {
+                index: i as u32,
+                total,
+                source_schema: job.source_schema.clone(),
+                target_schema: job.target_schema.clone(),
+            },
+        );
+        let single = opts.job_options(job);
+        if let Err(e) = create_target_schema_if_needed(&target, &single).await {
+            failed += 1;
+            if !continue_on_error {
+                abort = Some(e);
+                break;
+            }
+            continue;
+        }
+        let totals =
+            run_one_job(app.clone(), single, source.clone(), target.clone(), control.clone())
+                .await;
+        total_rows += totals.rows;
+        failed += totals.failed;
+        if let Some(e) = totals.aborted_error {
+            if !continue_on_error {
+                abort = Some(e);
+                break;
+            }
+        }
+    }
+
+    let done = TransferDone {
+        total_rows,
+        elapsed_ms: total_started.elapsed().as_millis() as u64,
+        failed,
+    };
+    let _ = app.emit("transfer:done", &done);
+
+    match abort {
+        Some(e) => Err(e),
+        None => Ok(done),
+    }
 }
 
 async fn run_parallel(
@@ -349,11 +474,9 @@ async fn run_parallel(
     opts: TransferOptions,
     source: Arc<dyn Driver>,
     target: Arc<dyn Driver>,
-    total_started: Instant,
     concurrency: usize,
     control: Arc<TransferControl>,
-) -> Result<TransferDone, String> {
-
+) -> RunTotals {
     // Parallel (cont.): task channel.
     let (tx, rx) = async_channel::unbounded::<String>();
     for t in &opts.tables {
@@ -407,8 +530,11 @@ async fn run_parallel(
                 );
                 let mut t = totals.lock().await;
                 t.rows += rows;
-                if error.is_some() {
+                if let Some(e) = error {
                     t.failed += 1;
+                    if t.aborted_error.is_none() {
+                        t.aborted_error = Some(e);
+                    }
                     if !opts.continue_on_error {
                         // Signal abort : drain the channel.
                         rx.close();
@@ -421,20 +547,9 @@ async fn run_parallel(
         let _ = h.await;
     }
 
-    let t = totals.lock().await;
-    let done = TransferDone {
-        total_rows: t.rows,
-        elapsed_ms: total_started.elapsed().as_millis() as u64,
-        failed: t.failed,
-    };
-    let _ = app.emit("transfer:done", &done);
-    Ok(done)
-}
-
-#[derive(Default)]
-struct RunTotals {
-    rows: u64,
-    failed: u32,
+    Arc::try_unwrap(totals)
+        .map(|m| m.into_inner())
+        .unwrap_or_default()
 }
 
 async fn run_sequential(
@@ -442,9 +557,8 @@ async fn run_sequential(
     opts: TransferOptions,
     source: Arc<dyn Driver>,
     target: Arc<dyn Driver>,
-    total_started: Instant,
     control: Arc<TransferControl>,
-) -> Result<TransferDone, String> {
+) -> RunTotals {
     let mut total_rows: u64 = 0;
     let mut failed: u32 = 0;
 
@@ -478,27 +592,23 @@ async fn run_sequential(
         let _ = app.emit("transfer:table_done", &done_evt);
         total_rows += rows;
 
-        if error.is_some() {
+        if let Some(e) = error {
             failed += 1;
             if !opts.continue_on_error {
-                let done = TransferDone {
-                    total_rows,
-                    elapsed_ms: total_started.elapsed().as_millis() as u64,
+                return RunTotals {
+                    rows: total_rows,
                     failed,
+                    aborted_error: Some(e),
                 };
-                let _ = app.emit("transfer:done", &done);
-                return Err(error.unwrap_or_else(|| "transfer abortado".into()));
             }
         }
     }
 
-    let done = TransferDone {
-        total_rows,
-        elapsed_ms: total_started.elapsed().as_millis() as u64,
+    RunTotals {
+        rows: total_rows,
         failed,
-    };
-    let _ = app.emit("transfer:done", &done);
-    Ok(done)
+        aborted_error: None,
+    }
 }
 
 async fn transfer_one(

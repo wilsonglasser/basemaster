@@ -34,6 +34,7 @@ import { ProcessListView } from "@/components/process-list-view";
 import { UsersView } from "@/components/users-view";
 import { QueryHistoryView } from "@/components/query-history-view";
 import { SavedQueriesListView } from "@/components/saved-queries-list-view";
+import { SavedTransfersListView } from "@/components/saved-transfers-list-view";
 import { ScheduledBackupsView } from "@/components/scheduled-backups-view";
 import { SettingsView } from "@/components/settings-view";
 import { SqlDumpView } from "@/components/sql-dump-view";
@@ -522,8 +523,12 @@ function TabContent({ tab }: { tab: Tab }) {
           initialTables={tab.kind.tables}
           initialAutoAdvance={tab.kind.autoAdvance}
           initialTargetFolderName={tab.kind.targetFolderName}
+          initialJobs={tab.kind.initialJobs}
+          initialSavedTransferId={tab.kind.savedTransferId}
         />
       );
+    case "saved-transfers-list":
+      return <SavedTransfersListView />;
     case "schema-rename":
       return (
         <SchemaRenameView
