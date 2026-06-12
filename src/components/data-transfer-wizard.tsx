@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Check,
   Database,
+  FileDown,
   Loader2,
   Play,
   Plus,
@@ -102,6 +103,7 @@ export function DataTransferWizard({
 }: Props) {
   const t = useT();
   const patchTab = useTabs((s) => s.patch);
+  const openTab = useTabs((s) => s.open);
   const connections = useConnections((s) => s.connections);
   const folders = useConnections((s) => s.folders);
   const activeSet = useConnections((s) => s.active);
@@ -371,6 +373,110 @@ export function DataTransferWizard({
     isMultiRef.current
       ? `${currentJobRef.current.targetSchema} · ${table}`
       : table;
+  // Event listeners are attached BEFORE `startMulti` (see `runResolved`) so the
+  // very first `transfer:job_progress` is never lost — the previous
+  // `[running]`-gated effect attached them after the invoke, and the backend
+  // could emit job 0's progress before registration finished, leaving its
+  // tables keyed under an empty schema (a whole schema appearing "skipped").
+  const unlistenRef = useRef<Array<() => void>>([]);
+  const targetConnRef = useRef<Uuid | null>(targetConn);
+  useEffect(() => {
+    targetConnRef.current = targetConn;
+  }, [targetConn]);
+
+  /** Registers all transfer event listeners once and awaits their
+   *  registration. Idempotent — safe to call before every run. Awaiting is the
+   *  point: `listen()` only takes effect after a round-trip to the backend, so
+   *  callers MUST await this before `startMulti` or the first events are lost. */
+  const attachListeners = async () => {
+    if (unlistenRef.current.length > 0) return;
+    const fns = await Promise.all([
+      listen<JobProgress>("transfer:job_progress", (e) => {
+        currentJobRef.current = { targetSchema: e.payload.target_schema };
+      }),
+      listen<TableProgress>("transfer:progress", (e) => {
+        const key = keyFor(e.payload.table);
+        setPerTable((prev) => new Map(prev).set(key, e.payload));
+      }),
+      listen<TableDone>("transfer:table_done", (e) => {
+        const key = keyFor(e.payload.table);
+        setDoneTable((prev) => new Map(prev).set(key, e.payload));
+      }),
+      listen<TableWorkerProgress>("transfer:worker_progress", (e) => {
+        const key = keyFor(e.payload.table);
+        setWorkersByTable((prev) => {
+          const next = new Map(prev);
+          const inner = new Map(next.get(key) ?? new Map());
+          inner.set(e.payload.worker_id, e.payload);
+          next.set(key, inner);
+          return next;
+        });
+      }),
+      listen<TableNote>("transfer:table_note", (e) => {
+        const key = keyFor(e.payload.table);
+        setNotesByTable((prev) => {
+          const next = new Map(prev);
+          next.set(key, [...(next.get(key) ?? []), e.payload]);
+          return next;
+        });
+      }),
+      listen<{ total_rows: number; elapsed_ms: number; failed: number }>(
+        "transfer:done",
+        (e) => {
+          setFinalSummary(e.payload);
+          setRunning(false);
+          // Re-index every target schema touched so new/dropped tables show up.
+          const tConn = targetConnRef.current;
+          if (tConn) {
+            const cache = useSchemaCache.getState();
+            const isActive = useConnections.getState().active.has(tConn);
+            const schemas = new Set(
+              Array.from(runMetaRef.current.values()).map((m) => m.targetSchema),
+            );
+            for (const sch of schemas) {
+              cache.invalidateSchema(tConn, sch);
+              if (isActive) {
+                cache
+                  .ensureSnapshot(tConn, sch)
+                  .catch((err) =>
+                    console.warn("[transfer] re-index target failed:", err),
+                  );
+              }
+            }
+          }
+
+          // Folder paste: recreate the folder on the (single) target schema and
+          // assign the transferred tables. Best-effort.
+          const onlyTarget =
+            initialTargetSchema ??
+            Array.from(runMetaRef.current.values())[0]?.targetSchema;
+          if (tConn && onlyTarget && initialTargetFolderName && e.payload.failed === 0) {
+            const tableNames = Array.from(runMetaRef.current.values())
+              .filter((m) => m.targetSchema === onlyTarget)
+              .map((m) => m.table);
+            if (tableNames.length > 0) {
+              (async () => {
+                const tfState = useTableFolders.getState();
+                await tfState.ensure(tConn, onlyTarget);
+                const existing = (
+                  tfState.folders[`${tConn}:${onlyTarget}`] ?? []
+                ).find((f) => f.name === initialTargetFolderName);
+                const folder =
+                  existing ??
+                  (await tfState.create(tConn, onlyTarget, initialTargetFolderName));
+                for (const tn of tableNames) {
+                  await tfState.move(tConn, onlyTarget, tn, folder.id).catch(() => {});
+                }
+              })().catch((err) =>
+                console.warn("[transfer] folder assign failed:", err),
+              );
+            }
+          }
+        },
+      ),
+    ]);
+    unlistenRef.current = fns;
+  };
 
   const handlePause = async () => {
     try {
@@ -620,6 +726,9 @@ export function DataTransferWizard({
     }
 
     try {
+      // Register listeners BEFORE the invoke so the first job_progress (and any
+      // immediate table events) can't fire before we're listening.
+      await attachListeners();
       await ipc.transfer.startMulti(buildOpts(resolved));
     } catch (e) {
       setStartError(String(e));
@@ -670,111 +779,16 @@ export function DataTransferWizard({
     void runResolved(jobsForKeys([key]), false, [key]);
   };
 
-  // --- progress event listeners
-  useEffect(() => {
-    if (!running) return;
-    const jobUnlisten = listen<JobProgress>("transfer:job_progress", (e) => {
-      currentJobRef.current = { targetSchema: e.payload.target_schema };
-    });
-    const progressUnlisten = listen<TableProgress>("transfer:progress", (e) => {
-      const key = keyFor(e.payload.table);
-      setPerTable((prev) => new Map(prev).set(key, e.payload));
-    });
-    const doneUnlisten = listen<TableDone>("transfer:table_done", (e) => {
-      const key = keyFor(e.payload.table);
-      setDoneTable((prev) => new Map(prev).set(key, e.payload));
-    });
-    const workerUnlisten = listen<TableWorkerProgress>(
-      "transfer:worker_progress",
-      (e) => {
-        const key = keyFor(e.payload.table);
-        setWorkersByTable((prev) => {
-          const next = new Map(prev);
-          const inner = new Map(next.get(key) ?? new Map());
-          inner.set(e.payload.worker_id, e.payload);
-          next.set(key, inner);
-          return next;
-        });
-      },
-    );
-    const noteUnlisten = listen<TableNote>("transfer:table_note", (e) => {
-      const key = keyFor(e.payload.table);
-      setNotesByTable((prev) => {
-        const next = new Map(prev);
-        next.set(key, [...(next.get(key) ?? []), e.payload]);
-        return next;
-      });
-    });
-    const finalUnlisten = listen<{
-      total_rows: number;
-      elapsed_ms: number;
-      failed: number;
-    }>("transfer:done", (e) => {
-      setFinalSummary(e.payload);
-      setRunning(false);
-      // Re-index every target schema touched so new/dropped tables show up.
-      if (targetConn) {
-        const cache = useSchemaCache.getState();
-        const isActive = useConnections.getState().active.has(targetConn);
-        const schemas = new Set(
-          Array.from(runMetaRef.current.values()).map((m) => m.targetSchema),
-        );
-        for (const sch of schemas) {
-          cache.invalidateSchema(targetConn, sch);
-          if (isActive) {
-            cache
-              .ensureSnapshot(targetConn, sch)
-              .catch((err) =>
-                console.warn("[transfer] re-index target failed:", err),
-              );
-          }
-        }
-      }
-
-      // Folder paste: recreate the folder on the (single) target schema and
-      // assign the transferred tables. Best-effort.
-      const onlyTarget =
-        initialTargetSchema ??
-        Array.from(runMetaRef.current.values())[0]?.targetSchema;
-      if (
-        targetConn &&
-        onlyTarget &&
-        initialTargetFolderName &&
-        e.payload.failed === 0
-      ) {
-        const tableNames = Array.from(runMetaRef.current.values())
-          .filter((m) => m.targetSchema === onlyTarget)
-          .map((m) => m.table);
-        if (tableNames.length > 0) {
-          (async () => {
-            const tfState = useTableFolders.getState();
-            await tfState.ensure(targetConn, onlyTarget);
-            const existing = (
-              tfState.folders[`${targetConn}:${onlyTarget}`] ?? []
-            ).find((f) => f.name === initialTargetFolderName);
-            const folder =
-              existing ??
-              (await tfState.create(targetConn, onlyTarget, initialTargetFolderName));
-            for (const tn of tableNames) {
-              await tfState
-                .move(targetConn, onlyTarget, tn, folder.id)
-                .catch(() => {});
-            }
-          })().catch((err) =>
-            console.warn("[transfer] folder assign failed:", err),
-          );
-        }
-      }
-    });
-    return () => {
-      void jobUnlisten.then((fn) => fn());
-      void progressUnlisten.then((fn) => fn());
-      void doneUnlisten.then((fn) => fn());
-      void finalUnlisten.then((fn) => fn());
-      void workerUnlisten.then((fn) => fn());
-      void noteUnlisten.then((fn) => fn());
-    };
-  }, [running]);
+  // Tear down listeners on unmount only — they persist across runs/retries so
+  // there is never a window without them (the source of the lost-first-event
+  // bug). Registration happens in `attachListeners`, awaited before `startMulti`.
+  useEffect(
+    () => () => {
+      for (const fn of unlistenRef.current) fn();
+      unlistenRef.current = [];
+    },
+    [],
+  );
 
   // --- Overall progress (sums done/total rows across all keys)
   const overallRows = useMemo(() => {
@@ -884,17 +898,58 @@ export function DataTransferWizard({
     }
   };
 
+  /** Generate a physical dump of the configured transfer instead of executing
+   *  it: opens a pre-filled SQL-dump tab with the source connection + the same
+   *  schema/table scopes. Format (.sql/.zip), compression and content are
+   *  chosen there, reusing the dump pipeline. (.bmbak one-shot is a follow-up.) */
+  const handleExportDump = () => {
+    if (!sourceConn) return;
+    // Merge scopes by source schema: an "all tables" job (empty list) wins over
+    // explicit subsets for the same schema.
+    const bySchema = new Map<string, string[] | null>();
+    for (const j of jobs) {
+      if (!j.sourceSchema) continue;
+      const prev = bySchema.get(j.sourceSchema);
+      if (j.tables.length === 0 || prev === null) {
+        bySchema.set(j.sourceSchema, null); // null = all tables
+      } else {
+        bySchema.set(j.sourceSchema, [...(prev ?? []), ...j.tables]);
+      }
+    }
+    const scopes = Array.from(bySchema.entries()).map(([schema, tables]) => ({
+      schema,
+      tables: tables ?? undefined,
+    }));
+    if (scopes.length === 0) return;
+    openTab({
+      label: t("dataTransfer.exportDump"),
+      kind: { kind: "sql-dump", sourceConnectionId: sourceConn, scopes },
+    });
+  };
+
   const headerActions: ReactNode = (
-    <button
-      type="button"
-      onClick={() => void handleSave()}
-      disabled={!canRun}
-      className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-      title={t("dataTransfer.saveTitle")}
-    >
-      <Save className="h-3.5 w-3.5" />
-      {savedId ? t("dataTransfer.update") : t("dataTransfer.save")}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={handleExportDump}
+        disabled={!canRun}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        title={t("dataTransfer.exportDumpTitle")}
+      >
+        <FileDown className="h-3.5 w-3.5" />
+        {t("dataTransfer.exportDump")}
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleSave()}
+        disabled={!canRun}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        title={t("dataTransfer.saveTitle")}
+      >
+        <Save className="h-3.5 w-3.5" />
+        {savedId ? t("dataTransfer.update") : t("dataTransfer.save")}
+      </button>
+    </>
   );
 
   return (

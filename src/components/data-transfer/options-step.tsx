@@ -1,6 +1,7 @@
 import { Settings2 } from "lucide-react";
 
 import type { InsertMode } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { useT } from "@/state/i18n";
 
 export function OptionsStep(props: {
@@ -127,6 +128,18 @@ export function OptionsStep(props: {
         <Settings2 className="h-4 w-4 text-muted-foreground" />
         <h3 className="text-sm font-semibold">{t("dataTransfer.optionsHeader")}</h3>
       </div>
+
+      <Card title={t("dataTransfer.modeLabel")}>
+        <ModeSegment
+          createTables={createTables}
+          createRecords={createRecords}
+          onChange={(struct, data) => {
+            setCreateTables(struct);
+            setCreateRecords(data);
+          }}
+        />
+        <p className="text-[10px] text-muted-foreground">{t("dataTransfer.modeHint")}</p>
+      </Card>
 
       <Card title={t("dataTransfer.cardTableOptions")}>
         <Toggle
@@ -369,6 +382,55 @@ export function OptionsStep(props: {
       <p className="mt-4 text-[11px] text-muted-foreground">
         {t("dataTransfer.v12Hint")}
       </p>
+    </div>
+  );
+}
+
+/** Three-way segment that drives `createTables` (structure) and
+ *  `createRecords` (data) together. The combo `!structure && !data` is
+ *  meaningless (nothing to do), so it is not offered. */
+function ModeSegment({
+  createTables,
+  createRecords,
+  onChange,
+}: {
+  createTables: boolean;
+  createRecords: boolean;
+  onChange: (structure: boolean, data: boolean) => void;
+}) {
+  const t = useT();
+  const current: "structData" | "structOnly" | "dataOnly" = createTables
+    ? createRecords
+      ? "structData"
+      : "structOnly"
+    : "dataOnly";
+  const opts: Array<{
+    id: typeof current;
+    label: string;
+    structure: boolean;
+    data: boolean;
+  }> = [
+    { id: "structData", label: t("dataTransfer.modeStructData"), structure: true, data: true },
+    { id: "structOnly", label: t("dataTransfer.modeStructOnly"), structure: true, data: false },
+    { id: "dataOnly", label: t("dataTransfer.modeDataOnly"), structure: false, data: true },
+  ];
+  return (
+    <div className="inline-flex rounded-md border border-border bg-background p-0.5 text-xs">
+      {opts.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          onClick={() => onChange(o.structure, o.data)}
+          className={cn(
+            "rounded px-3 py-1 font-medium transition-colors",
+            current === o.id
+              ? "bg-conn-accent text-conn-accent-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
