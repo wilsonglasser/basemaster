@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import { appAlert, appPrompt } from "@/state/app-dialog";
 import { useConnections } from "@/state/connections";
 import { confirmDestructive } from "@/state/destructive-confirm";
+import { runExecutor, type ExecutorJob } from "@/state/executor";
 import { useT } from "@/state/i18n";
 import { useActiveInfo } from "@/state/active-info";
 import { useSchemaCache } from "@/state/schema-cache";
@@ -423,6 +424,33 @@ export function TablesListView({
       checkboxLabel: t("tree.destructiveAck"),
     });
     if (!ok) return;
+    // Bulk (>1): run via the executor so each DROP shows live progress +
+    // per-table ok/error instead of one opaque blocking call.
+    if (many) {
+      const jobs: ExecutorJob[] = targets.map((tname) => ({
+        id: tname,
+        label: tname,
+        run: async () => {
+          const [res] = await ipc.db.dropTables(connectionId, schema, [tname]);
+          if (res?.error) throw new Error(res.error);
+        },
+      }));
+      const { results } = await runExecutor(
+        t("tree.dropTableTitleMany", { count: targets.length }),
+        jobs,
+      );
+      invalidateSchema(connectionId, schema);
+      await ensureSnapshot(connectionId, schema);
+      const dropped = new Set(
+        results.filter((r) => r.error === null).map((r) => r.id),
+      );
+      setSelected((prev) => {
+        const next = new Set(prev);
+        dropped.forEach((d) => next.delete(d));
+        return next;
+      });
+      return;
+    }
     try {
       const results = await ipc.db.dropTables(connectionId, schema, targets);
       invalidateSchema(connectionId, schema);
@@ -455,6 +483,25 @@ export function TablesListView({
       checkboxLabel: t("tree.destructiveAck"),
     });
     if (!ok) return;
+    if (many) {
+      const jobs: ExecutorJob[] = targets.map((tname) => ({
+        id: tname,
+        label: tname,
+        run: async () => {
+          const [res] = await ipc.db.truncateTables(connectionId, schema, [
+            tname,
+          ]);
+          if (res?.error) throw new Error(res.error);
+        },
+      }));
+      await runExecutor(
+        t("tree.truncateTableTitleMany", { count: targets.length }),
+        jobs,
+      );
+      invalidateSchema(connectionId, schema);
+      await ensureSnapshot(connectionId, schema);
+      return;
+    }
     try {
       const results = await ipc.db.truncateTables(connectionId, schema, targets);
       invalidateSchema(connectionId, schema);
@@ -480,6 +527,23 @@ export function TablesListView({
       checkboxLabel: t("tree.destructiveAck"),
     });
     if (!ok) return;
+    if (many) {
+      const jobs: ExecutorJob[] = targets.map((tname) => ({
+        id: tname,
+        label: tname,
+        run: async () => {
+          const [res] = await ipc.db.emptyTables(connectionId, schema, [tname]);
+          if (res?.error) throw new Error(res.error);
+        },
+      }));
+      await runExecutor(
+        t("tree.emptyTableTitleMany", { count: targets.length }),
+        jobs,
+      );
+      invalidateSchema(connectionId, schema);
+      await ensureSnapshot(connectionId, schema);
+      return;
+    }
     try {
       const results = await ipc.db.emptyTables(connectionId, schema, targets);
       invalidateSchema(connectionId, schema);
