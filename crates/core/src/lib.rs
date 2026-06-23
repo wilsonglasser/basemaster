@@ -10,7 +10,9 @@ pub mod error;
 pub mod schema;
 pub mod value;
 
-pub use connection::{ConnectionConfig, HttpProxyConfig, SshTunnelConfig, TlsMode};
+pub use connection::{
+    ConnectionConfig, HttpProxyConfig, McpAccess, SshTunnelConfig, SsmTunnelConfig, TlsMode,
+};
 pub use driver::{
     Driver, ExecuteResult, Filter, FilterNode, FilterOp, GroupOp, OrderBy, PageOptions,
     QueryResult, SchemaSnapshot, SortDir, Txn, TxnFuture,

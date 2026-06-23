@@ -13,6 +13,7 @@ mod sql_import;
 mod sql_translate;
 mod ssh_known_hosts;
 mod ssh_tunnel;
+mod ssm_tunnel;
 mod state;
 
 use basemaster_store::{AppPaths, Store};

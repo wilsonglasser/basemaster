@@ -14,12 +14,15 @@ use crate::http_proxy_tunnel::HttpProxyTunnel;
 use crate::mcp_server::McpServer;
 use crate::ssh_known_hosts::KnownHosts;
 use crate::ssh_tunnel::SshTunnel;
+use crate::ssm_tunnel::SsmTunnel;
 
-/// One active tunnel for a connection. SSH and HTTP CONNECT proxy are
-/// mutually exclusive; both expose a local TCP port that the driver
-/// connects to transparently.
+/// One active tunnel for a connection. SSH, AWS SSM, and HTTP CONNECT
+/// proxy are mutually exclusive; each exposes a local TCP port that the
+/// driver connects to transparently.
 pub enum Tunnel {
     Ssh(SshTunnel),
+    // Boxed: SsmTunnel holds a tokio Child (~256 B), the largest variant.
+    Ssm(Box<SsmTunnel>),
     HttpProxy(HttpProxyTunnel),
 }
 
@@ -27,6 +30,7 @@ impl Tunnel {
     pub fn local_port(&self) -> u16 {
         match self {
             Self::Ssh(t) => t.local_port,
+            Self::Ssm(t) => t.local_port,
             Self::HttpProxy(t) => t.local_port,
         }
     }
@@ -34,6 +38,7 @@ impl Tunnel {
     pub async fn close(self) {
         match self {
             Self::Ssh(t) => t.close().await,
+            Self::Ssm(t) => t.close().await,
             Self::HttpProxy(t) => t.close().await,
         }
     }

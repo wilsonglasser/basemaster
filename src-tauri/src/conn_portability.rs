@@ -6,7 +6,7 @@
 //! may use a derived key and fail (password comes empty; user
 //! re-types it).
 
-use basemaster_core::{HttpProxyConfig, SshTunnelConfig, TlsMode};
+use basemaster_core::{HttpProxyConfig, McpAccess, SshTunnelConfig, SsmTunnelConfig, TlsMode};
 use basemaster_store::secrets;
 use cipher::{BlockDecryptMut, KeyInit};
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,12 @@ pub struct ExportedConnection {
     pub http_proxy: Option<HttpProxyConfig>,
     #[serde(default)]
     pub http_proxy_password: Option<String>,
+    #[serde(default)]
+    pub ssm_tunnel: Option<SsmTunnelConfig>,
+    /// Per-connection MCP guardrail policy. Preserved across export/import so
+    /// a read-only prod connection stays read-only after a sync round-trip.
+    #[serde(default)]
+    pub mcp_access: McpAccess,
     /// Folder name (not ID — so it's possible to import into another app).
     #[serde(default)]
     pub folder_name: Option<String>,
@@ -188,6 +194,8 @@ pub fn parse_navicat_ncx(xml: &str) -> Result<ExportPayload, String> {
                     ssh_jumps_secrets: None,
                     http_proxy: None,
                     http_proxy_password: None,
+                    ssm_tunnel: None,
+                    mcp_access: McpAccess::Inherit,
                     folder_name: None,
                 });
             }
@@ -301,6 +309,8 @@ pub fn parse_dbeaver_data_sources(json: &str) -> Result<ExportPayload, String> {
             ssh_jumps_secrets: None,
             http_proxy: None,
             http_proxy_password: None,
+            ssm_tunnel: None,
+            mcp_access: McpAccess::Inherit,
             folder_name,
         });
     }
@@ -387,6 +397,8 @@ pub fn parse_heidisql_settings(text: &str) -> Result<ExportPayload, String> {
             ssh_jumps_secrets: None,
             http_proxy: None,
             http_proxy_password: None,
+            ssm_tunnel: None,
+            mcp_access: McpAccess::Inherit,
             folder_name: None,
         });
     };
@@ -561,6 +573,8 @@ fn datagrip_to_connection(
         ssh_jumps_secrets: None,
         http_proxy: None,
         http_proxy_password: None,
+        ssm_tunnel: None,
+        mcp_access: McpAccess::Inherit,
         folder_name: None,
     })
 }

@@ -794,6 +794,24 @@ export const zhCN: Dict = {
       "使用 HTTP CONNECT 方法 (RFC 7231)。密码进入 OS 密钥环。与 SSH 互斥 : 若都启用，SSH 优先。",
     proxyAndSshConflict:
       "SSH 隧道已启用。HTTP 代理将被忽略。",
+    sectionSsm: "AWS SSM 隧道",
+    ssmToggle: "通过 AWS SSM 实例隧道化 DB 连接",
+    ssmInstanceId: "EC2 实例 ID",
+    ssmRegion: "区域（可选）",
+    ssmRegionPlaceholder: "us-east-1",
+    ssmProfile: "AWS 配置文件（可选）",
+    ssmProfilePlaceholder: "default",
+    ssmConflict:
+      "只使用一种传输方式。优先级：SSH，然后 SSM，然后 HTTP 代理。",
+    ssmNote:
+      "通过 AWS CLI（aws ssm start-session）进行端口转发。需要安装 AWS CLI 和 session-manager-plugin。凭证来自所选的配置文件 / SSO / 环境。",
+    sectionMcp: "MCP 访问",
+    mcpHint:
+      "控制本地 MCP 服务器在此连接上允许的操作。只读会阻止所有写入；继承则使用全局 MCP 防护栏。",
+    mcpAccessLabel: "策略",
+    mcpInherit: "继承全局",
+    mcpReadOnly: "只读",
+    mcpCustom: "自定义",
     testing: "测试中…",
     testOk: "已连接并响应 ping。",
     cancel: "取消",

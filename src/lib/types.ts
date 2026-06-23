@@ -106,6 +106,17 @@ export interface HttpProxyConfig {
   password?: string | null;
 }
 
+/** AWS SSM Session Manager port-forward tunnel. Reaches a private-subnet DB
+ *  through an SSM-managed EC2 instance via the AWS CLI - no inbound SSH. */
+export interface SsmTunnelConfig {
+  /** Target EC2 instance id (i-0123...). */
+  instance_id: string;
+  /** AWS region. null → resolve from profile / AWS_REGION / config. */
+  region?: string | null;
+  /** AWS CLI profile name. null → default credential chain. */
+  profile?: string | null;
+}
+
 export interface McpStatus {
   running: boolean;
   port: number;
@@ -118,6 +129,19 @@ export interface McpStatus {
 }
 
 export type McpGuardrail = "dml" | "ddl" | "perms" | "tx";
+
+/** Per-connection MCP guardrail policy. Mirrors the Rust `McpAccess` enum
+ *  (serde internally-tagged on `mode`). `inherit` = use the global settings. */
+export type McpAccess =
+  | { mode: "inherit" }
+  | { mode: "read_only" }
+  | {
+      mode: "custom";
+      block_dml: boolean;
+      block_ddl: boolean;
+      block_perms: boolean;
+      block_tx: boolean;
+    };
 
 export interface ExportedFolder {
   name: string;
@@ -142,6 +166,8 @@ export interface ExportedConnection {
   ssh_jumps_secrets: string | null;
   http_proxy: HttpProxyConfig | null;
   http_proxy_password: string | null;
+  ssm_tunnel: SsmTunnelConfig | null;
+  mcp_access?: McpAccess;
   folder_name: string | null;
 }
 
@@ -222,6 +248,8 @@ export interface ConnectionProfile {
   ssh_tunnel: SshTunnelConfig | null;
   ssh_jump_hosts: SshTunnelConfig[];
   http_proxy: HttpProxyConfig | null;
+  ssm_tunnel: SsmTunnelConfig | null;
+  mcp_access: McpAccess;
   created_at: number;
   updated_at: number;
   last_used_at: number | null;
@@ -240,6 +268,8 @@ export interface ConnectionDraft {
   ssh_tunnel?: SshTunnelConfig | null;
   ssh_jump_hosts?: SshTunnelConfig[];
   http_proxy?: HttpProxyConfig | null;
+  ssm_tunnel?: SsmTunnelConfig | null;
+  mcp_access?: McpAccess;
 }
 
 export interface SchemaInfo {

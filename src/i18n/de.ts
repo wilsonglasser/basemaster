@@ -794,6 +794,24 @@ export const de: Dict = {
       "Nutzt die HTTP-CONNECT-Methode (RFC 7231). Passwort geht in den OS-Keyring. Wechselseitig exklusiv mit SSH : wenn beide aktiv, gewinnt SSH.",
     proxyAndSshConflict:
       "SSH-Tunnel ist aktiviert. HTTP-Proxy wird ignoriert.",
+    sectionSsm: "AWS-SSM-Tunnel",
+    ssmToggle: "DB-Verbindung über eine AWS-SSM-Instanz tunneln",
+    ssmInstanceId: "EC2-Instanz-ID",
+    ssmRegion: "Region (optional)",
+    ssmRegionPlaceholder: "us-east-1",
+    ssmProfile: "AWS-Profil (optional)",
+    ssmProfilePlaceholder: "default",
+    ssmConflict:
+      "Es wird nur ein Transport verwendet. Vorrang: SSH, dann SSM, dann HTTP-Proxy.",
+    ssmNote:
+      "Port-Weiterleitung über die AWS CLI (aws ssm start-session). Erfordert AWS CLI und session-manager-plugin. Anmeldedaten stammen aus Profil / SSO / Umgebung.",
+    sectionMcp: "MCP-Zugriff",
+    mcpHint:
+      "Legt fest, was der lokale MCP-Server für diese Verbindung erlaubt. Nur-Lesen blockiert alle Schreibvorgänge; Erben nutzt die globalen MCP-Sperren.",
+    mcpAccessLabel: "Richtlinie",
+    mcpInherit: "Global erben",
+    mcpReadOnly: "Nur Lesen",
+    mcpCustom: "Benutzerdefiniert",
     testing: "Teste…",
     testOk: "Verbunden und auf Ping geantwortet.",
     cancel: "Abbrechen",

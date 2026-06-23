@@ -28,6 +28,7 @@ fn cfg(path: &str) -> ConnectionConfig {
         ssh_tunnel: None,
         ssh_jump_hosts: vec![],
         http_proxy: None,
+        ssm_tunnel: None,
     }
 }
 

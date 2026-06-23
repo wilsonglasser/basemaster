@@ -794,6 +794,24 @@ export const ja: Dict = {
       "HTTP CONNECTメソッド（RFC 7231）を使用。パスワードはOS keyringへ。SSHと相互排他 : 両方有効ならSSH優先。",
     proxyAndSshConflict:
       "SSHトンネルが有効です。HTTPプロキシは無視されます。",
+    sectionSsm: "AWS SSM トンネル",
+    ssmToggle: "AWS SSM インスタンス経由でDB接続をトンネル",
+    ssmInstanceId: "EC2 インスタンス ID",
+    ssmRegion: "リージョン（任意）",
+    ssmRegionPlaceholder: "us-east-1",
+    ssmProfile: "AWS プロファイル（任意）",
+    ssmProfilePlaceholder: "default",
+    ssmConflict:
+      "使用されるトランスポートは1つだけです。優先順位: SSH、次に SSM、次に HTTP プロキシ。",
+    ssmNote:
+      "AWS CLI（aws ssm start-session）でポート転送します。AWS CLI と session-manager-plugin のインストールが必要です。認証情報はプロファイル / SSO / 環境から取得します。",
+    sectionMcp: "MCP アクセス",
+    mcpHint:
+      "この接続でローカル MCP サーバーが許可する操作を制御します。読み取り専用はすべての書き込みをブロックし、継承はグローバルの MCP ガードレールを使用します。",
+    mcpAccessLabel: "ポリシー",
+    mcpInherit: "グローバルを継承",
+    mcpReadOnly: "読み取り専用",
+    mcpCustom: "カスタム",
     testing: "テスト中…",
     testOk: "接続成功、pingに応答。",
     cancel: "キャンセル",

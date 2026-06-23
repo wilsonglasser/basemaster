@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use basemaster_core::{ConnectionConfig, HttpProxyConfig, SshTunnelConfig, TlsMode};
+use basemaster_core::{
+    ConnectionConfig, HttpProxyConfig, McpAccess, SshTunnelConfig, SsmTunnelConfig, TlsMode,
+};
 
 use crate::{StoreError, StoreResult};
 
@@ -24,11 +26,17 @@ pub struct ConnectionProfile {
     pub ssh_jump_hosts: Vec<SshTunnelConfig>,
     #[serde(default)]
     pub http_proxy: Option<HttpProxyConfig>,
+    #[serde(default)]
+    pub ssm_tunnel: Option<SsmTunnelConfig>,
     pub created_at: i64,
     pub updated_at: i64,
     pub last_used_at: Option<i64>,
     #[serde(default)]
     pub folder_id: Option<Uuid>,
+    /// MCP guardrail policy for this connection. `Inherit` falls back to the
+    /// global `mcp.block_*` settings.
+    #[serde(default)]
+    pub mcp_access: McpAccess,
 }
 
 impl ConnectionProfile {
@@ -48,6 +56,7 @@ impl ConnectionProfile {
             ssh_tunnel: self.ssh_tunnel,
             ssh_jump_hosts: self.ssh_jump_hosts,
             http_proxy: self.http_proxy,
+            ssm_tunnel: self.ssm_tunnel,
         }
     }
 }
@@ -70,6 +79,10 @@ pub struct ConnectionDraft {
     pub ssh_jump_hosts: Vec<SshTunnelConfig>,
     #[serde(default)]
     pub http_proxy: Option<HttpProxyConfig>,
+    #[serde(default)]
+    pub ssm_tunnel: Option<SsmTunnelConfig>,
+    #[serde(default)]
+    pub mcp_access: McpAccess,
 }
 
 fn default_driver() -> String {
@@ -88,7 +101,7 @@ impl<'a> ConnectionRepo<'a> {
     pub async fn list(&self) -> StoreResult<Vec<ConnectionProfile>> {
         let rows = sqlx::query_as::<_, ConnectionRow>(
             "SELECT id, name, color, driver, host, port, user, default_database,
-                    tls, ssh_tunnel, ssh_jump_hosts, http_proxy, created_at, updated_at, last_used_at, folder_id
+                    tls, ssh_tunnel, ssh_jump_hosts, http_proxy, ssm_tunnel, mcp_access, created_at, updated_at, last_used_at, folder_id
                FROM connection_profiles
               ORDER BY COALESCE(sort_order, 2147483647), name COLLATE NOCASE",
         )
@@ -116,7 +129,7 @@ impl<'a> ConnectionRepo<'a> {
     pub async fn get(&self, id: Uuid) -> StoreResult<ConnectionProfile> {
         let row = sqlx::query_as::<_, ConnectionRow>(
             "SELECT id, name, color, driver, host, port, user, default_database,
-                    tls, ssh_tunnel, ssh_jump_hosts, http_proxy, created_at, updated_at, last_used_at, folder_id
+                    tls, ssh_tunnel, ssh_jump_hosts, http_proxy, ssm_tunnel, mcp_access, created_at, updated_at, last_used_at, folder_id
                FROM connection_profiles WHERE id = ?1",
         )
         .bind(id.to_string())
@@ -148,12 +161,17 @@ impl<'a> ConnectionRepo<'a> {
             Some(p) => Some(serde_json::to_string(&strip_proxy_secrets(p))?),
             None => None,
         };
+        let ssm = match &draft.ssm_tunnel {
+            Some(s) => Some(serde_json::to_string(s)?),
+            None => None,
+        };
+        let mcp = serde_mcp(&draft.mcp_access)?;
 
         sqlx::query(
             "INSERT INTO connection_profiles
                 (id, name, color, driver, host, port, user, default_database,
-                 tls, ssh_tunnel, ssh_jump_hosts, http_proxy, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+                 tls, ssh_tunnel, ssh_jump_hosts, http_proxy, ssm_tunnel, mcp_access, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
         )
         .bind(id.to_string())
         .bind(&draft.name)
@@ -167,6 +185,8 @@ impl<'a> ConnectionRepo<'a> {
         .bind(ssh.as_deref())
         .bind(jumps.as_deref())
         .bind(proxy.as_deref())
+        .bind(ssm.as_deref())
+        .bind(mcp.as_deref())
         .bind(now)
         .execute(self.pool)
         .await?;
@@ -196,6 +216,11 @@ impl<'a> ConnectionRepo<'a> {
             Some(p) => Some(serde_json::to_string(&strip_proxy_secrets(p))?),
             None => None,
         };
+        let ssm = match &draft.ssm_tunnel {
+            Some(s) => Some(serde_json::to_string(s)?),
+            None => None,
+        };
+        let mcp = serde_mcp(&draft.mcp_access)?;
 
         let res = sqlx::query(
             "UPDATE connection_profiles
@@ -210,7 +235,9 @@ impl<'a> ConnectionRepo<'a> {
                     ssh_tunnel = ?10,
                     ssh_jump_hosts = ?11,
                     http_proxy = ?12,
-                    updated_at = ?13
+                    ssm_tunnel = ?13,
+                    mcp_access = ?14,
+                    updated_at = ?15
               WHERE id = ?1",
         )
         .bind(id.to_string())
@@ -225,6 +252,8 @@ impl<'a> ConnectionRepo<'a> {
         .bind(ssh.as_deref())
         .bind(jumps.as_deref())
         .bind(proxy.as_deref())
+        .bind(ssm.as_deref())
+        .bind(mcp.as_deref())
         .bind(now)
         .execute(self.pool)
         .await?;
@@ -263,6 +292,22 @@ fn serde_tls(tls: &TlsMode) -> &'static str {
         TlsMode::Disabled => "disabled",
         TlsMode::Preferred => "preferred",
         TlsMode::Required => "required",
+    }
+}
+
+/// Serializes the MCP policy for the `mcp_access` column. `Inherit` (the
+/// default) stores NULL so a clean profile keeps the column empty.
+fn serde_mcp(access: &McpAccess) -> StoreResult<Option<String>> {
+    match access {
+        McpAccess::Inherit => Ok(None),
+        other => Ok(Some(serde_json::to_string(other)?)),
+    }
+}
+
+fn parse_mcp(raw: Option<&str>) -> McpAccess {
+    match raw {
+        Some(s) => serde_json::from_str(s).unwrap_or_default(),
+        None => McpAccess::Inherit,
     }
 }
 
@@ -310,6 +355,8 @@ struct ConnectionRow {
     ssh_tunnel: Option<String>,
     ssh_jump_hosts: Option<String>,
     http_proxy: Option<String>,
+    ssm_tunnel: Option<String>,
+    mcp_access: Option<String>,
     created_at: i64,
     updated_at: i64,
     last_used_at: Option<i64>,
@@ -329,6 +376,10 @@ impl ConnectionRow {
             None => Vec::new(),
         };
         let http_proxy = match self.http_proxy {
+            Some(s) => Some(serde_json::from_str(&s)?),
+            None => None,
+        };
+        let ssm_tunnel = match self.ssm_tunnel {
             Some(s) => Some(serde_json::from_str(&s)?),
             None => None,
         };
@@ -352,6 +403,8 @@ impl ConnectionRow {
             ssh_tunnel: ssh,
             ssh_jump_hosts,
             http_proxy,
+            ssm_tunnel,
+            mcp_access: parse_mcp(self.mcp_access.as_deref()),
             created_at: self.created_at,
             updated_at: self.updated_at,
             last_used_at: self.last_used_at,

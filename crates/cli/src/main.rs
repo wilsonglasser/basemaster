@@ -237,6 +237,7 @@ fn config_from_dsn(dsn: &str) -> Result<(Arc<dyn Driver>, ConnectionConfig)> {
             ssh_tunnel: None,
             ssh_jump_hosts: vec![],
             http_proxy: None,
+            ssm_tunnel: None,
         };
         return Ok((driver, cfg));
     }
@@ -266,6 +267,7 @@ fn config_from_dsn(dsn: &str) -> Result<(Arc<dyn Driver>, ConnectionConfig)> {
         ssh_tunnel: None,
         ssh_jump_hosts: vec![],
         http_proxy: None,
+        ssm_tunnel: None,
     };
     Ok((driver, cfg))
 }

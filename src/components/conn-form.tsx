@@ -12,7 +12,14 @@ import {
 import { CONN_COLORS, ipc } from "@/lib/ipc";
 import { PasswordInput } from "@/components/ui/password-input";
 import { parseDsn } from "@/lib/dsn";
-import type { ConnectionDraft, SshTunnelConfig, TlsMode, Uuid } from "@/lib/types";
+import type {
+  ConnectionDraft,
+  McpAccess,
+  McpGuardrail,
+  SshTunnelConfig,
+  TlsMode,
+  Uuid,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useConnections } from "@/state/connections";
 import { useT } from "@/state/i18n";
@@ -38,6 +45,17 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
   const [password, setPassword] = useState("");
   const [defaultDb, setDefaultDb] = useState("");
   const [tls, setTls] = useState<TlsMode>("preferred");
+
+  // MCP access policy for this connection. `custom` carries its own four
+  // guardrail flags (default block-all = read-only baseline).
+  type McpMode = McpAccess["mode"];
+  const [mcpMode, setMcpMode] = useState<McpMode>("inherit");
+  const [mcpBlock, setMcpBlock] = useState({
+    block_dml: true,
+    block_ddl: true,
+    block_perms: true,
+    block_tx: true,
+  });
 
   // When the driver changes, adjust sensible defaults (port + user).
   const handleDriverChange = (
@@ -102,6 +120,13 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
   const [proxyUser, setProxyUser] = useState("");
   const [proxyPassword, setProxyPassword] = useState("");
 
+  // AWS SSM port-forward — forwards the DB socket through an SSM-managed
+  // EC2 instance via the AWS CLI. Backend precedence: SSH > SSM > proxy.
+  const [ssmEnabled, setSsmEnabled] = useState(false);
+  const [ssmInstanceId, setSsmInstanceId] = useState("");
+  const [ssmRegion, setSsmRegion] = useState("");
+  const [ssmProfile, setSsmProfile] = useState("");
+
   const [test, setTest] = useState<TestState>(null);
   const [testMsg, setTestMsg] = useState("");
   const [saving, setSaving] = useState(false);
@@ -130,6 +155,15 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
       setUser(p.user);
       setDefaultDb(p.default_database ?? "");
       setTls(p.tls);
+      setMcpMode(p.mcp_access.mode);
+      if (p.mcp_access.mode === "custom") {
+        setMcpBlock({
+          block_dml: p.mcp_access.block_dml,
+          block_ddl: p.mcp_access.block_ddl,
+          block_perms: p.mcp_access.block_perms,
+          block_tx: p.mcp_access.block_tx,
+        });
+      }
       if (p.ssh_tunnel) {
         setSshEnabled(true);
         setSshHost(p.ssh_tunnel.host);
@@ -149,6 +183,12 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
         setProxyPort(p.http_proxy.port);
         setProxyUser(p.http_proxy.user ?? "");
         setProxyPassword("");
+      }
+      if (p.ssm_tunnel) {
+        setSsmEnabled(true);
+        setSsmInstanceId(p.ssm_tunnel.instance_id);
+        setSsmRegion(p.ssm_tunnel.region ?? "");
+        setSsmProfile(p.ssm_tunnel.profile ?? "");
       }
       if (p.ssh_jump_hosts && p.ssh_jump_hosts.length > 0) {
         setSshJumps(
@@ -222,6 +262,18 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
             password: null,
           }
         : null,
+    ssm_tunnel:
+      ssmEnabled && ssmInstanceId.trim()
+        ? {
+            instance_id: ssmInstanceId.trim(),
+            region: ssmRegion.trim() || null,
+            profile: ssmProfile.trim() || null,
+          }
+        : null,
+    mcp_access:
+      mcpMode === "custom"
+        ? { mode: "custom", ...mcpBlock }
+        : { mode: mcpMode },
   };
 
   // Secrets blob for the jump chain, aligned to jumpHostsPayload. On
@@ -937,6 +989,120 @@ export function ConnForm({ tabId, editingId }: ConnFormProps) {
           )}
         </Section>
         )}
+
+        {driver !== "sqlite" && (
+        <Section
+          title={t("connForm.sectionSsm")}
+          subtitle={ssmEnabled ? undefined : t("connForm.optional")}
+        >
+          <label className="mb-3 inline-flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={ssmEnabled}
+              onChange={(e) => setSsmEnabled(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            <span>{t("connForm.ssmToggle")}</span>
+          </label>
+          {ssmEnabled && (
+            <>
+              {(sshEnabled || proxyEnabled) && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+                  {t("connForm.ssmConflict")}
+                </div>
+              )}
+              <Field label={t("connForm.ssmInstanceId")}>
+                <input
+                  type="text"
+                  value={ssmInstanceId}
+                  onChange={(e) => setSsmInstanceId(e.target.value)}
+                  placeholder="i-0123456789abcdef0"
+                  className={INPUT}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={t("connForm.ssmRegion")}>
+                  <input
+                    type="text"
+                    value={ssmRegion}
+                    onChange={(e) => setSsmRegion(e.target.value)}
+                    placeholder={t("connForm.ssmRegionPlaceholder")}
+                    className={INPUT}
+                  />
+                </Field>
+                <Field label={t("connForm.ssmProfile")}>
+                  <input
+                    type="text"
+                    value={ssmProfile}
+                    onChange={(e) => setSsmProfile(e.target.value)}
+                    placeholder={t("connForm.ssmProfilePlaceholder")}
+                    className={INPUT}
+                  />
+                </Field>
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {t("connForm.ssmNote")}
+              </div>
+            </>
+          )}
+        </Section>
+        )}
+
+        <Section title={t("connForm.sectionMcp")}>
+          <p className="-mt-1 mb-1 text-[11px] text-muted-foreground">
+            {t("connForm.mcpHint")}
+          </p>
+          <Field label={t("connForm.mcpAccessLabel")}>
+            <div className="inline-flex items-stretch rounded-md border border-border p-0.5">
+              {(["inherit", "read_only", "custom"] as McpMode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMcpMode(m)}
+                  className={cn(
+                    "rounded px-3 py-1 text-xs font-medium transition-colors",
+                    mcpMode === m
+                      ? "bg-conn-accent text-conn-accent-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {m === "inherit"
+                    ? t("connForm.mcpInherit")
+                    : m === "read_only"
+                      ? t("connForm.mcpReadOnly")
+                      : t("connForm.mcpCustom")}
+                </button>
+              ))}
+            </div>
+          </Field>
+          {mcpMode === "custom" && (
+            <div className="grid gap-2 rounded-md border border-dashed border-border bg-muted/20 p-3">
+              {(
+                [
+                  ["block_dml", "dml"],
+                  ["block_ddl", "ddl"],
+                  ["block_perms", "perms"],
+                  ["block_tx", "tx"],
+                ] as [keyof typeof mcpBlock, McpGuardrail][]
+              ).map(([key, i18nKey]) => (
+                <label
+                  key={key}
+                  className="inline-flex cursor-pointer items-center gap-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={mcpBlock[key]}
+                    onChange={(e) =>
+                      setMcpBlock((b) => ({ ...b, [key]: e.target.checked }))
+                    }
+                    className="h-3.5 w-3.5"
+                  />
+                  <span>{t(`settings.mcp.guardrails.${i18nKey}`)}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </Section>
       </div>
 
       {test && (

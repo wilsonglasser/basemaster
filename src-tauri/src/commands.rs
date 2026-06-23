@@ -230,6 +230,7 @@ pub async fn connection_test(
         ssh_tunnel: ssh,
         ssh_jump_hosts,
         http_proxy,
+        ssm_tunnel: draft.ssm_tunnel,
     };
 
     // Typed values above take priority; for anything still blank, fall
@@ -333,6 +334,13 @@ async fn open_tunnel(
             .await
             .map_err(err)?,
         )));
+    }
+    if let Some(ssm) = &cfg.ssm_tunnel {
+        return Ok(Some(Tunnel::Ssm(Box::new(
+            crate::ssm_tunnel::SsmTunnel::open(ssm, &cfg.host, cfg.port)
+                .await
+                .map_err(err)?,
+        ))));
     }
     if let Some(proxy) = &cfg.http_proxy {
         return Ok(Some(Tunnel::HttpProxy(
@@ -1757,6 +1765,8 @@ pub async fn connections_export(
             ssh_jumps_secrets: None,
             http_proxy: p.http_proxy,
             http_proxy_password: None,
+            ssm_tunnel: p.ssm_tunnel,
+            mcp_access: p.mcp_access,
             folder_name: p.folder_id.and_then(|id| folder_name_by_id.get(&id).cloned()),
         };
         if include_passwords {
@@ -1829,6 +1839,8 @@ pub async fn connections_import_apply(
             ssh_tunnel: c.ssh_tunnel.clone(),
             ssh_jump_hosts: c.ssh_jump_hosts.clone(),
             http_proxy: c.http_proxy.clone(),
+            ssm_tunnel: c.ssm_tunnel.clone(),
+            mcp_access: c.mcp_access.clone(),
         };
         let profile = state.store.connections().create(draft).await.map_err(err)?;
 

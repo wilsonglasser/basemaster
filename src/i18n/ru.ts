@@ -794,6 +794,24 @@ export const ru: Dict = {
       "Использует метод HTTP CONNECT (RFC 7231). Пароль идёт в keyring ОС. Взаимоисключающий с SSH : если оба активны, побеждает SSH.",
     proxyAndSshConflict:
       "SSH-туннель включён. HTTP-прокси будет проигнорирован.",
+    sectionSsm: "Туннель AWS SSM",
+    ssmToggle: "Туннелировать DB-подключение через инстанс AWS SSM",
+    ssmInstanceId: "ID инстанса EC2",
+    ssmRegion: "Регион (опционально)",
+    ssmRegionPlaceholder: "us-east-1",
+    ssmProfile: "Профиль AWS (опционально)",
+    ssmProfilePlaceholder: "default",
+    ssmConflict:
+      "Используется только один транспорт. Приоритет: SSH, затем SSM, затем HTTP-прокси.",
+    ssmNote:
+      "Проброс порта через AWS CLI (aws ssm start-session). Требуются установленные AWS CLI и session-manager-plugin. Учётные данные берутся из профиля / SSO / окружения.",
+    sectionMcp: "Доступ MCP",
+    mcpHint:
+      "Управляет тем, что локальный MCP-сервер разрешает для этого подключения. «Только чтение» блокирует все записи; «Наследовать» использует глобальные ограничения MCP.",
+    mcpAccessLabel: "Политика",
+    mcpInherit: "Наследовать глобально",
+    mcpReadOnly: "Только чтение",
+    mcpCustom: "Свои настройки",
     testing: "Проверка…",
     testOk: "Подключено и ответил на ping.",
     cancel: "Отмена",

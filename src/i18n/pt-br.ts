@@ -796,6 +796,24 @@ export const ptBR = {
       "Usa o método HTTP CONNECT (RFC 7231). Senha vai pro keyring do SO. Mutuamente exclusivo com SSH : se os dois estão ativos, SSH prevalece.",
     proxyAndSshConflict:
       "Túnel SSH ativo. O proxy HTTP será ignorado.",
+    sectionSsm: "Túnel AWS SSM",
+    ssmToggle: "Conectar ao banco através de uma instância AWS SSM",
+    ssmInstanceId: "ID da instância EC2",
+    ssmRegion: "Região (opcional)",
+    ssmRegionPlaceholder: "us-east-1",
+    ssmProfile: "Perfil AWS (opcional)",
+    ssmProfilePlaceholder: "default",
+    ssmConflict:
+      "Só um transporte é usado. Precedência: SSH, depois SSM, depois proxy HTTP.",
+    ssmNote:
+      "Encaminha a porta via AWS CLI (aws ssm start-session). Requer o AWS CLI e o session-manager-plugin instalados. As credenciais vêm do perfil / SSO / ambiente escolhido.",
+    sectionMcp: "Acesso MCP",
+    mcpHint:
+      "Controla o que o servidor MCP local permite nesta conexão. Somente leitura bloqueia todas as escritas; Herdar usa as travas globais do MCP.",
+    mcpAccessLabel: "Política",
+    mcpInherit: "Herdar global",
+    mcpReadOnly: "Somente leitura",
+    mcpCustom: "Personalizado",
     testing: "Testando…",
     testOk: "Conectou e respondeu ao ping.",
     cancel: "Cancelar",
