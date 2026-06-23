@@ -479,7 +479,7 @@ async fn call_tool(
                 .get("max_rows")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(500) as usize;
-            check_sql_allowed(&sql, &load_guardrail_policy(app).await)?;
+            check_sql_allowed(&sql, &load_guardrail_policy(app, id).await)?;
             let driver = get_active(app, id).await?;
             let result = driver
                 .query(schema.as_deref(), &sql)
@@ -517,7 +517,7 @@ async fn call_tool(
                 .get("sample_rows")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20) as usize;
-            check_sql_allowed(&sql, &load_guardrail_policy(app).await)?;
+            check_sql_allowed(&sql, &load_guardrail_policy(app, id).await)?;
             let driver = get_active(app, id).await?;
             let fmt = crate::query_export::ExportFormat::parse(&format)?;
             let result = crate::query_export::export_query(
@@ -613,7 +613,41 @@ enum StmtClass {
     Unknown,
 }
 
-async fn load_guardrail_policy(app: &AppState) -> GuardrailPolicy {
+/// Resolves the effective guardrail policy for a connection. A per-connection
+/// `McpAccess` of `ReadOnly`/`Custom` overrides the global settings; `Inherit`
+/// (the default) falls back to them. A missing/unreadable profile fails closed
+/// to the global policy.
+async fn load_guardrail_policy(app: &AppState, conn_id: Uuid) -> GuardrailPolicy {
+    let access = app
+        .store
+        .connections()
+        .get(conn_id)
+        .await
+        .map(|p| p.mcp_access)
+        .unwrap_or_default();
+    match access {
+        basemaster_core::McpAccess::ReadOnly => GuardrailPolicy {
+            block_dml: true,
+            block_ddl: true,
+            block_perms: true,
+            block_tx: true,
+        },
+        basemaster_core::McpAccess::Custom {
+            block_dml,
+            block_ddl,
+            block_perms,
+            block_tx,
+        } => GuardrailPolicy {
+            block_dml,
+            block_ddl,
+            block_perms,
+            block_tx,
+        },
+        basemaster_core::McpAccess::Inherit => load_global_guardrail_policy(app).await,
+    }
+}
+
+async fn load_global_guardrail_policy(app: &AppState) -> GuardrailPolicy {
     let s = app.store.settings();
     GuardrailPolicy {
         block_dml: s.get_bool("mcp.block_dml", true).await.unwrap_or(true),
