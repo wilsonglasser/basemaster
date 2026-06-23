@@ -464,6 +464,42 @@ function useSidebarShortcuts() {
           sel.kind === "schema"
             ? sel.schema
             : tgtConn.default_database ?? payload.schema;
+
+        // Same connection + same schema: duplicate locally (_copy, _copy_1…)
+        // instead of opening the transfer wizard. Matches the context-menu
+        // paste behaviour.
+        if (
+          payload.connectionId === sel.connectionId &&
+          payload.schema === tgtSchema
+        ) {
+          const sc = useSchemaCache.getState();
+          const failed: string[] = [];
+          for (const name of payload.tables) {
+            try {
+              const avail = await ipc.db.findAvailableTableName(
+                sel.connectionId,
+                tgtSchema,
+                name,
+              );
+              await ipc.db.duplicateTable(
+                sel.connectionId,
+                tgtSchema,
+                name,
+                avail,
+                true,
+              );
+            } catch (err) {
+              failed.push(`${name}: ${err}`);
+            }
+          }
+          sc.invalidateSchema(sel.connectionId, tgtSchema);
+          await sc.ensureSnapshot(sel.connectionId, tgtSchema);
+          if (failed.length > 0) {
+            void appAlert(t("tree.pasteFailures", { list: failed.join("\n") }));
+          }
+          return;
+        }
+
         newTab({
           label: t("tree.dataTransfer"),
           kind: {
@@ -2623,6 +2659,9 @@ function TableNode({
     await runExecutor(t("tree.duplicate"), jobs);
     invalidateSchema(conn.id, table.schema);
     ensureSnapshot(conn.id, table.schema).catch(() => {});
+    // Clear the multi-select so the next right-click acts on a single table
+    // instead of re-duplicating the whole (now stale) selection — matches drop.
+    clearMulti();
   };
 
   const openTable = () => {
