@@ -1650,6 +1650,54 @@ pub async fn mcp_regenerate_token(
     Ok(mcp_status_payload(&state).await)
 }
 
+// --- AI provider API keys (stored in the OS keyring, not localStorage) ---
+
+/// Persists (or, when `key` is empty, removes) the API key for a provider.
+#[tauri::command]
+pub fn ai_set_key(provider: String, key: String) -> R<()> {
+    if key.is_empty() {
+        secrets::delete_ai_key(&provider).map_err(err)?;
+    } else {
+        secrets::set_ai_key(&provider, &key).map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Returns the stored keys for the requested providers. Absent providers are
+/// simply omitted from the map.
+#[tauri::command]
+pub fn ai_get_keys(providers: Vec<String>) -> R<std::collections::HashMap<String, String>> {
+    let mut out = std::collections::HashMap::new();
+    for p in providers {
+        if let Some(k) = secrets::get_ai_key(&p).map_err(err)? {
+            out.insert(p, k);
+        }
+    }
+    Ok(out)
+}
+
+/// Rejects agent write SQL that a per-connection access policy forbids
+/// (reuses the MCP guardrail so a read-only/prod-locked connection also
+/// blocks the in-app agent). Ok = allowed to proceed to the approval modal.
+#[tauri::command]
+pub async fn agent_check_sql(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    sql: String,
+) -> R<()> {
+    crate::mcp_server::agent_check_sql(&state, connection_id, &sql).await
+}
+
+/// Effective guardrail policy for the in-app agent on a connection. Used by
+/// row-level write tools (insert/update/delete) that don't emit raw SQL.
+#[tauri::command]
+pub async fn agent_guardrail_policy(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> R<crate::mcp_server::GuardrailPolicy> {
+    Ok(crate::mcp_server::agent_policy(&state, connection_id).await)
+}
+
 /// Toggles autostart-on-launch. Enabling it also starts the server now
 /// if it isn't already running, so the toggle has an immediate effect.
 #[tauri::command]

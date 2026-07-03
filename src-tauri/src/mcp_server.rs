@@ -595,7 +595,7 @@ fn parse_str(args: &JsonValue, key: &str) -> Result<String, String> {
 // if its category is disabled. Settings are global (keyring/store), default
 // all-blocked, toggled from the Settings → MCP panel.
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct GuardrailPolicy {
     pub block_dml: bool,
     pub block_ddl: bool,
@@ -645,6 +645,60 @@ async fn load_guardrail_policy(app: &AppState, conn_id: Uuid) -> GuardrailPolicy
         },
         basemaster_core::McpAccess::Inherit => load_global_guardrail_policy(app).await,
     }
+}
+
+/// Guardrail policy for the in-app AI agent. Unlike MCP, the agent already
+/// gates every write behind an explicit user-approval modal, so an `Inherit`
+/// connection (the default) is left fully open — approval is the control.
+/// An explicit per-connection `ReadOnly`/`Custom` access still constrains the
+/// agent: a prod-locked connection can't be written even with approval.
+async fn load_agent_policy(app: &AppState, conn_id: Uuid) -> GuardrailPolicy {
+    let access = app
+        .store
+        .connections()
+        .get(conn_id)
+        .await
+        .map(|p| p.mcp_access)
+        .unwrap_or_default();
+    match access {
+        basemaster_core::McpAccess::ReadOnly => GuardrailPolicy {
+            block_dml: true,
+            block_ddl: true,
+            block_perms: true,
+            block_tx: true,
+        },
+        basemaster_core::McpAccess::Custom {
+            block_dml,
+            block_ddl,
+            block_perms,
+            block_tx,
+        } => GuardrailPolicy {
+            block_dml,
+            block_ddl,
+            block_perms,
+            block_tx,
+        },
+        basemaster_core::McpAccess::Inherit => GuardrailPolicy {
+            block_dml: false,
+            block_ddl: false,
+            block_perms: false,
+            block_tx: false,
+        },
+    }
+}
+
+/// Guardrail check for the in-app AI agent's raw-SQL write path.
+pub(crate) async fn agent_check_sql(
+    app: &AppState,
+    conn_id: Uuid,
+    sql: &str,
+) -> Result<(), String> {
+    check_sql_allowed(sql, &load_agent_policy(app, conn_id).await)
+}
+
+/// Effective agent policy, for tools that don't produce raw SQL (row ops).
+pub(crate) async fn agent_policy(app: &AppState, conn_id: Uuid) -> GuardrailPolicy {
+    load_agent_policy(app, conn_id).await
 }
 
 async fn load_global_guardrail_policy(app: &AppState) -> GuardrailPolicy {

@@ -21,6 +21,8 @@ const SERVICE_MCP: &str = "basemaster-mcp";
 // O token do MCP não é por conexão — é único do app. Conta fixa.
 const MCP_TOKEN_ACCOUNT: &str = "token";
 
+const SERVICE_AI: &str = "basemaster-ai-keys";
+
 fn entry(service: &str, connection_id: Uuid) -> Result<keyring::Entry, keyring::Error> {
     keyring::Entry::new(service, &connection_id.to_string())
 }
@@ -164,6 +166,35 @@ pub fn get_mcp_token() -> StoreResult<Option<String>> {
 
 pub fn delete_mcp_token() -> StoreResult<()> {
     match mcp_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+// --- AI provider API keys ---
+//
+// App-wide (not per connection), one keyring entry per provider id. Kept out
+// of the WebView localStorage so keys aren't written to disk in plaintext.
+
+fn ai_entry(provider: &str) -> Result<keyring::Entry, keyring::Error> {
+    keyring::Entry::new(SERVICE_AI, provider)
+}
+
+pub fn set_ai_key(provider: &str, key: &str) -> StoreResult<()> {
+    ai_entry(provider)?.set_password(key)?;
+    Ok(())
+}
+
+pub fn get_ai_key(provider: &str) -> StoreResult<Option<String>> {
+    match ai_entry(provider)?.get_password() {
+        Ok(p) => Ok(Some(p)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn delete_ai_key(provider: &str) -> StoreResult<()> {
+    match ai_entry(provider)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.into()),
     }
