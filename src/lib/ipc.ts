@@ -497,6 +497,28 @@ export const ipc = {
       invoke<McpStatus>("mcp_set_guardrail", { category, enabled }),
   },
 
+  ai: {
+    /** Persist (or, with an empty key, remove) a provider's API key in the
+     *  OS keyring. */
+    setKey: (provider: string, key: string) =>
+      invoke<void>("ai_set_key", { provider, key }),
+    /** Load stored keys for the given providers (absent ones omitted). */
+    getKeys: (providers: string[]) =>
+      invoke<Record<string, string>>("ai_get_keys", { providers }),
+    /** Throws (rejects) if a per-connection access policy forbids this write
+     *  SQL for the agent; resolves when it may proceed to approval. */
+    checkSql: (connectionId: Uuid, sql: string) =>
+      invoke<void>("agent_check_sql", { connectionId, sql }),
+    /** Effective guardrail policy for the agent on a connection. */
+    guardrailPolicy: (connectionId: Uuid) =>
+      invoke<{
+        block_dml: boolean;
+        block_ddl: boolean;
+        block_perms: boolean;
+        block_tx: boolean;
+      }>("agent_guardrail_policy", { connectionId }),
+  },
+
   archive: {
     /** Bundles a list of files into a ZIP. If `deleteSources` is true,
      *  the source files are removed after the ZIP is built. */

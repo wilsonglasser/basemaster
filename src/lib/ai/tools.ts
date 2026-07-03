@@ -3,7 +3,8 @@ import { z } from "zod";
 
 import { ipc } from "@/lib/ipc";
 import { formatSqlText } from "@/lib/sql-format";
-import type { Value } from "@/lib/types";
+import { assertReadOnlySql, assertSingleStatement } from "@/lib/sql-readonly";
+import type { Column, Value } from "@/lib/types";
 import { useApproval } from "@/state/ai-approval";
 import { useConnections } from "@/state/connections";
 import { useQueryTabBridge } from "@/state/query-tab-bridge";
@@ -110,6 +111,17 @@ async function requestApproval(req: {
     meta: req.meta,
   });
   if (!ok) throw new Error("user_denied");
+}
+
+/** Blocks row-level writes (insert/update/delete) when the connection's access
+ *  policy forbids DML for the agent. Raw-SQL writes use ipc.ai.checkSql. */
+async function assertAgentDmlAllowed(connectionId: string): Promise<void> {
+  const p = await ipc.ai.guardrailPolicy(connectionId);
+  if (p.block_dml) {
+    throw new Error(
+      "This connection's access policy blocks data changes for the agent. Change its access (connection settings / Settings → MCP) to allow writes.",
+    );
+  }
 }
 
 // ---------------------------------------------------------------- tools
@@ -267,11 +279,7 @@ export const TOOLS = {
       sql: z.string(),
     }),
     execute: async ({ connection_id, schema, sql }) => {
-      if (!READ_ONLY_SQL.test(sql)) {
-        throw new Error(
-          "run_select accepts only SELECT/SHOW/EXPLAIN/WITH. Use run_write_sql for DDL/DML.",
-        );
-      }
+      assertReadOnlySql(sql);
       return await runReadOnly(connection_id, sql, schema ?? null);
     },
   }),
@@ -330,12 +338,17 @@ export const TOOLS = {
     }),
     execute: async ({ connection_id, schema, sql, analyze }) => {
       const driver = connDriver(connection_id);
+      // Remove trailing semicolon to avoid double-statement issues.
+      const body = sql.trim().replace(/;\s*$/, "");
+      // EXPLAIN alone only plans (safe on writes), but ANALYZE executes the
+      // statement — so it must be genuinely read-only. Multi-statement is
+      // never allowed either way (the second statement would run).
+      if (analyze) assertReadOnlySql(body);
+      else assertSingleStatement(body);
       let prefix = "EXPLAIN";
       if (analyze) {
         prefix = driver === "postgres" ? "EXPLAIN (ANALYZE)" : "EXPLAIN ANALYZE";
       }
-      // Remove trailing semicolon to avoid double-statement issues.
-      const body = sql.trim().replace(/;\s*$/, "");
       const stmt = `${prefix} ${body}`;
       return await runReadOnly(connection_id, stmt, schema ?? null);
     },
@@ -540,25 +553,48 @@ export const TOOLS = {
         table: string;
         only_a: string[];
         only_b: string[];
+        changed: Array<{
+          column: string;
+          a: { type: Column["column_type"]; nullable: boolean; default: string | null };
+          b: { type: Column["column_type"]; nullable: boolean; default: string | null };
+        }>;
       }> = [];
       for (const name of common) {
         const [ca, cb] = await Promise.all([
           ipc.db.describeTable(connection_a, schema_a, name),
           ipc.db.describeTable(connection_b, schema_b, name),
         ]);
-        const colsA = new Set(ca.map((c) => c.name));
-        const colsB = new Set(cb.map((c) => c.name));
+        const byNameA = new Map(ca.map((c) => [c.name, c]));
+        const byNameB = new Map(cb.map((c) => [c.name, c]));
         const onlyColsA = ca
-          .filter((c) => !colsB.has(c.name))
+          .filter((c) => !byNameB.has(c.name))
           .map((c) => c.name);
         const onlyColsB = cb
-          .filter((c) => !colsA.has(c.name))
+          .filter((c) => !byNameA.has(c.name))
           .map((c) => c.name);
-        if (onlyColsA.length > 0 || onlyColsB.length > 0) {
+        // Columns in both but with a different type / nullability / default.
+        const changed: (typeof columnDiffs)[number]["changed"] = [];
+        for (const [colName, colA] of byNameA) {
+          const colB = byNameB.get(colName);
+          if (!colB) continue;
+          if (
+            JSON.stringify(colA.column_type) !== JSON.stringify(colB.column_type) ||
+            colA.nullable !== colB.nullable ||
+            (colA.default ?? null) !== (colB.default ?? null)
+          ) {
+            changed.push({
+              column: colName,
+              a: { type: colA.column_type, nullable: colA.nullable, default: colA.default ?? null },
+              b: { type: colB.column_type, nullable: colB.nullable, default: colB.default ?? null },
+            });
+          }
+        }
+        if (onlyColsA.length > 0 || onlyColsB.length > 0 || changed.length > 0) {
           columnDiffs.push({
             table: name,
             only_a: onlyColsA,
             only_b: onlyColsB,
+            changed,
           });
         }
       }
@@ -620,6 +656,9 @@ export const TOOLS = {
       if (READ_ONLY_SQL.test(sql)) {
         throw new Error("Use run_select for read-only SQL.");
       }
+      // Per-connection access policy (read-only/prod-locked) blocks the agent
+      // before the user is even asked to approve.
+      await ipc.ai.checkSql(connection_id, sql);
       const driver = connDriver(connection_id) ?? "?";
       await requestApproval({
         title: "Agente quer rodar SQL de escrita",
@@ -661,6 +700,7 @@ export const TOOLS = {
         .min(1),
     }),
     execute: async ({ connection_id, schema, table, purpose, rows }) => {
+      await assertAgentDmlAllowed(connection_id);
       await requestApproval({
         title: `Agente quer inserir ${rows.length} linha(s) em ${schema}.${table}`,
         description: purpose,
@@ -716,6 +756,7 @@ export const TOOLS = {
       purpose,
       edits,
     }) => {
+      await assertAgentDmlAllowed(connection_id);
       await requestApproval({
         title: `Agente quer atualizar ${edits.length} célula(s) em ${schema}.${table}`,
         description: purpose,
@@ -762,6 +803,7 @@ export const TOOLS = {
         .min(1),
     }),
     execute: async ({ connection_id, schema, table, purpose, rows }) => {
+      await assertAgentDmlAllowed(connection_id);
       await requestApproval({
         title: `Agente quer deletar ${rows.length} linha(s) de ${schema}.${table}`,
         description: purpose,

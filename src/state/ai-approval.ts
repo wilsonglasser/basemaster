@@ -15,7 +15,10 @@ export interface PendingApproval {
 }
 
 interface ApprovalState {
+  /** Head of the queue — the request the dialog is currently showing. */
   pending: PendingApproval | null;
+  /** FIFO of pending approvals; `pending` mirrors queue[0]. */
+  queue: PendingApproval[];
   requestApproval: (
     req: Omit<PendingApproval, "id" | "resolve">,
   ) => Promise<boolean>;
@@ -24,24 +27,23 @@ interface ApprovalState {
 
 export const useApproval = create<ApprovalState>((set, get) => ({
   pending: null,
+  queue: [],
   requestApproval(req) {
+    // A model step can emit several write tool calls at once. Queue them and
+    // resolve one at a time instead of silently denying all but the last.
     return new Promise<boolean>((resolve) => {
-      const prev = get().pending;
-      // Only one in flight at a time — if another arrives, deny the previous.
-      if (prev) prev.resolve(false);
-      set({
-        pending: {
-          ...req,
-          id: crypto.randomUUID(),
-          resolve,
-        },
+      const item: PendingApproval = { ...req, id: crypto.randomUUID(), resolve };
+      set((s) => {
+        const queue = [...s.queue, item];
+        return { queue, pending: queue[0] };
       });
     });
   },
   resolveCurrent(approved) {
-    const cur = get().pending;
+    const cur = get().queue[0];
     if (!cur) return;
-    set({ pending: null });
     cur.resolve(approved);
+    const queue = get().queue.slice(1);
+    set({ queue, pending: queue[0] ?? null });
   },
 }));
