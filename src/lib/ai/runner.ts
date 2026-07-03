@@ -6,10 +6,80 @@ import { getLanguageModel } from "./providers";
 import { TOOLS } from "./tools";
 import { useAiAgent, type AiContentBlock, type AiMessage } from "@/state/ai-agent";
 
-const MAX_STEPS = 8;
+// Multi-table perf/investigation workflows chain many tool calls (explain →
+// indexes on N tables → describe → column_stats → propose), so keep this
+// generous — the model stops on its own once it has an answer.
+const MAX_STEPS = 24;
+
+// Rough char budget for the history sent each turn. Long conversations are
+// trimmed from the oldest complete turns so we don't overflow the context
+// window (which otherwise fails the whole request). ~4 chars/token.
+const MAX_HISTORY_CHARS = 60_000;
+
+const MAX_RETRIES = 3;
 
 function uid() {
   return crypto.randomUUID();
+}
+
+/** Transient errors worth retrying: rate limits, upstream 5xx, network blips.
+ *  Never retry once the user aborted. */
+function isRetryable(e: unknown): boolean {
+  const status =
+    (e as { statusCode?: number; status?: number })?.statusCode ??
+    (e as { status?: number })?.status;
+  if (status === 429 || (status && status >= 500 && status < 600)) return true;
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    msg.includes("rate limit") ||
+    msg.includes("overloaded") ||
+    msg.includes("timeout") ||
+    msg.includes("network") ||
+    msg.includes("fetch failed") ||
+    msg.includes("econnreset")
+  );
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(new Error("aborted"));
+      },
+      { once: true },
+    );
+  });
+}
+
+/** Keeps the most recent complete turns within MAX_HISTORY_CHARS. Cuts only at
+ *  real user-text messages so tool_use/tool_result pairs are never split. */
+function capHistory(messages: AiMessage[]): AiMessage[] {
+  const size = (m: AiMessage) => JSON.stringify(m.content).length;
+  let total = messages.reduce((n, m) => n + size(m), 0);
+  if (total <= MAX_HISTORY_CHARS) return messages;
+
+  // Boundaries where a fresh user turn begins (user message with a text block).
+  const boundaries = messages
+    .map((m, i) =>
+      m.role === "user" && m.content.some((c) => c.type === "text") ? i : -1,
+    )
+    .filter((i) => i >= 0);
+
+  // Walk boundaries newest→oldest; keep the earliest one that still fits.
+  let start = boundaries[boundaries.length - 1] ?? 0;
+  for (let b = boundaries.length - 1; b >= 0; b--) {
+    const idx = boundaries[b];
+    const kept = messages
+      .slice(idx)
+      .reduce((n, m) => n + size(m), 0);
+    if (kept > MAX_HISTORY_CHARS) break;
+    start = idx;
+    total = kept;
+  }
+  return messages.slice(start);
 }
 
 /** Maps our internal AiMessage[] to the SDK's ModelMessage[]. Tool results
@@ -167,18 +237,31 @@ export async function askAgent(userText: string, signal?: AbortSignal) {
   try {
     const model = getLanguageModel(parsed.provider, parsed.modelId, apiKey);
     const system = buildSystemPrompt();
-    const history = useAiAgent.getState().messages;
+    const history = capHistory(useAiAgent.getState().messages);
+    const modelMessages = toModelMessages(history);
 
-    const result = await generateText({
-      model,
-      system,
-      tools: TOOLS,
-      messages: toModelMessages(history),
-      stopWhen: stepCountIs(MAX_STEPS),
-      abortSignal: signal,
-    });
+    const runGenerate = () =>
+      generateText({
+        model,
+        system,
+        tools: TOOLS,
+        messages: modelMessages,
+        stopWhen: stepCountIs(MAX_STEPS),
+        abortSignal: signal,
+      });
 
-    const newMessages = fromModelMessages(result.response.messages);
+    let result: Awaited<ReturnType<typeof runGenerate>> | undefined;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        result = await runGenerate();
+        break;
+      } catch (e) {
+        if (signal?.aborted || attempt >= MAX_RETRIES || !isRetryable(e)) throw e;
+        await delay(500 * 2 ** attempt, signal);
+      }
+    }
+
+    const newMessages = fromModelMessages(result!.response.messages);
     for (const m of newMessages) {
       useAiAgent.getState().appendMessage(m);
     }

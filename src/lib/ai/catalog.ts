@@ -149,7 +149,8 @@ export function parseModelKey(
 export const MODEL_CATALOG: ModelRef[] = [
   // Anthropic
   { provider: "anthropic", modelId: "claude-sonnet-4-6", label: "Sonnet 4.6", hint: "recomendado" },
-  { provider: "anthropic", modelId: "claude-opus-4-7", label: "Opus 4.7", hint: "mais capaz" },
+  { provider: "anthropic", modelId: "claude-opus-4-8", label: "Opus 4.8", hint: "mais capaz" },
+  { provider: "anthropic", modelId: "claude-fable-5", label: "Fable 5" },
   { provider: "anthropic", modelId: "claude-haiku-4-5-20251001", label: "Haiku 4.5", hint: "rápido" },
 
   // OpenAI
