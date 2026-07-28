@@ -285,6 +285,19 @@ pub trait Driver: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Columns declared `GENERATED ALWAYS AS IDENTITY`. Unlike generated
+    /// columns these still have to receive the source value, but the INSERT
+    /// needs an `OVERRIDING SYSTEM VALUE` clause or the server rejects it
+    /// ("cannot insert a non-DEFAULT value into column ..."). Default: empty
+    /// — only PostgreSQL has the concept.
+    async fn list_identity_always_columns(
+        &self,
+        _schema: &str,
+        _table: &str,
+    ) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     /// Opens a transaction pinned to a single connection from the pool. Every
     /// operation done via the returned `Txn` uses the SAME conn — resolves the
     /// bug where `execute()` via pool would pick different connections between

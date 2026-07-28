@@ -702,12 +702,18 @@ impl Driver for MysqlDriver {
         //    word "GENERATED"), but GENERATION_EXPRESSION is populated.
         //  - Some older MariaDB: no GENERATION_EXPRESSION but with
         //    EXTRA "VIRTUAL"/"PERSISTENT".
-        // OR of all signals covers the three cases without false positives
-        // (EXTRA=VIRTUAL/PERSISTENT/STORED only appears on generated cols).
+        // The `DEFAULT_GENERATED` exclusion is load-bearing: MySQL 8.0.13+
+        // puts that in EXTRA for every column with an expression default
+        // (including plain `TIMESTAMP DEFAULT CURRENT_TIMESTAMP`, and the
+        // "DEFAULT_GENERATED on update CURRENT_TIMESTAMP" variant). Those
+        // columns ARE insertable — matching them on `LIKE '%GENERATED%'`
+        // silently dropped them from every transfer/dump INSERT, so the
+        // target got the default value instead of the source data.
         let rows = sqlx::query(
             "SELECT COLUMN_NAME
                FROM information_schema.COLUMNS
               WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                AND EXTRA NOT LIKE 'DEFAULT_GENERATED%'
                 AND (
                       EXTRA LIKE '%GENERATED%'
                    OR EXTRA = 'VIRTUAL'

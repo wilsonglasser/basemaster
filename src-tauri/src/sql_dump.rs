@@ -730,6 +730,21 @@ async fn dump_table_direct(
         .unwrap_or_default()
         .into_iter()
         .collect();
+
+    // PG target: an explicit value for a GENERATED ALWAYS AS IDENTITY column
+    // is rejected on import unless the INSERT opts out of the identity.
+    let overriding: &str = if source_is_pg
+        && !source
+            .list_identity_always_columns(schema, table)
+            .await
+            .unwrap_or_default()
+            .is_empty()
+    {
+        " OVERRIDING SYSTEM VALUE"
+    } else {
+        ""
+    };
+
     let keyset_col = crate::data_transfer::find_keyset_column(source, schema, table).await;
 
     sink.write(marker_data(idx).as_bytes())?;
@@ -747,6 +762,7 @@ async fn dump_table_direct(
         started,
         source_is_pg,
         &generated_cols,
+        overriding,
         control,
     )
     .await?;
@@ -1131,6 +1147,20 @@ async fn dump_table_to_temp(
         .collect();
     let generated_cols = Arc::new(generated_cols);
 
+    // Same as the sequential path: PG rejects explicit values for
+    // GENERATED ALWAYS AS IDENTITY columns without this clause.
+    let overriding: &'static str = if pg_mode
+        && !source
+            .list_identity_always_columns(schema, table)
+            .await
+            .unwrap_or_default()
+            .is_empty()
+    {
+        " OVERRIDING SYSTEM VALUE"
+    } else {
+        ""
+    };
+
     // Decide intra-table sharding: needs a single integer PK + size threshold.
     let intra_workers = opts.intra_table_workers.clamp(1, 8) as usize;
     let keyset_col = crate::data_transfer::find_keyset_column(&**source, schema, table).await;
@@ -1208,7 +1238,7 @@ async fn dump_table_to_temp(
                             dump_pk_range_to_temp(
                                 &app, &opts, &*source, &schema, &table, wid as u32, &col,
                                 low, high, total, &path_c, started, pg_mode, &counter,
-                                &generated, &control,
+                                &generated, overriding, &control,
                             )
                             .await
                         }),
@@ -1259,6 +1289,7 @@ async fn dump_table_to_temp(
         started,
         pg_mode,
         &generated_cols,
+        overriding,
         control,
     )
     .await
@@ -1307,6 +1338,7 @@ fn write_batch(
     table: &str,
     batch: &QueryResult,
     generated_cols: &HashSet<String>,
+    overriding: &str,
     pg_mode: bool,
     max_bytes: usize,
 ) -> Result<(), String> {
@@ -1329,9 +1361,15 @@ fn write_batch(
     // off: a bare VALUES misaligns once a generated value is dropped.
     let emit_col_list = opts.complete_inserts || !generated_cols.is_empty();
     let prefix = if emit_col_list {
-        format!("INSERT INTO {}.{} ({}) VALUES\n", qi(schema), qi(table), cols.join(", "))
+        format!(
+            "INSERT INTO {}.{} ({}){} VALUES\n",
+            qi(schema),
+            qi(table),
+            cols.join(", "),
+            overriding
+        )
     } else {
-        format!("INSERT INTO {}.{} VALUES\n", qi(schema), qi(table))
+        format!("INSERT INTO {}.{}{} VALUES\n", qi(schema), qi(table), overriding)
     };
 
     if opts.extended_inserts {
@@ -1393,13 +1431,14 @@ async fn dump_single_shard_to_temp(
     started: Instant,
     pg_mode: bool,
     generated_cols: &HashSet<String>,
+    overriding: &str,
     control: &Arc<TransferControl>,
 ) -> Result<u64, String> {
     let mut out = std::fs::File::create(path)
         .map_err(|e| format!("criar shard {}: {}", path.display(), e))?;
     write_table_data(
         &mut out, app, opts, source, schema, table, keyset_col, total, started, pg_mode,
-        generated_cols, control,
+        generated_cols, overriding, control,
     )
     .await
 }
@@ -1421,6 +1460,7 @@ async fn write_table_data(
     started: Instant,
     pg_mode: bool,
     generated_cols: &HashSet<String>,
+    overriding: &str,
     control: &Arc<TransferControl>,
 ) -> Result<u64, String> {
     let qi = |s: &str| source.quote_ident(s);
@@ -1471,7 +1511,10 @@ async fn write_table_data(
             break;
         }
 
-        write_batch(out, opts, source, schema, table, &batch, generated_cols, pg_mode, max_bytes)?;
+        write_batch(
+            out, opts, source, schema, table, &batch, generated_cols, overriding, pg_mode,
+            max_bytes,
+        )?;
 
         let n = batch.rows.len() as u64;
         transferred += n;
@@ -1520,6 +1563,7 @@ async fn dump_pk_range_to_temp(
     pg_mode: bool,
     counter: &AtomicU64,
     generated_cols: &HashSet<String>,
+    overriding: &str,
     control: &Arc<TransferControl>,
 ) -> Result<u64, String> {
     let qi = |s: &str| source.quote_ident(s);
@@ -1586,7 +1630,8 @@ async fn dump_pk_range_to_temp(
             }
 
             write_batch(
-                &mut out, opts, source, schema, table, &batch, generated_cols, pg_mode, max_bytes,
+                &mut out, opts, source, schema, table, &batch, generated_cols, overriding,
+                pg_mode, max_bytes,
             )?;
 
             let n = batch.rows.len() as u64;
