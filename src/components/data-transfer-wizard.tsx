@@ -102,6 +102,13 @@ export function DataTransferWizard({
   initialSavedTransferId,
 }: Props) {
   const t = useT();
+  // Transfer events are emitted under global names, so a second wizard tab
+  // would otherwise consume this one's progress (and vice-versa). The tab id
+  // is unique and stable across remounts/retries, so it doubles as the run id
+  // both for filtering incoming events and for targeting pause/stop. The
+  // `detached-` prefix is stripped so detaching mid-run keeps the same id and
+  // the new window keeps receiving the in-flight run's events.
+  const runId = tabId.replace(/^detached-/, "");
   const patchTab = useTabs((s) => s.patch);
   const openTab = useTabs((s) => s.open);
   const connections = useConnections((s) => s.connections);
@@ -392,17 +399,21 @@ export function DataTransferWizard({
     if (unlistenRef.current.length > 0) return;
     const fns = await Promise.all([
       listen<JobProgress>("transfer:job_progress", (e) => {
+        if (e.payload.run_id !== runId) return;
         currentJobRef.current = { targetSchema: e.payload.target_schema };
       }),
       listen<TableProgress>("transfer:progress", (e) => {
+        if (e.payload.run_id !== runId) return;
         const key = keyFor(e.payload.table);
         setPerTable((prev) => new Map(prev).set(key, e.payload));
       }),
       listen<TableDone>("transfer:table_done", (e) => {
+        if (e.payload.run_id !== runId) return;
         const key = keyFor(e.payload.table);
         setDoneTable((prev) => new Map(prev).set(key, e.payload));
       }),
       listen<TableWorkerProgress>("transfer:worker_progress", (e) => {
+        if (e.payload.run_id !== runId) return;
         const key = keyFor(e.payload.table);
         setWorkersByTable((prev) => {
           const next = new Map(prev);
@@ -413,6 +424,7 @@ export function DataTransferWizard({
         });
       }),
       listen<TableNote>("transfer:table_note", (e) => {
+        if (e.payload.run_id !== runId) return;
         const key = keyFor(e.payload.table);
         setNotesByTable((prev) => {
           const next = new Map(prev);
@@ -420,9 +432,15 @@ export function DataTransferWizard({
           return next;
         });
       }),
-      listen<{ total_rows: number; elapsed_ms: number; failed: number }>(
+      listen<{
+        run_id: string;
+        total_rows: number;
+        elapsed_ms: number;
+        failed: number;
+      }>(
         "transfer:done",
         (e) => {
+          if (e.payload.run_id !== runId) return;
           setFinalSummary(e.payload);
           setRunning(false);
           // Re-index every target schema touched so new/dropped tables show up.
@@ -480,7 +498,7 @@ export function DataTransferWizard({
 
   const handlePause = async () => {
     try {
-      await ipc.transfer.pause();
+      await ipc.transfer.pause(runId);
       setPaused(true);
     } catch (e) {
       console.error("pause:", e);
@@ -488,7 +506,7 @@ export function DataTransferWizard({
   };
   const handleResume = async () => {
     try {
-      await ipc.transfer.resume();
+      await ipc.transfer.resume(runId);
       setPaused(false);
     } catch (e) {
       console.error("resume:", e);
@@ -499,9 +517,9 @@ export function DataTransferWizard({
     if (!ok) return;
     try {
       setStopping(true);
-      await ipc.transfer.stop();
+      await ipc.transfer.stop(runId);
       if (paused) {
-        await ipc.transfer.resume();
+        await ipc.transfer.resume(runId);
         setPaused(false);
       }
     } catch (e) {
@@ -659,6 +677,7 @@ export function DataTransferWizard({
   const buildOpts = (resolved: TransferJob[]): MultiTransferOptions => {
     const first = resolved[0];
     return {
+      run_id: runId,
       source_connection_id: sourceConn!,
       source_schema: first?.source_schema ?? "",
       target_connection_id: targetConn!,

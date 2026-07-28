@@ -314,9 +314,11 @@ export const ipc = {
       invoke<TransferDone>("data_transfer_start", { opts }),
     startMulti: (opts: MultiTransferOptions) =>
       invoke<TransferDone>("data_transfer_start_multi", { opts }),
-    pause: () => invoke<void>("data_transfer_pause"),
-    resume: () => invoke<void>("data_transfer_resume"),
-    stop: () => invoke<void>("data_transfer_stop"),
+    // runId targets one transfer run; omitting it hits the shared control
+    // used by dump / import / export.
+    pause: (runId?: string) => invoke<void>("data_transfer_pause", { runId }),
+    resume: (runId?: string) => invoke<void>("data_transfer_resume", { runId }),
+    stop: (runId?: string) => invoke<void>("data_transfer_stop", { runId }),
     checkBinlogEnabled: (connectionId: Uuid) =>
       invoke<boolean>("check_binlog_enabled", { connectionId }),
   },

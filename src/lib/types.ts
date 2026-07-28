@@ -397,6 +397,10 @@ export interface OrderBy {
 export type InsertMode = "insert" | "insert_ignore" | "replace";
 
 export interface TransferOptions {
+  /** Routes every emitted event back to the tab that started this run.
+   *  Event names are global, so without it a second transfer tab consumes
+   *  the first one's progress. */
+  run_id?: string;
   source_connection_id: Uuid;
   source_schema: string;
   target_connection_id: Uuid;
@@ -446,6 +450,7 @@ export interface MultiTransferOptions extends TransferOptions {
 
 /** Emitted as `transfer:job_progress` before each schema job starts. */
 export interface JobProgress {
+  run_id: string;
   index: number;
   total: number;
   source_schema: string;
@@ -468,6 +473,7 @@ export interface SavedTransferDraft {
 }
 
 export interface TableProgress {
+  run_id: string;
   table: string;
   done: number;
   total: number;
@@ -475,6 +481,7 @@ export interface TableProgress {
 }
 
 export interface TableDone {
+  run_id: string;
   table: string;
   rows: number;
   elapsed_ms: number;
@@ -482,6 +489,7 @@ export interface TableDone {
 }
 
 export interface TableNote {
+  run_id: string;
   table: string;
   message: string;
   /** "info" | "warn" */
@@ -646,6 +654,7 @@ export interface ImportDone {
 }
 
 export interface TableWorkerProgress {
+  run_id: string;
   table: string;
   worker_id: number;
   /** PK bounds (inclusive, exclusive). String to support i128. */
@@ -658,6 +667,7 @@ export interface TableWorkerProgress {
 }
 
 export interface TransferDone {
+  run_id: string;
   total_rows: number;
   elapsed_ms: number;
   failed: number;

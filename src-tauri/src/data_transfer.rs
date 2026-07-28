@@ -85,6 +85,12 @@ pub enum InsertMode {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransferOptions {
+    /// Identifies this run. Every emitted event carries it back so a frontend
+    /// with more than one transfer tab open can route events to the tab that
+    /// started them — the event NAMES are global, so without this every tab
+    /// consumed every other tab's progress.
+    #[serde(default)]
+    pub run_id: String,
     pub source_connection_id: Uuid,
     pub source_schema: String,
     pub target_connection_id: Uuid,
@@ -217,6 +223,7 @@ fn default_intra_min_rows() -> u64 {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct TableProgress {
+    pub run_id: String,
     pub table: String,
     pub done: u64,
     pub total: u64,
@@ -225,6 +232,7 @@ pub struct TableProgress {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct TableDone {
+    pub run_id: String,
     pub table: String,
     pub rows: u64,
     pub elapsed_ms: u64,
@@ -236,6 +244,7 @@ pub struct TableDone {
 /// replicating backend logic.
 #[derive(Clone, Debug, Serialize)]
 pub struct TableNote {
+    pub run_id: String,
     pub table: String,
     pub message: String,
     /// "info" | "warn"
@@ -247,6 +256,7 @@ pub struct TableNote {
 /// can show each range individually (range, done, status).
 #[derive(Clone, Debug, Serialize)]
 pub struct TableWorkerProgress {
+    pub run_id: String,
     pub table: String,
     pub worker_id: u32,
     /// Bounds of the PK range: `[low_pk, high_pk)`. String because i128
@@ -262,6 +272,7 @@ pub struct TableWorkerProgress {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct TransferDone {
+    pub run_id: String,
     pub total_rows: u64,
     pub elapsed_ms: u64,
     pub failed: u32,
@@ -304,6 +315,7 @@ impl MultiTransferOptions {
 /// ordered, one job fully drains before the next begins).
 #[derive(Clone, Debug, Serialize)]
 pub struct JobProgress {
+    pub run_id: String,
     pub index: u32,
     pub total: u32,
     pub source_schema: String,
@@ -370,9 +382,11 @@ pub async fn run_transfer(
     // transfer.
 
     let continue_on_error = opts.continue_on_error;
+    let run_id = opts.run_id.clone();
     let totals = run_one_job(app.clone(), opts, source, target, control).await;
 
     let done = TransferDone {
+        run_id,
         total_rows: totals.rows,
         elapsed_ms: total_started.elapsed().as_millis() as u64,
         failed: totals.failed,
@@ -428,6 +442,7 @@ pub async fn run_transfer_multi(
         let _ = app.emit(
             "transfer:job_progress",
             &JobProgress {
+                run_id: opts.template.run_id.clone(),
                 index: i as u32,
                 total,
                 source_schema: job.source_schema.clone(),
@@ -457,6 +472,7 @@ pub async fn run_transfer_multi(
     }
 
     let done = TransferDone {
+        run_id: opts.template.run_id.clone(),
         total_rows,
         elapsed_ms: total_started.elapsed().as_millis() as u64,
         failed,
@@ -522,6 +538,7 @@ async fn run_parallel(
                 let _ = app.emit(
                     "transfer:table_done",
                     &TableDone {
+                        run_id: opts.run_id.clone(),
                         table: table.clone(),
                         rows,
                         elapsed_ms: elapsed,
@@ -584,6 +601,7 @@ async fn run_sequential(
 
         let elapsed_ms = table_start.elapsed().as_millis() as u64;
         let done_evt = TableDone {
+            run_id: opts.run_id.clone(),
             table: table_name.clone(),
             rows,
             elapsed_ms,
@@ -882,6 +900,7 @@ async fn transfer_one(
         let _ = app.emit(
             "transfer:table_note",
             &TableNote {
+                run_id: opts.run_id.clone(),
                 table: table.to_string(),
                 message: msg,
                 level: level.to_string(),
@@ -930,6 +949,7 @@ async fn transfer_one(
         let _ = app.emit(
             "transfer:progress",
             &TableProgress {
+                run_id: opts.run_id.clone(),
                 table: table.to_string(),
                 done: 0,
                 total: 0,
@@ -955,6 +975,7 @@ async fn transfer_one(
         let _ = app.emit(
             "transfer:progress",
             &TableProgress {
+                run_id: opts.run_id.clone(),
                 table: table.to_string(),
                 done: 0,
                 total: 0,
@@ -1082,6 +1103,7 @@ async fn transfer_one(
                 let _ = app.emit(
                     "transfer:table_note",
                     &TableNote {
+                        run_id: opts.run_id.clone(),
                         table: table.to_string(),
                         message: format!("Índice adiado falhou ({}): {}", table, e),
                         level: "warn".to_string(),
@@ -1412,6 +1434,7 @@ async fn run_table_copy(
         let _ = app.emit(
             "transfer:progress",
             &TableProgress {
+                run_id: opts.run_id.clone(),
                 table: table.to_string(),
                 done: transferred,
                 total,
@@ -1601,6 +1624,7 @@ async fn run_table_copy_ranges(
             let _ = app.emit(
                 "transfer:worker_progress",
                 &TableWorkerProgress {
+                    run_id: opts.run_id.clone(),
                     table: table.clone(),
                     worker_id: worker_id as u32,
                     low_pk: low.to_string(),
@@ -1709,6 +1733,7 @@ async fn copy_pk_range(
     let _ = app.emit(
         "transfer:worker_progress",
         &TableWorkerProgress {
+            run_id: opts.run_id.clone(),
             table: table.to_string(),
             worker_id,
             low_pk: low.to_string(),
@@ -1853,6 +1878,7 @@ async fn copy_pk_range(
         let _ = app.emit(
             "transfer:progress",
             &TableProgress {
+                run_id: opts.run_id.clone(),
                 table: table.to_string(),
                 done: global,
                 total,
@@ -1864,6 +1890,7 @@ async fn copy_pk_range(
         let _ = app.emit(
             "transfer:worker_progress",
             &TableWorkerProgress {
+                run_id: opts.run_id.clone(),
                 table: table.to_string(),
                 worker_id,
                 low_pk: low.to_string(),

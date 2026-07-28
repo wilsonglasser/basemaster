@@ -1431,9 +1431,45 @@ pub async fn data_transfer_start(
             .ok_or_else(|| "conexão de destino não está aberta".to_string())?;
         (src, tgt)
     };
-    state.transfer_control.reset();
-    let control = state.transfer_control.clone();
-    crate::data_transfer::run_transfer(app, opts, source, target, control).await
+    let (run_id, control) = register_transfer_run(&state, &opts.run_id).await;
+    let out = crate::data_transfer::run_transfer(app, opts, source, target, control).await;
+    state.transfer_runs.write().await.remove(&run_id);
+    out
+}
+
+/// Registers a fresh `TransferControl` for this run so pause/stop only hits
+/// the tab that started it. Falls back to the shared control when the caller
+/// sent no `run_id` (older frontends, MCP one-shot runs).
+async fn register_transfer_run(
+    state: &State<'_, AppState>,
+    run_id: &str,
+) -> (String, std::sync::Arc<crate::data_transfer::TransferControl>) {
+    if run_id.is_empty() {
+        state.transfer_control.reset();
+        return (String::new(), state.transfer_control.clone());
+    }
+    let control = std::sync::Arc::new(crate::data_transfer::TransferControl::new());
+    state
+        .transfer_runs
+        .write()
+        .await
+        .insert(run_id.to_string(), control.clone());
+    (run_id.to_string(), control)
+}
+
+/// Resolves the control a pause/resume/stop should act on: the per-run one
+/// when `run_id` names a live transfer, otherwise the shared control used by
+/// dump/import/export.
+async fn control_for(
+    state: &State<'_, AppState>,
+    run_id: Option<String>,
+) -> std::sync::Arc<crate::data_transfer::TransferControl> {
+    if let Some(id) = run_id.filter(|s| !s.is_empty()) {
+        if let Some(c) = state.transfer_runs.read().await.get(&id) {
+            return c.clone();
+        }
+    }
+    state.transfer_control.clone()
 }
 
 /// Multi-schema variant: same source/target connection pair, N schema jobs.
@@ -1456,26 +1492,37 @@ pub async fn data_transfer_start_multi(
             .ok_or_else(|| "conexão de destino não está aberta".to_string())?;
         (src, tgt)
     };
-    state.transfer_control.reset();
-    let control = state.transfer_control.clone();
-    crate::data_transfer::run_transfer_multi(app, opts, source, target, control).await
+    let (run_id, control) = register_transfer_run(&state, &opts.template.run_id).await;
+    let out =
+        crate::data_transfer::run_transfer_multi(app, opts, source, target, control).await;
+    state.transfer_runs.write().await.remove(&run_id);
+    out
 }
 
 #[tauri::command]
-pub async fn data_transfer_pause(state: State<'_, AppState>) -> R<()> {
-    state.transfer_control.pause();
+pub async fn data_transfer_pause(
+    state: State<'_, AppState>,
+    run_id: Option<String>,
+) -> R<()> {
+    control_for(&state, run_id).await.pause();
     Ok(())
 }
 
 #[tauri::command]
-pub async fn data_transfer_resume(state: State<'_, AppState>) -> R<()> {
-    state.transfer_control.resume();
+pub async fn data_transfer_resume(
+    state: State<'_, AppState>,
+    run_id: Option<String>,
+) -> R<()> {
+    control_for(&state, run_id).await.resume();
     Ok(())
 }
 
 #[tauri::command]
-pub async fn data_transfer_stop(state: State<'_, AppState>) -> R<()> {
-    state.transfer_control.request_stop();
+pub async fn data_transfer_stop(
+    state: State<'_, AppState>,
+    run_id: Option<String>,
+) -> R<()> {
+    control_for(&state, run_id).await.request_stop();
     Ok(())
 }
 

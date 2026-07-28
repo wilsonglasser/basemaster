@@ -51,10 +51,13 @@ pub struct AppState {
     /// Tunnels (SSH or HTTP proxy) open per connection. Kept alive while
     /// the respective driver is connected; closed together with it.
     pub tunnels: RwLock<HashMap<Uuid, Tunnel>>,
-    /// Control for the running transfer (pause/stop). Only one at a
-    /// time — if the user starts another while one is running, the old
-    /// one loses control on reset().
+    /// Control shared by dump / import / export (one at a time each).
+    /// Data transfers do NOT use this — they register a per-run control in
+    /// `transfer_runs` so pausing one transfer tab can't pause another.
     pub transfer_control: Arc<TransferControl>,
+    /// Per-run controls for data transfers, keyed by the frontend-supplied
+    /// `run_id`. Entries live only while the run is in flight.
+    pub transfer_runs: RwLock<HashMap<String, Arc<TransferControl>>>,
     /// Local MCP server. Managed via `mcp_*` commands.
     pub mcp: McpServer,
     /// In-flight queries. Keyed by the frontend-supplied request_id.
@@ -79,6 +82,7 @@ impl AppState {
             active: RwLock::new(HashMap::new()),
             tunnels: RwLock::new(HashMap::new()),
             transfer_control: Arc::new(TransferControl::new()),
+            transfer_runs: RwLock::new(HashMap::new()),
             mcp: McpServer::new(),
             running_queries: Arc::new(RwLock::new(HashMap::new())),
             known_hosts,
