@@ -9,6 +9,7 @@
 //!  - `open_connection` / `close_connection` — controls which conn is alive.
 //!  - `list_schemas`, `list_tables`, `describe_table`, `get_table_ddl`.
 //!  - `run_query` — runs arbitrary SQL, returns bounded rows.
+//!  - `transfer_tables` — copies tables between two open connections.
 //!
 //! Security:
 //!  - Bind on 127.0.0.1 only (never 0.0.0.0).
@@ -376,6 +377,38 @@ fn tool_definitions() -> JsonValue {
                 },
                 "required": ["connection_id", "sql", "path"]
             }
+        },
+        {
+            "name": "transfer_tables",
+            "description": "Copy tables from one open connection to another (structure and/or rows), the same engine the Data Transfer window uses. Cross-dialect copies (MySQL <-> Postgres) are translated. Runs to completion and returns row totals — it can take a long time on big tables. Both connections must already be open. Guardrails apply to the TARGET connection: creating/dropping tables needs DDL allowed, copying rows needs DML allowed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source_connection_id": { "type": "string" },
+                    "source_schema": { "type": "string" },
+                    "target_connection_id": { "type": "string" },
+                    "target_schema": { "type": "string" },
+                    "tables": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Tables to copy. Omit to copy every base table of source_schema (views are skipped)."
+                    },
+                    "create_tables": { "type": "boolean", "default": true, "description": "CREATE TABLE on the target from the source DDL." },
+                    "drop_target": { "type": "boolean", "default": false, "description": "DROP TABLE on the target first. Destructive." },
+                    "empty_target": { "type": "boolean", "default": false, "description": "DELETE FROM the target table before inserting. Destructive." },
+                    "create_records": { "type": "boolean", "default": true, "description": "Copy rows. false = structure only." },
+                    "insert_mode": { "type": "string", "enum": ["insert", "insert_ignore", "replace"], "default": "insert" },
+                    "continue_on_error": { "type": "boolean", "default": false },
+                    "concurrency": { "type": "integer", "default": 1, "description": "Tables copied in parallel (1-16)." },
+                    "chunk_size": { "type": "integer", "default": 1000 }
+                },
+                "required": [
+                    "source_connection_id",
+                    "source_schema",
+                    "target_connection_id",
+                    "target_schema"
+                ]
+            }
         }
     ])
 }
@@ -530,6 +563,100 @@ async fn call_tool(
             )
             .await?;
             Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
+        }
+        "transfer_tables" => {
+            let source_id: Uuid = parse_uuid(&args, "source_connection_id")?;
+            let target_id: Uuid = parse_uuid(&args, "target_connection_id")?;
+            let source_schema = parse_str(&args, "source_schema")?;
+            let target_schema = parse_str(&args, "target_schema")?;
+            let source = get_active(app, source_id).await?;
+            let target = get_active(app, target_id).await?;
+
+            let flag =
+                |k: &str, d: bool| args.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
+            let create_tables = flag("create_tables", true);
+            let drop_target = flag("drop_target", false);
+            let empty_target = flag("empty_target", false);
+            let create_records = flag("create_records", true);
+
+            // The transfer engine writes without ever handing us SQL to
+            // classify, so the guardrails are applied to the declared intent
+            // instead — against the TARGET connection's policy, since that's
+            // the side being written.
+            let policy = load_guardrail_policy(app, target_id).await;
+            if (create_tables || drop_target) && policy.block_ddl {
+                return Err("MCP guardrail blocked schema-changing (CREATE/DROP/ALTER/...) statement. Enable it in Settings → MCP to allow.".into());
+            }
+            if (create_records || empty_target) && policy.block_dml {
+                return Err("MCP guardrail blocked data-modifying (INSERT/UPDATE/DELETE/...) statement. Enable it in Settings → MCP to allow.".into());
+            }
+
+            let tables: Vec<String> = match args.get("tables").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+                _ => source
+                    .list_tables(&source_schema)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .filter(|t| matches!(t.kind, basemaster_core::TableKind::Table))
+                    .map(|t| t.name)
+                    .collect(),
+            };
+            if tables.is_empty() {
+                return Err(format!("nenhuma tabela pra transferir em {}", source_schema));
+            }
+            let table_count = tables.len();
+
+            // Own run id: keeps this transfer's events and its pause/stop
+            // control separate from anything running in the GUI.
+            let run_id = Uuid::new_v4().to_string();
+            let mut opts_json = json!({
+                "run_id": run_id,
+                "source_connection_id": source_id,
+                "source_schema": source_schema,
+                "target_connection_id": target_id,
+                "target_schema": target_schema,
+                "tables": tables,
+                "create_tables": create_tables,
+                "drop_target": drop_target,
+                "empty_target": empty_target,
+                "create_records": create_records,
+                "continue_on_error": flag("continue_on_error", false),
+            });
+            for k in ["insert_mode", "concurrency", "chunk_size"] {
+                if let Some(v) = args.get(k) {
+                    opts_json[k] = v.clone();
+                }
+            }
+            let opts: crate::data_transfer::TransferOptions =
+                serde_json::from_value(opts_json)
+                    .map_err(|e| format!("invalid options: {}", e))?;
+
+            let control = Arc::new(crate::data_transfer::TransferControl::new());
+            app.transfer_runs
+                .write()
+                .await
+                .insert(run_id.clone(), control.clone());
+            let result = crate::data_transfer::run_transfer(
+                ctx.app_handle.clone(),
+                opts,
+                source,
+                target,
+                control,
+            )
+            .await;
+            app.transfer_runs.write().await.remove(&run_id);
+            let done = result?;
+            Ok(json!({
+                "run_id": run_id,
+                "tables": table_count,
+                "total_rows": done.total_rows,
+                "failed": done.failed,
+                "elapsed_ms": done.elapsed_ms,
+            }))
         }
         other => Err(format!("unknown tool: {}", other)),
     }
