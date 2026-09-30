@@ -133,6 +133,8 @@ pub async fn run_import(
         session_prelude
             .push_str("SET sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO'); ");
     }
+    session_prelude.push_str(crate::data_transfer::ALLOW_ZERO_DATES);
+    session_prelude.push_str("; ");
     if let Some(ref schema) = opts.schema {
         if !schema.is_empty() {
             session_prelude.push_str(&format!("USE {}; ", target.quote_ident(schema)));
@@ -638,6 +640,7 @@ fn build_exec_ctx(
         if opts.preserve_zero_auto_increment {
             batch_pre.push("SET sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO')".to_string());
         }
+        batch_pre.push(crate::data_transfer::ALLOW_ZERO_DATES.to_string());
     }
     ExecCtx {
         schema: opts.schema.clone(),
@@ -1329,6 +1332,7 @@ fn is_duplicate_session_set(stmt: &str) -> bool {
     upper.contains("FOREIGN_KEY_CHECKS")
         || upper.contains("UNIQUE_CHECKS")
         || upper.contains("NO_AUTO_VALUE_ON_ZERO")
+        || upper.contains("NO_ZERO_DATE")
         || upper.starts_with("SET NAMES")
 }
 

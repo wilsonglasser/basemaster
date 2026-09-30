@@ -1034,10 +1034,15 @@ fn build_preamble(
     let session_flags = if source_is_pg {
         ""
     } else {
+        // The TRIM/REPLACE dance strips NO_ZERO_IN_DATE + NO_ZERO_DATE so legacy
+        // `0000-00-00` values (and column defaults using them) restore instead of
+        // failing with 1292. STRICT_TRANS_TABLES is left alone.
         "SET NAMES utf8mb4;\n\
          SET FOREIGN_KEY_CHECKS = 0;\n\
          SET UNIQUE_CHECKS = 0;\n\
-         SET SQL_MODE = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO');\n\n"
+         SET SQL_MODE = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO');\n\
+         SET SQL_MODE = TRIM(BOTH ',' FROM REPLACE(REPLACE(REPLACE(REPLACE(\
+         @@sql_mode,'NO_ZERO_IN_DATE',''),'NO_ZERO_DATE',''),',,',','),',,',','));\n\n"
     };
     format!(
         "{sig}\n\

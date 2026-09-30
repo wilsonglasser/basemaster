@@ -23,6 +23,17 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
+/// MySQL target only. Legacy sources carry `0000-00-00` dates (and DDL
+/// defaults that use them); the modern default sql_mode has NO_ZERO_DATE +
+/// NO_ZERO_IN_DATE and rejects both with error 1292. Strip only those two
+/// flags — STRICT_TRANS_TABLES stays on so genuine data errors still surface.
+/// The doubled REPLACE of `,,` cleans the commas the removals leave behind
+/// (both flags are adjacent in the default mode string), and TRIM handles the
+/// case where they sit at either end.
+pub const ALLOW_ZERO_DATES: &str = "SET sql_mode = TRIM(BOTH ',' FROM REPLACE(REPLACE(\
+     REPLACE(REPLACE(@@sql_mode,'NO_ZERO_IN_DATE',''),'NO_ZERO_DATE',''),\
+     ',,',','),',,',','))";
+
 /// Pause/stop control shared by the running transfer.
 /// Workers call `wait_if_paused_or_stopped` between batches to cooperate.
 pub struct TransferControl {
@@ -681,6 +692,8 @@ async fn transfer_one(
                 "SET sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO'); ",
             );
         }
+        session_prelude.push_str(ALLOW_ZERO_DATES);
+        session_prelude.push_str("; ");
     }
     if !session_prelude.is_empty() {
         if let Err(e) = target
@@ -721,6 +734,8 @@ async fn transfer_one(
                 "SET sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO'); ",
             );
         }
+        insert_prelude.push_str(ALLOW_ZERO_DATES);
+        insert_prelude.push_str("; ");
     }
 
     // 3. Drop + Create (or just Empty) per opts.

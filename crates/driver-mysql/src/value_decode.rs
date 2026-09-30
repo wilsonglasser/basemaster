@@ -101,21 +101,26 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
             Some(v) => Value::Json(v),
             None => Value::Null,
         },
-        "DATE" => match tg!(NaiveDate) {
-            Some(v) => Value::Date(v),
-            None => Value::Null,
+        // Temporal types never use `tg!`: a `None` here is ambiguous. sqlx maps
+        // zero dates to NULL (`MySqlValueRef::is_null` treats a zero-date
+        // payload as null), so both the real NULL and `0000-00-00` arrive as
+        // `Ok(None)`. `decode_broken_temporal` re-reads the raw payload to tell
+        // them apart.
+        "DATE" => match row.try_get::<Option<NaiveDate>, _>(i) {
+            Ok(Some(v)) => Value::Date(v),
+            _ => decode_broken_temporal(row, i, Temporal::Date),
         },
-        "TIME" => match tg!(NaiveTime) {
-            Some(v) => Value::Time(v),
-            None => Value::Null,
+        "TIME" => match row.try_get::<Option<NaiveTime>, _>(i) {
+            Ok(Some(v)) => Value::Time(v),
+            _ => decode_broken_temporal(row, i, Temporal::Time),
         },
-        "DATETIME" => match tg!(NaiveDateTime) {
-            Some(v) => Value::DateTime(v),
-            None => Value::Null,
+        "DATETIME" => match row.try_get::<Option<NaiveDateTime>, _>(i) {
+            Ok(Some(v)) => Value::DateTime(v),
+            _ => decode_broken_temporal(row, i, Temporal::DateTime),
         },
-        "TIMESTAMP" => match tg!(DateTime<Utc>) {
-            Some(v) => Value::Timestamp(v),
-            None => Value::Null,
+        "TIMESTAMP" => match row.try_get::<Option<DateTime<Utc>>, _>(i) {
+            Ok(Some(v)) => Value::Timestamp(v),
+            _ => decode_broken_temporal(row, i, Temporal::DateTime),
         },
         "YEAR" => match tg!(i16) {
             Some(v) => Value::Int(v as i64),
@@ -143,6 +148,86 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Temporal {
+    Date,
+    Time,
+    DateTime,
+}
+
+/// Legacy MySQL data holds temporal values no calendar accepts: `0000-00-00`,
+/// `2021-00-00`, `2021-05-00`, or a TIME beyond the 24h clock (`838:59:59`).
+/// chrono can't build any of those, and sqlx reports zero dates as NULL, which
+/// erases the difference from a real NULL — a copy into a NOT NULL column then
+/// dies with error 1048. Rebuild the literal from the wire payload and hand it
+/// over as a String so the value survives the round trip.
+fn decode_broken_temporal(row: &MySqlRow, i: usize, kind: Temporal) -> Value {
+    // Bypasses the type-compat check (`try_get` would reject `&[u8]` on a DATE
+    // column) and, unlike `Option<T>`, has no null shortcut: an Err here means
+    // the column really is NULL.
+    let buf: &[u8] = match row.try_get_unchecked(i) {
+        Ok(b) => b,
+        Err(_) => return Value::Null,
+    };
+    Value::String(temporal_literal(buf, kind))
+}
+
+/// Wire payload → MySQL literal. Text protocol sends the literal as-is; the
+/// binary protocol sends a length-prefixed struct (`0` = all zeros).
+fn temporal_literal(buf: &[u8], kind: Temporal) -> String {
+    // Binary length prefixes are 0..=12; a text literal always starts with an
+    // ASCII digit (or `-` for a negative TIME).
+    let is_text = matches!(buf.first(), Some(b) if *b >= b'-');
+    if is_text {
+        if let Ok(s) = std::str::from_utf8(buf) {
+            return s.to_string();
+        }
+    }
+    let at = |n: usize| buf.get(n).copied().unwrap_or(0);
+    let len = at(0) as usize;
+    if kind == Temporal::Time {
+        // [len][neg][days u32][h][m][s][micros u32]
+        let sign = if len >= 8 && at(1) == 1 { "-" } else { "" };
+        let days = if len >= 8 {
+            u32::from_le_bytes([at(2), at(3), at(4), at(5)])
+        } else {
+            0
+        };
+        let (h, m, s) = if len >= 8 {
+            (at(6) as u32, at(7), at(8))
+        } else {
+            (0, 0, 0)
+        };
+        return format!("{sign}{:02}:{m:02}:{s:02}", days * 24 + h);
+    }
+    // [len][year u16][month][day][h][m][s][micros u32]
+    let (y, mo, d) = if len >= 4 {
+        (u16::from_le_bytes([at(1), at(2)]), at(3), at(4))
+    } else {
+        (0, 0, 0)
+    };
+    let date = format!("{y:04}-{mo:02}-{d:02}");
+    if kind == Temporal::Date {
+        return date;
+    }
+    let (h, mi, s) = if len >= 7 {
+        (at(5), at(6), at(7))
+    } else {
+        (0, 0, 0)
+    };
+    let micros = if len >= 11 {
+        u32::from_le_bytes([at(8), at(9), at(10), at(11)])
+    } else {
+        0
+    };
+    let frac = if micros > 0 {
+        format!(".{micros:06}")
+    } else {
+        String::new()
+    };
+    format!("{date} {h:02}:{mi:02}:{s:02}{frac}")
+}
+
 /// When the type is unknown or the typed decode fails, try String,
 /// then raw bytes, and finally return Null.
 fn decode_fallback(row: &MySqlRow, i: usize) -> Value {
@@ -153,4 +238,59 @@ fn decode_fallback(row: &MySqlRow, i: usize) -> Value {
         return opt.map(Value::Bytes).unwrap_or(Value::Null);
     }
     Value::Null
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{temporal_literal, Temporal};
+
+    #[test]
+    fn zero_date_binary() {
+        assert_eq!(temporal_literal(&[0], Temporal::Date), "0000-00-00");
+        assert_eq!(
+            temporal_literal(&[0], Temporal::DateTime),
+            "0000-00-00 00:00:00"
+        );
+    }
+
+    #[test]
+    fn zero_in_date_binary() {
+        // 2021-00-00 : month/day zeroed, year intact.
+        let d = [4u8, 0xE5, 0x07, 0, 0];
+        assert_eq!(temporal_literal(&d, Temporal::Date), "2021-00-00");
+        // 2021-05-00 12:30:45
+        let dt = [7u8, 0xE5, 0x07, 5, 0, 12, 30, 45];
+        assert_eq!(
+            temporal_literal(&dt, Temporal::DateTime),
+            "2021-05-00 12:30:45"
+        );
+    }
+
+    #[test]
+    fn datetime_with_micros() {
+        let dt = [11u8, 0xE5, 0x07, 5, 0, 12, 30, 45, 0x40, 0x0D, 0x03, 0x00];
+        assert_eq!(
+            temporal_literal(&dt, Temporal::DateTime),
+            "2021-05-00 12:30:45.200000"
+        );
+    }
+
+    #[test]
+    fn out_of_range_time_binary() {
+        // 838:59:59 = 34 days + 22h
+        let t = [8u8, 0, 34, 0, 0, 0, 22, 59, 59];
+        assert_eq!(temporal_literal(&t, Temporal::Time), "838:59:59");
+        let neg = [8u8, 1, 34, 0, 0, 0, 22, 59, 59];
+        assert_eq!(temporal_literal(&neg, Temporal::Time), "-838:59:59");
+        assert_eq!(temporal_literal(&[0], Temporal::Time), "00:00:00");
+    }
+
+    #[test]
+    fn text_protocol_passes_through() {
+        assert_eq!(
+            temporal_literal(b"0000-00-00 00:00:00", Temporal::DateTime),
+            "0000-00-00 00:00:00"
+        );
+        assert_eq!(temporal_literal(b"-838:59:59", Temporal::Time), "-838:59:59");
+    }
 }
