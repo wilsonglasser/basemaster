@@ -417,6 +417,11 @@ pub async fn connection_open(
     state: State<'_, AppState>,
     id: Uuid,
 ) -> R<()> {
+    // MCP may have opened it already; reconnecting would drop that driver
+    // and its tunnel without closing them.
+    if state.active.read().await.contains_key(&id) {
+        return Ok(());
+    }
     let (driver, tunnel, _effective) = open_driver_with_tunnel(
         &state.store,
         state.known_hosts.clone(),

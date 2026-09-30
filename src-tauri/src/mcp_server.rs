@@ -6,10 +6,20 @@
 //!
 //! Exposed tools:
 //!  - `list_connections` — saved connections (without passwords).
-//!  - `open_connection` / `close_connection` — controls which conn is alive.
+//!  - `open_connection` / `close_connection`: explicit lifecycle; every
+//!    tool taking a `connection_id` also opens it on demand.
 //!  - `list_schemas`, `list_tables`, `describe_table`, `get_table_ddl`.
 //!  - `run_query` — runs arbitrary SQL, returns bounded rows.
-//!  - `transfer_tables` — copies tables between two open connections.
+//!  - `run_query_to_file`: streams a result set to disk.
+//!  - `transfer_tables` — copies tables between two connections.
+//!  - `job_status` / `job_list` / `job_cancel`: long-running work.
+//!
+//! Long-running tools (`run_query`, `run_query_to_file`, `transfer_tables`)
+//! never block the HTTP request to completion: they run in a detached task
+//! registered in the job registry and the call returns either the finished
+//! result (when it lands inside `wait_seconds`) or a `job_id` to poll with
+//! `job_status`. That keeps a client-side tool timeout from dropping the
+//! request future mid-transfer and leaving a half-copied target behind.
 //!
 //! Security:
 //!  - Bind on 127.0.0.1 only (never 0.0.0.0).
@@ -17,7 +27,9 @@
 //!  - Random 32-byte token, persisted in the keyring, regenerated only
 //!    on explicit user request (so client config survives restarts).
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::State as AxumState,
@@ -28,8 +40,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
-use tauri::{AppHandle, Manager};
-use tokio::sync::{Mutex, RwLock};
+use tauri::{AppHandle, Listener, Manager};
+use tokio::sync::{Mutex, Notify, RwLock};
 use uuid::Uuid;
 
 use crate::state::AppState;
@@ -42,6 +54,9 @@ pub struct McpServer {
     pub handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Shutdown signal.
     pub shutdown: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// Long-running tool calls, keyed by job id. Finished jobs stay around
+    /// so a late poll still sees the result; capped by `JOB_HISTORY`.
+    pub jobs: Arc<RwLock<HashMap<String, Arc<Job>>>>,
 }
 
 impl McpServer {
@@ -50,6 +65,7 @@ impl McpServer {
             port: Arc::new(RwLock::new(0)),
             handle: Arc::new(Mutex::new(None)),
             shutdown: Arc::new(Mutex::new(None)),
+            jobs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -126,6 +142,248 @@ impl Default for McpServer {
 struct HandlerContext {
     app_handle: AppHandle,
     token: String,
+}
+
+// -------------------------------------------------------------------- jobs
+
+/// Finished jobs kept in the registry before the oldest one is evicted.
+const JOB_HISTORY: usize = 50;
+/// How long a tool call blocks waiting for its own job before handing back
+/// a `job_id`. Well under any client-side tool timeout.
+const DEFAULT_WAIT_SECS: u64 = 25;
+const MAX_WAIT_SECS: u64 = 60;
+
+enum JobState {
+    Running { progress: Option<JsonValue> },
+    Done(JsonValue),
+    Failed(String),
+}
+
+pub struct Job {
+    tool: String,
+    started: Instant,
+    /// std mutex, not tokio: the Tauri event listener that feeds progress
+    /// in is a sync closure and cannot await.
+    state: std::sync::Mutex<JobState>,
+    /// Woken when `state` leaves `Running`.
+    notify: Notify,
+    /// Transfers cancel cooperatively through their own control; everything
+    /// else is aborted at the task level.
+    control: Option<Arc<crate::data_transfer::TransferControl>>,
+    abort: std::sync::Mutex<Option<tokio::task::AbortHandle>>,
+}
+
+impl Job {
+    fn is_running(&self) -> bool {
+        matches!(&*self.state.lock().unwrap(), JobState::Running { .. })
+    }
+
+    fn snapshot(&self, job_id: &str) -> JsonValue {
+        let elapsed_ms = self.started.elapsed().as_millis() as u64;
+        let base = |status: &str| {
+            json!({
+                "job_id": job_id,
+                "tool": self.tool,
+                "status": status,
+                "elapsed_ms": elapsed_ms,
+            })
+        };
+        match &*self.state.lock().unwrap() {
+            JobState::Running { progress } => {
+                let mut v = base("running");
+                if let Some(p) = progress {
+                    v["progress"] = p.clone();
+                }
+                v
+            }
+            JobState::Done(result) => {
+                let mut v = base("done");
+                v["result"] = result.clone();
+                v
+            }
+            JobState::Failed(err) => {
+                let mut v = base("failed");
+                v["error"] = json!(err);
+                v
+            }
+        }
+    }
+
+    /// Same as `snapshot` minus the result payload, which can be large.
+    fn summary(&self, job_id: &str) -> JsonValue {
+        let status = match &*self.state.lock().unwrap() {
+            JobState::Running { .. } => "running",
+            JobState::Done(_) => "done",
+            JobState::Failed(_) => "failed",
+        };
+        json!({
+            "job_id": job_id,
+            "tool": self.tool,
+            "status": status,
+            "elapsed_ms": self.started.elapsed().as_millis() as u64,
+        })
+    }
+
+    fn finish(&self, outcome: Result<JsonValue, String>) {
+        {
+            let mut st = self.state.lock().unwrap();
+            *st = match outcome {
+                Ok(v) => JobState::Done(v),
+                Err(e) => JobState::Failed(e),
+            };
+        }
+        self.notify.notify_waiters();
+    }
+}
+
+fn wait_duration(args: &JsonValue) -> Duration {
+    let secs = args
+        .get("wait_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_WAIT_SECS)
+        .min(MAX_WAIT_SECS);
+    Duration::from_secs(secs)
+}
+
+/// Blocks up to `dur` for the job to leave `Running`.
+async fn wait_for_job(job: &Arc<Job>, dur: Duration) {
+    let _ = tokio::time::timeout(dur, async {
+        loop {
+            // Register before checking so a completion that lands in
+            // between still wakes us.
+            let notified = job.notify.notified();
+            if !job.is_running() {
+                return;
+            }
+            notified.await;
+        }
+    })
+    .await;
+}
+
+/// Spawns `fut` as a detached job, waits `wait` for it, and returns either
+/// the finished payload or the job handle to poll. The task outlives the
+/// HTTP request, so a client giving up never cancels the work.
+async fn run_as_job<F>(
+    ctx: &HandlerContext,
+    tool: &str,
+    job_id: String,
+    control: Option<Arc<crate::data_transfer::TransferControl>>,
+    wait: Duration,
+    fut: F,
+) -> Result<JsonValue, String>
+where
+    F: std::future::Future<Output = Result<JsonValue, String>> + Send + 'static,
+{
+    let job = Arc::new(Job {
+        tool: tool.to_string(),
+        started: Instant::now(),
+        state: std::sync::Mutex::new(JobState::Running { progress: None }),
+        notify: Notify::new(),
+        control,
+        abort: std::sync::Mutex::new(None),
+    });
+
+    let registry = {
+        let state = ctx.app_handle.state::<AppState>();
+        state.inner().mcp.jobs.clone()
+    };
+    {
+        let mut map = registry.write().await;
+        map.insert(job_id.clone(), job.clone());
+        evict_finished(&mut map);
+    }
+
+    // Transfer progress arrives as Tauri events; mirror the aggregate into
+    // the job so `job_status` can report it.
+    let listener = if job.control.is_some() {
+        let job_for_ev = job.clone();
+        let run_id = job_id.clone();
+        Some(ctx.app_handle.listen("transfer:progress", move |ev| {
+            let Ok(p) = serde_json::from_str::<JsonValue>(ev.payload()) else {
+                return;
+            };
+            if p.get("run_id").and_then(|v| v.as_str()) != Some(run_id.as_str()) {
+                return;
+            }
+            if let Ok(mut st) = job_for_ev.state.lock() {
+                if let JobState::Running { progress } = &mut *st {
+                    *progress = Some(p);
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
+    let inner = tokio::spawn(fut);
+    *job.abort.lock().unwrap() = Some(inner.abort_handle());
+
+    // Supervisor: whatever happens to the work task (finish, abort, panic),
+    // the job leaves `Running` and the run's control is dropped. Without it
+    // a panicking transfer would be polled forever.
+    let job_for_task = job.clone();
+    let app_for_task = ctx.app_handle.clone();
+    let run_id = job_id.clone();
+    tokio::spawn(async move {
+        let outcome = match inner.await {
+            Ok(r) => r,
+            Err(e) if e.is_cancelled() => Err("cancelled".to_string()),
+            Err(e) => Err(format!("job panicked: {}", e)),
+        };
+        if let Some(id) = listener {
+            app_for_task.unlisten(id);
+        }
+        let state = app_for_task.state::<AppState>();
+        state.inner().transfer_runs.write().await.remove(&run_id);
+        job_for_task.finish(outcome);
+    });
+
+    wait_for_job(&job, wait).await;
+    let out = match &*job.state.lock().unwrap() {
+        JobState::Failed(e) => Err(e.clone()),
+        JobState::Done(v) => {
+            let mut out = v.clone();
+            if let Some(obj) = out.as_object_mut() {
+                obj.insert("job_id".into(), json!(job_id));
+                obj.insert("status".into(), json!("done"));
+            }
+            Ok(out)
+        }
+        JobState::Running { .. } => Ok(json!({
+            "job_id": job_id,
+            "tool": tool,
+            "status": "running",
+            "note": "still running; poll with job_status (it long-polls, so a single call can wait out short jobs) or stop it with job_cancel",
+        })),
+    };
+    out
+}
+
+async fn get_job(app: &AppState, job_id: &str) -> Result<Arc<Job>, String> {
+    app.mcp
+        .jobs
+        .read()
+        .await
+        .get(job_id)
+        .cloned()
+        .ok_or_else(|| format!("unknown job: {}", job_id))
+}
+
+fn evict_finished(map: &mut HashMap<String, Arc<Job>>) {
+    while map.len() > JOB_HISTORY {
+        let oldest = map
+            .iter()
+            .filter(|(_, j)| !j.is_running())
+            .min_by_key(|(_, j)| j.started)
+            .map(|(k, _)| k.clone());
+        match oldest {
+            Some(k) => {
+                map.remove(&k);
+            }
+            None => break,
+        }
+    }
 }
 
 
@@ -279,7 +537,7 @@ fn tool_definitions() -> JsonValue {
         },
         {
             "name": "open_connection",
-            "description": "Open a connection by id (uses stored credentials from keyring).",
+            "description": "Open a saved connection by id (stored credentials, SSH/SSM tunnel if configured). Optional: every tool that takes a connection_id opens it on demand.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -301,7 +559,7 @@ fn tool_definitions() -> JsonValue {
         },
         {
             "name": "list_schemas",
-            "description": "List schemas/databases on an open connection.",
+            "description": "List schemas/databases on a connection.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -350,14 +608,15 @@ fn tool_definitions() -> JsonValue {
         },
         {
             "name": "run_query",
-            "description": "Execute SQL on an open connection. Returns columns + up to max_rows rows.",
+            "description": "Execute SQL on a connection. Returns columns + up to max_rows rows.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "connection_id": { "type": "string" },
                     "schema": { "type": "string" },
                     "sql": { "type": "string" },
-                    "max_rows": { "type": "integer", "default": 500 }
+                    "max_rows": { "type": "integer", "default": 500 },
+                    "wait_seconds": { "type": "integer", "default": 25, "description": "How long to wait inline before returning a job_id to poll with job_status. Max 60." }
                 },
                 "required": ["connection_id", "sql"]
             }
@@ -373,14 +632,15 @@ fn tool_definitions() -> JsonValue {
                     "sql": { "type": "string" },
                     "path": { "type": "string", "description": "Absolute filesystem path where the result will be written." },
                     "format": { "type": "string", "enum": ["jsonl", "csv"], "default": "jsonl" },
-                    "sample_rows": { "type": "integer", "default": 20, "description": "Number of rows to include verbatim in the return payload." }
+                    "sample_rows": { "type": "integer", "default": 20, "description": "Number of rows to include verbatim in the return payload." },
+                    "wait_seconds": { "type": "integer", "default": 25, "description": "How long to wait inline before returning a job_id to poll with job_status. Max 60." }
                 },
                 "required": ["connection_id", "sql", "path"]
             }
         },
         {
             "name": "transfer_tables",
-            "description": "Copy tables from one open connection to another (structure and/or rows), the same engine the Data Transfer window uses. Cross-dialect copies (MySQL <-> Postgres) are translated. Runs to completion and returns row totals — it can take a long time on big tables. Both connections must already be open. Guardrails apply to the TARGET connection: creating/dropping tables needs DDL allowed, copying rows needs DML allowed.",
+            "description": "Copy tables from one connection to another (structure and/or rows), the same engine the Data Transfer window uses. Cross-dialect copies (MySQL <-> Postgres) are translated. Big transfers keep running in the background: if the copy is still going after wait_seconds the call returns {job_id, status:'running'} and you poll it with job_status (or stop it with job_cancel), so a slow transfer never trips the client tool timeout. Guardrails apply to the TARGET connection: creating/dropping tables needs DDL allowed, copying rows needs DML allowed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -400,7 +660,8 @@ fn tool_definitions() -> JsonValue {
                     "insert_mode": { "type": "string", "enum": ["insert", "insert_ignore", "replace"], "default": "insert" },
                     "continue_on_error": { "type": "boolean", "default": false },
                     "concurrency": { "type": "integer", "default": 1, "description": "Tables copied in parallel (1-16)." },
-                    "chunk_size": { "type": "integer", "default": 1000 }
+                    "chunk_size": { "type": "integer", "default": 1000 },
+                    "wait_seconds": { "type": "integer", "default": 25, "description": "How long to wait inline before returning a job_id to poll with job_status. Max 60." }
                 },
                 "required": [
                     "source_connection_id",
@@ -408,6 +669,32 @@ fn tool_definitions() -> JsonValue {
                     "target_connection_id",
                     "target_schema"
                 ]
+            }
+        },
+        {
+            "name": "job_status",
+            "description": "Poll a job started by run_query, run_query_to_file or transfer_tables. Long-polls: it blocks up to wait_seconds for the job to finish, so calling it in a loop is cheap. Returns status running|done|failed, elapsed_ms, the last progress event (transfers) and the full result once done.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string" },
+                    "wait_seconds": { "type": "integer", "default": 25, "description": "Max seconds to block waiting for completion. 0 returns immediately. Max 60." }
+                },
+                "required": ["job_id"]
+            }
+        },
+        {
+            "name": "job_list",
+            "description": "List the jobs this server knows about (running first, then recently finished), without their result payloads.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "job_cancel",
+            "description": "Stop a running job. Transfers stop cooperatively between batches and still report what was copied; other jobs are aborted outright.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "job_id": { "type": "string" } },
+                "required": ["job_id"]
             }
         }
     ])
@@ -446,23 +733,24 @@ async fn call_tool(
         }
         "open_connection" => {
             let id: Uuid = parse_uuid(&args, "connection_id")?;
-            // Reuses the command's logic — we need to call the same path.
-            // Here's a simplified replica: get profile, build config
-            // with the keyring password, call driver.connect.
-            open_connection_impl(app, id).await?;
+            open_connection_impl(&ctx.app_handle, app, id).await?;
             Ok(json!({ "ok": true }))
         }
         "close_connection" => {
             let id: Uuid = parse_uuid(&args, "connection_id")?;
-            let mut active = app.active.write().await;
-            if let Some(driver) = active.remove(&id) {
+            let driver = app.active.write().await.remove(&id);
+            if let Some(driver) = driver {
                 let _ = driver.disconnect().await;
+            }
+            let tunnel = app.tunnels.write().await.remove(&id);
+            if let Some(t) = tunnel {
+                t.close().await;
             }
             Ok(json!({ "ok": true }))
         }
         "list_schemas" => {
             let id: Uuid = parse_uuid(&args, "connection_id")?;
-            let driver = get_active(app, id).await?;
+            let driver = get_active(&ctx.app_handle, app, id).await?;
             let schemas = driver
                 .list_schemas()
                 .await
@@ -472,7 +760,7 @@ async fn call_tool(
         "list_tables" => {
             let id: Uuid = parse_uuid(&args, "connection_id")?;
             let schema = parse_str(&args, "schema")?;
-            let driver = get_active(app, id).await?;
+            let driver = get_active(&ctx.app_handle, app, id).await?;
             let tables = driver
                 .list_tables(&schema)
                 .await
@@ -483,7 +771,7 @@ async fn call_tool(
             let id: Uuid = parse_uuid(&args, "connection_id")?;
             let schema = parse_str(&args, "schema")?;
             let table = parse_str(&args, "table")?;
-            let driver = get_active(app, id).await?;
+            let driver = get_active(&ctx.app_handle, app, id).await?;
             let cols = driver
                 .describe_table(&schema, &table)
                 .await
@@ -494,7 +782,7 @@ async fn call_tool(
             let id: Uuid = parse_uuid(&args, "connection_id")?;
             let schema = parse_str(&args, "schema")?;
             let table = parse_str(&args, "table")?;
-            let driver = get_active(app, id).await?;
+            let driver = get_active(&ctx.app_handle, app, id).await?;
             let ddl = driver
                 .get_table_ddl(&schema, &table)
                 .await
@@ -513,25 +801,36 @@ async fn call_tool(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(500) as usize;
             check_sql_allowed(&sql, &load_guardrail_policy(app, id).await)?;
-            let driver = get_active(app, id).await?;
-            let result = driver
-                .query(schema.as_deref(), &sql)
-                .await
-                .map_err(|e| e.to_string())?;
-            let truncated = result.rows.len() > max_rows;
-            let rows = result
-                .rows
-                .iter()
-                .take(max_rows)
-                .cloned()
-                .collect::<Vec<_>>();
-            Ok(json!({
-                "columns": result.columns,
-                "rows": rows,
-                "elapsed_ms": result.elapsed_ms,
-                "truncated": truncated,
-                "total_rows": result.rows.len(),
-            }))
+            let driver = get_active(&ctx.app_handle, app, id).await?;
+            let wait = wait_duration(&args);
+            run_as_job(
+                ctx,
+                "run_query",
+                Uuid::new_v4().to_string(),
+                None,
+                wait,
+                async move {
+                    let result = driver
+                        .query(schema.as_deref(), &sql)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let truncated = result.rows.len() > max_rows;
+                    let rows = result
+                        .rows
+                        .iter()
+                        .take(max_rows)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    Ok(json!({
+                        "columns": result.columns,
+                        "rows": rows,
+                        "elapsed_ms": result.elapsed_ms,
+                        "truncated": truncated,
+                        "total_rows": result.rows.len(),
+                    }))
+                },
+            )
+            .await
         }
         "run_query_to_file" => {
             let id: Uuid = parse_uuid(&args, "connection_id")?;
@@ -551,26 +850,37 @@ async fn call_tool(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20) as usize;
             check_sql_allowed(&sql, &load_guardrail_policy(app, id).await)?;
-            let driver = get_active(app, id).await?;
+            let driver = get_active(&ctx.app_handle, app, id).await?;
             let fmt = crate::query_export::ExportFormat::parse(&format)?;
-            let result = crate::query_export::export_query(
-                driver.as_ref(),
-                schema.as_deref(),
-                &sql,
-                std::path::Path::new(&path),
-                fmt,
-                sample_rows,
+            let wait = wait_duration(&args);
+            run_as_job(
+                ctx,
+                "run_query_to_file",
+                Uuid::new_v4().to_string(),
+                None,
+                wait,
+                async move {
+                    let result = crate::query_export::export_query(
+                        driver.as_ref(),
+                        schema.as_deref(),
+                        &sql,
+                        std::path::Path::new(&path),
+                        fmt,
+                        sample_rows,
+                    )
+                    .await?;
+                    serde_json::to_value(result).map_err(|e| e.to_string())
+                },
             )
-            .await?;
-            Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
+            .await
         }
         "transfer_tables" => {
             let source_id: Uuid = parse_uuid(&args, "source_connection_id")?;
             let target_id: Uuid = parse_uuid(&args, "target_connection_id")?;
             let source_schema = parse_str(&args, "source_schema")?;
             let target_schema = parse_str(&args, "target_schema")?;
-            let source = get_active(app, source_id).await?;
-            let target = get_active(app, target_id).await?;
+            let source = get_active(&ctx.app_handle, app, source_id).await?;
+            let target = get_active(&ctx.app_handle, app, target_id).await?;
 
             let flag =
                 |k: &str, d: bool| args.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
@@ -640,64 +950,129 @@ async fn call_tool(
                 .write()
                 .await
                 .insert(run_id.clone(), control.clone());
-            let result = crate::data_transfer::run_transfer(
-                ctx.app_handle.clone(),
-                opts,
-                source,
-                target,
-                control,
+            let app_handle = ctx.app_handle.clone();
+            let wait = wait_duration(&args);
+            let job_run_id = run_id.clone();
+            run_as_job(
+                ctx,
+                "transfer_tables",
+                run_id,
+                Some(control.clone()),
+                wait,
+                async move {
+                    let done = crate::data_transfer::run_transfer(
+                        app_handle, opts, source, target, control,
+                    )
+                    .await?;
+                    Ok(json!({
+                        "run_id": job_run_id,
+                        "tables": table_count,
+                        "total_rows": done.total_rows,
+                        "failed": done.failed,
+                        "elapsed_ms": done.elapsed_ms,
+                    }))
+                },
             )
-            .await;
-            app.transfer_runs.write().await.remove(&run_id);
-            let done = result?;
+            .await
+        }
+        "job_status" => {
+            let job_id = parse_str(&args, "job_id")?;
+            let job = get_job(app, &job_id).await?;
+            wait_for_job(&job, wait_duration(&args)).await;
+            Ok(job.snapshot(&job_id))
+        }
+        "job_list" => {
+            let jobs = app.mcp.jobs.read().await;
+            let mut list: Vec<(bool, std::time::Instant, JsonValue)> = jobs
+                .iter()
+                .map(|(id, j)| (j.is_running(), j.started, j.summary(id)))
+                .collect();
+            // Running first, then most recently started.
+            list.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
             Ok(json!({
-                "run_id": run_id,
-                "tables": table_count,
-                "total_rows": done.total_rows,
-                "failed": done.failed,
-                "elapsed_ms": done.elapsed_ms,
+                "jobs": list.into_iter().map(|(_, _, v)| v).collect::<Vec<_>>(),
             }))
+        }
+        "job_cancel" => {
+            let job_id = parse_str(&args, "job_id")?;
+            let job = get_job(app, &job_id).await?;
+            if !job.is_running() {
+                return Ok(json!({ "job_id": job_id, "status": "already finished" }));
+            }
+            let how = match &job.control {
+                // Cooperative: the transfer engine stops between batches and
+                // still reports the totals it managed to copy.
+                Some(c) => {
+                    c.request_stop();
+                    "stop requested"
+                }
+                None => {
+                    if let Some(h) = job.abort.lock().unwrap().take() {
+                        h.abort();
+                    }
+                    "aborted"
+                }
+            };
+            Ok(json!({ "job_id": job_id, "cancel": how }))
         }
         other => Err(format!("unknown tool: {}", other)),
     }
 }
 
-async fn open_connection_impl(app: &AppState, id: Uuid) -> Result<(), String> {
+/// Opens the connection through the same tunnel-aware path the UI uses
+/// (SSH / SSM / HTTP proxy + keyring secrets). An unknown SSH host key pops
+/// the normal trust prompt in the app window.
+async fn open_connection_impl(
+    app_handle: &AppHandle,
+    app: &AppState,
+    id: Uuid,
+) -> Result<(), String> {
     if app.active.read().await.contains_key(&id) {
         return Ok(());
     }
-    let profile = app
-        .store
-        .connections()
-        .get(id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let driver_kind = profile.driver.clone();
-    let driver = crate::state::make_driver(&driver_kind)
-        .ok_or_else(|| format!("driver não suportado: {}", driver_kind))?;
-    let password =
-        basemaster_store::secrets::get_password(id).unwrap_or_default();
-    let config = profile.into_config(password);
-    driver
-        .connect(&config)
-        .await
-        .map_err(|e| e.to_string())?;
-    app.active.write().await.insert(id, driver);
+    let (driver, tunnel, _effective) = crate::commands::open_driver_with_tunnel(
+        &app.store,
+        app.known_hosts.clone(),
+        app.ssh_key_prompts.clone(),
+        crate::ssh_tunnel::HostKeyPolicy::Prompt(app_handle.clone()),
+        id,
+    )
+    .await?;
+    // Two tool calls can race to open the same id; keep the first one.
+    let mut active = app.active.write().await;
+    if active.contains_key(&id) {
+        drop(active);
+        let _ = driver.disconnect().await;
+        if let Some(t) = tunnel {
+            t.close().await;
+        }
+        return Ok(());
+    }
+    active.insert(id, driver);
+    drop(active);
+    if let Some(t) = tunnel {
+        app.tunnels.write().await.insert(id, t);
+    }
+    let _ = app.store.connections().touch(id).await;
     Ok(())
 }
 
+/// Returns the live driver, opening the saved connection on demand.
 async fn get_active(
+    app_handle: &AppHandle,
     app: &AppState,
     id: Uuid,
 ) -> Result<Arc<dyn basemaster_core::Driver>, String> {
+    if let Some(d) = app.active.read().await.get(&id).cloned() {
+        return Ok(d);
+    }
+    open_connection_impl(app_handle, app, id).await?;
     app.active
         .read()
         .await
         .get(&id)
         .cloned()
-        .ok_or_else(|| {
-            "conexão não está aberta — chame open_connection antes".into()
-        })
+        .ok_or_else(|| "connection closed while opening".into())
 }
 
 fn parse_uuid(args: &JsonValue, key: &str) -> Result<Uuid, String> {
@@ -1127,5 +1502,64 @@ mod tests {
         // unknown allowed because not every guardrail is off? no — fail-closed
         // only when ALL off; here one is on, so unknown blocked.
         assert!(check_sql_allowed("VACUUM", &dml_only).is_err());
+    }
+
+    fn job(tool: &str) -> Arc<Job> {
+        Arc::new(Job {
+            tool: tool.to_string(),
+            started: Instant::now(),
+            state: std::sync::Mutex::new(JobState::Running { progress: None }),
+            notify: Notify::new(),
+            control: None,
+            abort: std::sync::Mutex::new(None),
+        })
+    }
+
+    #[test]
+    fn wait_seconds_clamped() {
+        assert_eq!(
+            wait_duration(&json!({})),
+            Duration::from_secs(DEFAULT_WAIT_SECS)
+        );
+        assert_eq!(wait_duration(&json!({ "wait_seconds": 0 })), Duration::ZERO);
+        assert_eq!(
+            wait_duration(&json!({ "wait_seconds": 9999 })),
+            Duration::from_secs(MAX_WAIT_SECS)
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_returns_when_job_finishes() {
+        let j = job("run_query");
+        let j2 = j.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            j2.finish(Ok(json!({ "rows": 3 })));
+        });
+        wait_for_job(&j, Duration::from_secs(5)).await;
+        assert!(!j.is_running());
+        assert_eq!(j.snapshot("x")["result"]["rows"], json!(3));
+    }
+
+    #[tokio::test]
+    async fn wait_times_out_while_running() {
+        let j = job("transfer_tables");
+        wait_for_job(&j, Duration::from_millis(20)).await;
+        assert!(j.is_running());
+        assert_eq!(j.snapshot("x")["status"], json!("running"));
+    }
+
+    #[test]
+    fn evict_keeps_running_jobs() {
+        let mut map: HashMap<String, Arc<Job>> = HashMap::new();
+        for i in 0..(JOB_HISTORY + 10) {
+            let j = job("run_query");
+            j.finish(Ok(json!(i)));
+            map.insert(format!("done-{}", i), j);
+        }
+        map.insert("live".into(), job("transfer_tables"));
+        evict_finished(&mut map);
+        assert_eq!(map.len(), JOB_HISTORY);
+        assert!(map.contains_key("live"));
     }
 }
