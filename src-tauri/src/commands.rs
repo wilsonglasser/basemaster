@@ -1750,6 +1750,33 @@ pub async fn agent_guardrail_policy(
     Ok(crate::mcp_server::agent_policy(&state, connection_id).await)
 }
 
+#[tauri::command]
+pub async fn launch_on_login_get(app: AppHandle) -> R<bool> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(err)
+}
+
+/// Registers/removes the OS login entry (`<exe> --hidden`, straight to the
+/// tray). Its point is an always-on MCP server, so enabling also turns on
+/// MCP autostart; disabling leaves that setting alone.
+#[tauri::command]
+pub async fn launch_on_login_set(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> R<McpStatus> {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    if enabled {
+        launcher.enable().map_err(err)?;
+        return mcp_set_autostart(app, state, true).await;
+    }
+    if launcher.is_enabled().map_err(err)? {
+        launcher.disable().map_err(err)?;
+    }
+    Ok(mcp_status_payload(&state).await)
+}
+
 /// Toggles autostart-on-launch. Enabling it also starts the server now
 /// if it isn't already running, so the toggle has an immediate effect.
 #[tauri::command]

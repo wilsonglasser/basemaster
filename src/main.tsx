@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import App from "./App";
 import { initSentry } from "./lib/sentry";
@@ -12,12 +13,16 @@ import "./index.css";
 // React render to guarantee the user sees the splash right away.
 // Also unminimize + focus: a previous close-to-tray run may have left the
 // window hidden/minimized, and window_state plugin can restore that state.
-{
-  const w = getCurrentWebviewWindow();
-  w.show().catch(() => {});
-  w.unminimize().catch(() => {});
-  w.setFocus().catch(() => {});
-}
+// Skipped on a `--hidden` (OS login) launch, which stays in the tray.
+void invoke<boolean>("launched_hidden")
+  .catch(() => false)
+  .then((hidden) => {
+    if (hidden) return;
+    const w = getCurrentWebviewWindow();
+    w.show().catch(() => {});
+    w.unminimize().catch(() => {});
+    w.setFocus().catch(() => {});
+  });
 
 initSentry();
 

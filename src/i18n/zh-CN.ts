@@ -626,6 +626,9 @@ export const zhCN: Dict = {
       autostart: "随应用启动",
       autostartHint:
         "开启后，服务器会自动启动，关闭窗口时会保留在系统托盘中运行而不是退出。",
+      loginStart: "随系统启动（后台）",
+      loginStartHint:
+        "登录时直接在系统托盘启动 BaseMaster 并运行 MCP 服务器，无需打开应用即可使用 MCP 客户端。同时会开启上方选项。",
       guardrails: {
         title: "查询防护",
         hint: "通过 MCP 阻止写入语句。勾选=阻止。默认全部开启（只读服务器）。",

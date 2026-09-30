@@ -626,6 +626,9 @@ export const es: Dict = {
       autostart: "Iniciar al abrir la app",
       autostartHint:
         "Cuando está activado, el servidor se inicia automáticamente y cerrar la ventana lo mantiene en la bandeja del sistema en lugar de salir.",
+      loginStart: "Iniciar con el sistema (en segundo plano)",
+      loginStartHint:
+        "Abre BaseMaster al iniciar sesión directo en la bandeja del sistema con el servidor MCP en marcha, así los clientes MCP funcionan sin abrir la app. También activa la opción de arriba.",
       guardrails: {
         title: "Guardarraíles de consultas",
         hint: "Bloquea sentencias de escritura por MCP. Marcado = bloqueado. Todo activado por defecto (servidor de solo lectura).",

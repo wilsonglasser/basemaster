@@ -628,6 +628,9 @@ export const ptBR = {
       autostart: "Iniciar junto com o app",
       autostartHint:
         "Quando ligado, o servidor inicia automaticamente e fechar a janela mantém ele rodando na bandeja do sistema em vez de encerrar.",
+      loginStart: "Iniciar com o sistema (em segundo plano)",
+      loginStartHint:
+        "Abre o BaseMaster no login direto na bandeja com o servidor MCP rodando, então clientes MCP funcionam sem abrir o app. Liga também a opção acima.",
       guardrails: {
         title: "Guardrails de query",
         hint: "Bloqueia statements de escrita via MCP. Marcado = bloqueado. Tudo ligado por padrão (servidor read-only).",

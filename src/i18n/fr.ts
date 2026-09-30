@@ -626,6 +626,9 @@ export const fr: Dict = {
       autostart: "Démarrer au lancement de l'app",
       autostartHint:
         "Si activé, le serveur démarre automatiquement et fermer la fenêtre le maintient dans la zone de notification au lieu de quitter.",
+      loginStart: "Démarrer avec le système (en arrière-plan)",
+      loginStartHint:
+        "Lance BaseMaster à l'ouverture de session directement dans la zone de notification avec le serveur MCP actif, pour que les clients MCP fonctionnent sans ouvrir l'app. Active aussi l'option ci-dessus.",
       guardrails: {
         title: "Garde-fous de requête",
         hint: "Bloque les instructions d'écriture via MCP. Coché = bloqué. Tout activé par défaut (serveur en lecture seule).",

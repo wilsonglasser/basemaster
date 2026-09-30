@@ -495,6 +495,9 @@ export const ipc = {
     regenerateToken: () => invoke<McpStatus>("mcp_regenerate_token"),
     setAutostart: (enabled: boolean) =>
       invoke<McpStatus>("mcp_set_autostart", { enabled }),
+    launchOnLogin: () => invoke<boolean>("launch_on_login_get"),
+    setLaunchOnLogin: (enabled: boolean) =>
+      invoke<McpStatus>("launch_on_login_set", { enabled }),
     setGuardrail: (category: McpGuardrail, enabled: boolean) =>
       invoke<McpStatus>("mcp_set_guardrail", { category, enabled }),
   },

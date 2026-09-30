@@ -16,6 +16,8 @@ mod ssh_tunnel;
 mod ssm_tunnel;
 mod state;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use basemaster_store::{AppPaths, Store};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -24,8 +26,17 @@ use tauri::{
 };
 use tauri_plugin_window_state::StateFlags;
 
+/// Arg the OS login entry passes: boot straight to the tray (MCP server up,
+/// window never shown) instead of opening the UI.
+pub(crate) const HIDDEN_ARG: &str = "--hidden";
+
+/// True from a `--hidden` launch until the window is first shown. main.tsx
+/// asks for it before calling show() on mount.
+static START_HIDDEN: AtomicBool = AtomicBool::new(false);
+
 /// Brings the main window back from the tray: show + unminimize + focus.
-fn show_main_window(app: &tauri::AppHandle) {
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
+    START_HIDDEN.store(false, Ordering::Relaxed);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
@@ -79,6 +90,16 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+#[tauri::command]
+fn launched_hidden(window: tauri::WebviewWindow) -> bool {
+    let hidden = START_HIDDEN.load(Ordering::Relaxed);
+    if hidden {
+        // window_state restoring MAXIMIZED can reveal the window on its own.
+        let _ = window.hide();
+    }
+    hidden
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // OS-scheduler entry: when invoked as `<exe> schedule run <id>`, run that
@@ -87,6 +108,11 @@ pub fn run() {
     headless::maybe_run_and_exit();
 
     install_panic_hook();
+
+    START_HIDDEN.store(
+        std::env::args().any(|a| a == HIDDEN_ARG),
+        Ordering::Relaxed,
+    );
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -132,11 +158,18 @@ pub fn run() {
         .build();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // Second launch attempt: bring the existing window back from
-            // the tray instead of starting a new process.
-            show_main_window(app);
+            // the tray instead of starting a new process. A login-entry
+            // launch while already running stays silent.
+            if !argv.iter().any(|a| a == HIDDEN_ARG) {
+                show_main_window(app);
+            }
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![HIDDEN_ARG]),
+        ))
         .plugin(prevent_default)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -193,7 +226,11 @@ pub fn run() {
             // show()+unminimize() here so we don't leave the user staring
             // at nothing. Also covers the case where window_state restored
             // the window minimized from a previous close-to-tray exit.
-            if let Some(window) = app.get_webview_window("main") {
+            // Skipped on a `--hidden` launch, which is meant to stay in the tray.
+            if let Some(window) = app
+                .get_webview_window("main")
+                .filter(|_| !START_HIDDEN.load(Ordering::Relaxed))
+            {
                 let w = window.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -222,6 +259,10 @@ pub fn run() {
             // whole app at setup time.
             if let Err(e) = setup_tray(app) {
                 tracing::warn!("tray setup failed, continuing without tray: {e}");
+                // No tray = no way back to a hidden window.
+                if START_HIDDEN.load(Ordering::Relaxed) {
+                    show_main_window(app.handle());
+                }
             }
 
             // MCP autostart: if the user enabled it, bring the server up
@@ -233,6 +274,7 @@ pub fn run() {
                     state.store.settings().get_bool("mcp.autostart", false),
                 )
                 .unwrap_or(false);
+                let mut mcp_up = false;
                 if autostart {
                     let port = tauri::async_runtime::block_on(
                         state.store.settings().get("mcp.port"),
@@ -244,16 +286,22 @@ pub fn run() {
                     match commands::mcp_load_or_create_token() {
                         Ok(token) => {
                             let handle = app.handle().clone();
-                            if let Err(e) = tauri::async_runtime::block_on(
+                            match tauri::async_runtime::block_on(
                                 state.mcp.start(handle, port, token),
                             ) {
-                                tracing::warn!("MCP autostart falhou: {e}");
+                                Ok(_) => mcp_up = true,
+                                Err(e) => tracing::warn!("MCP autostart falhou: {e}"),
                             }
                         }
                         Err(e) => {
                             tracing::warn!("MCP autostart sem token: {e}")
                         }
                     }
+                }
+                // A hidden boot is only useful with the server up; otherwise
+                // don't leave the user with a silent tray icon.
+                if !mcp_up && START_HIDDEN.load(Ordering::Relaxed) {
+                    show_main_window(app.handle());
                 }
             }
 
@@ -362,6 +410,9 @@ pub fn run() {
             commands::agent_check_sql,
             commands::agent_guardrail_policy,
             commands::mcp_set_autostart,
+            commands::launch_on_login_get,
+            commands::launch_on_login_set,
+            launched_hidden,
             commands::mcp_set_guardrail,
             commands::docker_discover_connections,
             commands::connections_export,

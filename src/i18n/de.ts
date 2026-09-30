@@ -626,6 +626,9 @@ export const de: Dict = {
       autostart: "Beim App-Start starten",
       autostartHint:
         "Wenn aktiviert, startet der Server automatisch und das Schließen des Fensters hält ihn im Infobereich aktiv, statt zu beenden.",
+      loginStart: "Mit dem System starten (im Hintergrund)",
+      loginStartHint:
+        "Startet BaseMaster bei der Anmeldung direkt im Infobereich mit laufendem MCP-Server, sodass MCP-Clients funktionieren, ohne die App zu öffnen. Aktiviert auch die Option oben.",
       guardrails: {
         title: "Query-Schutzregeln",
         hint: "Schreib-Statements über MCP blockieren. Aktiviert = blockiert. Standardmäßig alles an (Nur-Lese-Server).",

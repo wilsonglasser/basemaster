@@ -626,6 +626,9 @@ export const en: Dict = {
       autostart: "Start on app launch",
       autostartHint:
         "When on, the server starts automatically and closing the window keeps it running in the system tray instead of quitting.",
+      loginStart: "Start with the system (background)",
+      loginStartHint:
+        "Launches BaseMaster at login straight to the system tray with the MCP server running, so MCP clients work without opening the app. Also turns on the option above.",
       guardrails: {
         title: "Query guardrails",
         hint: "Block write statements over MCP. Checked = blocked. All on by default (read-only server).",

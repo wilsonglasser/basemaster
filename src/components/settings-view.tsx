@@ -611,6 +611,8 @@ function McpPanel() {
   const [loading, setLoading] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
+  const [loginStart, setLoginStart] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
   const [guardLoading, setGuardLoading] = useState<McpGuardrail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<
@@ -626,6 +628,10 @@ function McpPanel() {
         setStatus(s);
         if (s.port) setPort(s.port);
       })
+      .catch((e) => !cancelled && setErr(String(e)));
+    ipc.mcp
+      .launchOnLogin()
+      .then((v) => !cancelled && setLoginStart(v))
       .catch((e) => !cancelled && setErr(String(e)));
     return () => {
       cancelled = true;
@@ -672,6 +678,21 @@ function McpPanel() {
       setErr(String(e));
     } finally {
       setAutostartLoading(false);
+    }
+  }
+
+  async function toggleLoginStart() {
+    setLoginLoading(true);
+    setErr(null);
+    try {
+      const next = await ipc.mcp.setLaunchOnLogin(!loginStart);
+      setStatus(next);
+      if (next.port) setPort(next.port);
+      setLoginStart(!loginStart);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoginLoading(false);
     }
   }
 
@@ -788,6 +809,24 @@ function McpPanel() {
           </span>
           <span className="block text-[11px] text-muted-foreground/80">
             {t("settings.mcp.autostartHint")}
+          </span>
+        </span>
+      </label>
+
+      <label className="flex items-start gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={loginStart}
+          disabled={loginLoading}
+          onChange={toggleLoginStart}
+          className="mt-0.5 h-3.5 w-3.5 rounded border-border disabled:opacity-50"
+        />
+        <span>
+          <span className="text-foreground">
+            {t("settings.mcp.loginStart")}
+          </span>
+          <span className="block text-[11px] text-muted-foreground/80">
+            {t("settings.mcp.loginStartHint")}
           </span>
         </span>
       </label>

@@ -149,6 +149,9 @@ impl client::Handler for VerifyingHostKeys {
                     self.ctx.prompts.write().await.remove(&request_id);
                     return Ok(false);
                 }
+                // The open may come from MCP while the window sits in the
+                // tray; surface it or the prompt just times out unseen.
+                crate::show_main_window(&app);
 
                 let accepted = match tokio::time::timeout(
                     StdDuration::from_secs(120),
