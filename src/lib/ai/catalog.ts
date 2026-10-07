@@ -160,9 +160,9 @@ export const MODEL_CATALOG: ModelRef[] = [
   { provider: "openai", modelId: "o1", label: "o1" },
 
   // Gemini
-  { provider: "gemini", modelId: "gemini-2.0-flash-exp", label: "Gemini 2.0 Flash" },
-  { provider: "gemini", modelId: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-  { provider: "gemini", modelId: "gemini-1.5-flash", label: "Gemini 1.5 Flash", hint: "rápido" },
+  { provider: "gemini", modelId: "gemini-3.8-flash", label: "Gemini 3.8 Flash", hint: "recomendado" },
+  { provider: "gemini", modelId: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", hint: "mais capaz" },
+  { provider: "gemini", modelId: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", hint: "rápido" },
 
   // OpenRouter
   { provider: "openrouter", modelId: "anthropic/claude-sonnet-4", label: "Sonnet 4" },
