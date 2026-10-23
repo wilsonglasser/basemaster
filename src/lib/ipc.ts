@@ -48,6 +48,7 @@ import type {
   TransferDone,
   TransferOptions,
   Uuid,
+  CliInfo,
 } from "./types";
 
 /**
@@ -500,6 +501,8 @@ export const ipc = {
       invoke<McpStatus>("launch_on_login_set", { enabled }),
     setGuardrail: (category: McpGuardrail, enabled: boolean) =>
       invoke<McpStatus>("mcp_set_guardrail", { category, enabled }),
+    cliInfo: () => invoke<CliInfo>("cli_info"),
+    cliAddToPath: () => invoke<CliInfo>("cli_add_to_path"),
   },
 
   ai: {

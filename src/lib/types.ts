@@ -130,6 +130,12 @@ export interface McpStatus {
 
 export type McpGuardrail = "dml" | "ddl" | "perms" | "tx";
 
+export interface CliInfo {
+  path: string | null;
+  on_path: boolean;
+  link_dir: string;
+}
+
 /** Per-connection MCP guardrail policy. Mirrors the Rust `McpAccess` enum
  *  (serde internally-tagged on `mode`). `inherit` = use the global settings. */
 export type McpAccess =

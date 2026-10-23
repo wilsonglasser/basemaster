@@ -640,6 +640,18 @@ export const fr: Dict = {
       regenerateToken: "Régénérer le jeton",
       regenerateConfirm:
         "Régénérer le jeton MCP ? Les clients utilisant le jeton actuel cesseront de fonctionner jusqu'à la mise à jour de leur configuration.",
+      cli: {
+        title: "Ligne de commande (basemaster-cli)",
+        intro:
+          "Livré avec l'application. Les scripts et agents IA (Claude Code, etc.) peuvent interroger, explorer et transférer via ce serveur depuis un shell, au lieu d'un appel MCP à la fois.",
+        notBundled: "Absent de cette build. Installez depuis un paquet de release pour obtenir le CLI.",
+        copyPath: "Copier le chemin",
+        addToPath: "Ajouter au PATH",
+        onPath: "Dans le PATH",
+        pathHintWindows: "Les nouveaux terminaux le voient.",
+        pathHintUnix: "Lien créé dans {dir}. Vérifiez que ce dossier est dans votre PATH.",
+        guideHint: "Lancez {cmd} pour des exemples orientés scripts.",
+      },
     },
     portability: {
       intro:

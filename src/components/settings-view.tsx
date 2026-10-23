@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, Info, Keyboard, KeyRound, Loader2, Monitor, Moon, Palette, Plug, RefreshCw, Server, ShieldCheck, Sparkles, Sun, Trash2, Upload } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, Info, Keyboard, KeyRound, Loader2, Monitor, Moon, Palette, Plug, RefreshCw, Server, ShieldCheck, Sparkles, Sun, Terminal, Trash2, Upload } from "lucide-react";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion, getTauriVersion } from "@tauri-apps/api/app";
@@ -14,7 +14,7 @@ import { DARK_PRESETS, LIGHT_PRESETS, useTheme } from "@/state/theme";
 import { ipc } from "@/lib/ipc";
 import { useDangerousQuery } from "@/state/dangerous-query";
 import { useUpdater } from "@/state/updater";
-import type { KnownHostEntry, McpStatus, McpGuardrail } from "@/lib/types";
+import type { CliInfo, KnownHostEntry, McpStatus, McpGuardrail } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const REPO_URL = "https://github.com/wilsonglasser/basemaster";
@@ -864,6 +864,8 @@ function McpPanel() {
         </div>
       </div>
 
+      <CliSection />
+
       {err && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {err}
@@ -977,6 +979,117 @@ function McpPanel() {
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/// The bundled `basemaster-cli`: where it is and a one-click PATH setup, so
+/// scripts (and agents driving a shell) can call it by name.
+function CliSection() {
+  const t = useT();
+  const [info, setInfo] = useState<CliInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    ipc.mcp
+      .cliInfo()
+      .then((i) => !cancelled && setInfo(i))
+      .catch((e) => !cancelled && setErr(String(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function addToPath() {
+    setBusy(true);
+    setErr(null);
+    try {
+      setInfo(await ipc.mcp.cliAddToPath());
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function copyPath() {
+    if (!info?.path) return;
+    void navigator.clipboard.writeText(info.path);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
+
+  const isWindows = navigator.userAgent.includes("Windows");
+
+  return (
+    <div className="space-y-2 rounded-md border border-border p-3">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <Terminal className="h-4 w-4" />
+        {t("settings.mcp.cli.title")}
+      </div>
+      <p className="text-xs text-muted-foreground">{t("settings.mcp.cli.intro")}</p>
+
+      {info && !info.path && (
+        <p className="text-xs text-muted-foreground">{t("settings.mcp.cli.notBundled")}</p>
+      )}
+
+      {info?.path && (
+        <>
+          <div className="flex items-center gap-1.5">
+            <code className="flex-1 truncate rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs">
+              {info.path}
+            </code>
+            <button
+              type="button"
+              onClick={copyPath}
+              className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-accent"
+              title={t("settings.mcp.cli.copyPath")}
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-conn-accent" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {info.on_path ? (
+              <span className="inline-flex items-center gap-1 text-xs text-conn-accent">
+                <Check className="h-3.5 w-3.5" />
+                {t("settings.mcp.cli.onPath")}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={addToPath}
+                disabled={busy}
+                className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent disabled:opacity-50"
+              >
+                {t("settings.mcp.cli.addToPath")}
+              </button>
+            )}
+            <span className="text-[11px] text-muted-foreground">
+              {isWindows
+                ? t("settings.mcp.cli.pathHintWindows")
+                : t("settings.mcp.cli.pathHintUnix", { dir: info.link_dir })}
+            </span>
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            {t("settings.mcp.cli.guideHint", { cmd: "basemaster-cli guide" })}
+          </p>
+        </>
+      )}
+
+      {err && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {err}
+        </div>
       )}
     </div>
   );

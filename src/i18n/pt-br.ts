@@ -642,6 +642,18 @@ export const ptBR = {
       regenerateToken: "Regerar token",
       regenerateConfirm:
         "Regerar o token do MCP? Clientes usando o token atual vão parar de funcionar até você atualizar a config deles.",
+      cli: {
+        title: "Linha de comando (basemaster-cli)",
+        intro:
+          "Vem junto com o app. Scripts e agentes de IA (Claude Code, etc.) consultam, exploram e transferem por este servidor direto do shell, em vez de uma chamada MCP por vez.",
+        notBundled: "Não veio nesta build. Instale a partir de um pacote de release pra ter o CLI.",
+        copyPath: "Copiar caminho",
+        addToPath: "Adicionar ao PATH",
+        onPath: "No PATH",
+        pathHintWindows: "Terminais novos já enxergam.",
+        pathHintUnix: "Link criado em {dir}. Garanta que essa pasta está no seu PATH.",
+        guideHint: "Rode {cmd} pra ver exemplos voltados a scripts.",
+      },
     },
     portability: {
       intro:

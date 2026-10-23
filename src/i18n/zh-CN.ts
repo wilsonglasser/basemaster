@@ -640,6 +640,18 @@ export const zhCN: Dict = {
       regenerateToken: "重新生成令牌",
       regenerateConfirm:
         "重新生成 MCP 令牌？使用当前令牌的客户端将停止工作，直到你更新它们的配置。",
+      cli: {
+        title: "命令行 (basemaster-cli)",
+        intro:
+          "随应用一起提供。脚本和 AI 代理（Claude Code 等）可以在 shell 中通过此服务器查询、浏览和传输数据，而不必逐次调用 MCP。",
+        notBundled: "此构建未包含。请从发布包安装以获得 CLI。",
+        copyPath: "复制路径",
+        addToPath: "添加到 PATH",
+        onPath: "已在 PATH 中",
+        pathHintWindows: "新开的终端即可使用。",
+        pathHintUnix: "已在 {dir} 创建链接。请确保该目录在 PATH 中。",
+        guideHint: "运行 {cmd} 查看面向脚本的示例。",
+      },
     },
     portability: {
       intro:

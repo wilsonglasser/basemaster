@@ -1,3 +1,4 @@
+mod cli_install;
 mod commands;
 mod conn_portability;
 mod data_export;
@@ -414,6 +415,8 @@ pub fn run() {
             commands::launch_on_login_set,
             launched_hidden,
             commands::mcp_set_guardrail,
+            cli_install::cli_info,
+            cli_install::cli_add_to_path,
             commands::docker_discover_connections,
             commands::connections_export,
             commands::connections_import_parse,

@@ -640,6 +640,18 @@ export const es: Dict = {
       regenerateToken: "Regenerar token",
       regenerateConfirm:
         "¿Regenerar el token MCP? Los clientes que usen el token actual dejarán de funcionar hasta que actualices su configuración.",
+      cli: {
+        title: "Línea de comandos (basemaster-cli)",
+        intro:
+          "Viene con la app. Scripts y agentes de IA (Claude Code, etc.) consultan, exploran y transfieren a través de este servidor desde la shell, en lugar de una llamada MCP a la vez.",
+        notBundled: "No incluido en esta build. Instala desde un paquete de release para tener el CLI.",
+        copyPath: "Copiar ruta",
+        addToPath: "Agregar al PATH",
+        onPath: "En el PATH",
+        pathHintWindows: "Las terminales nuevas ya lo ven.",
+        pathHintUnix: "Enlace creado en {dir}. Asegúrate de que esa carpeta esté en tu PATH.",
+        guideHint: "Ejecuta {cmd} para ver ejemplos orientados a scripts.",
+      },
     },
     portability: {
       intro:

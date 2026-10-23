@@ -640,6 +640,18 @@ export const ja: Dict = {
       regenerateToken: "トークンを再生成",
       regenerateConfirm:
         "MCP トークンを再生成しますか？現在のトークンを使用しているクライアントは、設定を更新するまで動作しなくなります。",
+      cli: {
+        title: "コマンドライン (basemaster-cli)",
+        intro:
+          "アプリに同梱。スクリプトや AI エージェント (Claude Code など) が MCP 呼び出しを 1 回ずつ行う代わりに、シェルからこのサーバー経由でクエリ・探索・転送できます。",
+        notBundled: "このビルドには含まれていません。リリースパッケージからインストールすると CLI が使えます。",
+        copyPath: "パスをコピー",
+        addToPath: "PATH に追加",
+        onPath: "PATH 済み",
+        pathHintWindows: "新しいターミナルから使えます。",
+        pathHintUnix: "{dir} にリンクを作成しました。そのフォルダが PATH にあることを確認してください。",
+        guideHint: "{cmd} でスクリプト向けの例を表示します。",
+      },
     },
     portability: {
       intro:
