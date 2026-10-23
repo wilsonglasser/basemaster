@@ -16,7 +16,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
 use basemaster_backup::container::BmbakReader;
 use basemaster_backup::dump::{dump_tables_to_bmbak, DumpToBmbakOptions, Progress};
-use basemaster_backup::restore::{restore_from_bmbak, RestoreOptions};
+use basemaster_backup::checksum::verify_tables;
+use basemaster_backup::restore::{describe_mismatch, restore_from_bmbak, RestoreOptions};
 use basemaster_backup::sql_export::{export_to_sql, Dialect, SqlExportOptions};
 use basemaster_core::connection::{ConnectionConfig, TlsMode};
 use basemaster_core::schema::TableKind;
@@ -53,6 +54,9 @@ enum Command {
     Backup(BackupArgs),
     /// Restore a .bmbak into a database (standalone).
     Restore(RestoreArgs),
+    /// Compare a database with a .bmbak: row count and content checksum per
+    /// table, recomputed by the server (standalone, read-only).
+    Verify(VerifyArgs),
     /// Scheduled backups (standalone).
     Schedule {
         #[command(subcommand)]
@@ -143,6 +147,10 @@ struct BackupArgs {
     /// Target SQL dialect when --format sql (defaults to the source dialect).
     #[arg(long)]
     sql_dialect: Option<String>,
+    /// Skip the per-table checksum (saves one extra read of every table, but
+    /// restore/verify can then only compare row counts).
+    #[arg(long)]
+    no_checksum: bool,
     /// zstd level for .bmbak blocks.
     #[arg(long, default_value_t = 5)]
     level: i32,
@@ -172,6 +180,21 @@ struct RestoreArgs {
     /// to the restoring user (needed when it lacks SET_USER_ID / SUPER).
     #[arg(long)]
     strip_definer: bool,
+    /// Skip the row count / checksum comparison at the end.
+    #[arg(long)]
+    no_verify: bool,
+}
+
+#[derive(clap::Args)]
+struct VerifyArgs {
+    #[command(flatten)]
+    conn: ConnArgs,
+    /// The .bmbak the database should match.
+    #[arg(long, short)]
+    in_file: String,
+    /// Schema / database to check. Same default as restore.
+    #[arg(long, short)]
+    schema: Option<String>,
 }
 
 /// Prints one line per table to stderr.
@@ -327,6 +350,7 @@ async fn run_backup(args: BackupArgs, conn: Option<&str>) -> Result<()> {
         level: args.level,
         chunk_size: args.chunk,
         include_objects: args.tables.is_empty(),
+        checksum: !args.no_checksum,
     };
 
     match args.format {
@@ -380,14 +404,7 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
         .with_context(|| format!("open {}", args.in_file))?;
     let mut reader = BmbakReader::open(file)?;
 
-    // MySQL "database" is the schema, so the one in the DSN must win over the
-    // one recorded in the backup; on Postgres the DSN names the database and
-    // the recorded schema (e.g. `public`) still applies inside it.
-    let target_schema = match driver.dialect() {
-        "sqlite" if args.schema.is_some() => bail!("--schema doesn't apply to SQLite"),
-        "mysql" => args.schema.or(config.default_database.clone()),
-        _ => args.schema,
-    };
+    let target_schema = target_schema(driver.as_ref(), args.schema, &config)?;
     let mut recorded: Vec<&str> = reader
         .manifest
         .tables
@@ -412,6 +429,7 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
         drop_before_create: !args.no_drop,
         strip_definer: args.strip_definer,
         target_schema,
+        verify: !args.no_verify,
         ..Default::default()
     };
 
@@ -427,6 +445,54 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
         "Restored {} table(s), {} rows, {} view(s) / routine(s) / trigger(s)",
         stats.tables, stats.rows, stats.objects
     );
+    if !args.no_verify {
+        println!("Verified {} table(s) against the backup", stats.verified);
+    }
+    Ok(())
+}
+
+/// MySQL "database" is the schema, so the one in the DSN wins over the one
+/// recorded in the backup; on Postgres the DSN names the database and the
+/// recorded schema (e.g. `public`) still applies inside it.
+fn target_schema(
+    driver: &dyn Driver,
+    explicit: Option<String>,
+    config: &ConnectionConfig,
+) -> Result<Option<String>> {
+    Ok(match driver.dialect() {
+        "sqlite" if explicit.is_some() => bail!("--schema doesn't apply to SQLite"),
+        "mysql" => explicit.or(config.default_database.clone()),
+        _ => explicit,
+    })
+}
+
+async fn run_verify(args: VerifyArgs, conn: Option<&str>) -> Result<()> {
+    let (driver, config) = resolve_connection(&args.conn, conn).await?;
+    driver
+        .connect(&config)
+        .await
+        .map_err(|e| anyhow!("connect failed: {e}"))?;
+    let file = std::fs::File::open(&args.in_file)
+        .with_context(|| format!("open {}", args.in_file))?;
+    let reader = BmbakReader::open(file)?;
+    let schema = target_schema(driver.as_ref(), args.schema, &config)?;
+
+    let checks = verify_tables(driver.as_ref(), &reader.manifest.tables, schema.as_deref()).await?;
+    let _ = driver.disconnect().await;
+    let mut bad = 0;
+    for c in &checks {
+        if c.ok() {
+            let how = if c.expected_sum.is_some() { "rows + checksum" } else { "rows only" };
+            println!("  ok    {} ({} rows, {how})", c.table, c.actual_rows);
+        } else {
+            bad += 1;
+            println!("  DIFF  {}", describe_mismatch(c));
+        }
+    }
+    if bad > 0 {
+        bail!("{bad} of {} table(s) differ from the backup", checks.len());
+    }
+    println!("All {} table(s) match the backup", checks.len());
     Ok(())
 }
 
@@ -556,6 +622,7 @@ async fn main() {
         },
         Command::Backup(a) => run_backup(a, conn).await,
         Command::Restore(a) => run_restore(a, conn).await,
+        Command::Verify(a) => run_verify(a, conn).await,
         Command::Schedule { action } => match action {
             ScheduleAction::List => run_schedule_list().await,
             ScheduleAction::Add(a) => run_schedule_add(a, conn).await,

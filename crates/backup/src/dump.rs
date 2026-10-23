@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{anyhow, Context, Result};
 use basemaster_core::{Driver, Value};
 
+use crate::checksum::{checksum_sql, parse_checksum};
 use crate::container::{BmbakWriter, ColumnMeta};
 use crate::sql_export::{value_to_sql, Dialect};
 
@@ -25,6 +26,7 @@ pub trait Progress: Send + Sync {
     fn rows_written(&self, _table: &str, _done: u64, _total: u64) {}
     fn table_done(&self, _table: &str, _rows: u64) {}
     fn objects_done(&self, _count: usize) {}
+    fn warning(&self, _message: &str) {}
 }
 
 /// Progress sink that ignores everything.
@@ -43,6 +45,9 @@ pub struct DumpToBmbakOptions {
     /// Also back up the schema's views, routines and triggers. Off for a
     /// table subset: they may read tables that aren't in the file.
     pub include_objects: bool,
+    /// Take the server-side checksum of every table (one extra read of each
+    /// table inside the snapshot) so restore/verify can prove the copy.
+    pub checksum: bool,
 }
 
 impl Default for DumpToBmbakOptions {
@@ -53,6 +58,7 @@ impl Default for DumpToBmbakOptions {
             level: 5,
             chunk_size: 1000,
             include_objects: true,
+            checksum: true,
         }
     }
 }
@@ -95,6 +101,18 @@ async fn fk_order(driver: &dyn Driver, schema: &str, tables: &[String]) -> Resul
         }
     }
     Ok(out)
+}
+
+async fn scan_one(snapshot: &basemaster_core::Snapshot, sql: &str) -> Result<Vec<Value>> {
+    let mut rx = snapshot.scan(sql, 1).await.map_err(|e| anyhow!("{e}"))?;
+    let mut first = None;
+    while let Some(chunk) = rx.recv().await {
+        let chunk = chunk.map_err(|e| anyhow!("{e}"))?;
+        if first.is_none() {
+            first = chunk.into_iter().next();
+        }
+    }
+    first.ok_or_else(|| anyhow!("no row"))
 }
 
 /// Postgres: restored rows carry explicit ids, so each identity counter has to
@@ -191,14 +209,23 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
             Err(basemaster_core::Error::Unsupported(_)) => String::new(),
             Err(e) => return Err(anyhow!("DDL of {schema}.{table}: {e}")),
         };
-        let total = driver
-            .count_table_rows(schema, table, None)
-            .await
-            .unwrap_or(0);
-
         let from = match &schema_opt {
             Some(s) => format!("{}.{}", driver.quote_ident(s), driver.quote_ident(table)),
             None => driver.quote_ident(table),
+        };
+
+        // Inside the snapshot, so the count is exact for this read and doubles
+        // as the progress total.
+        let (total, checksum) = if opts.checksum {
+            let names: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
+            let row = scan_one(&snapshot, &checksum_sql(driver, &from, &names))
+                .await
+                .map_err(|e| anyhow!("checksum of {schema}.{table}: {e}"))?;
+            let (n, sum) = parse_checksum(&row)?;
+            (n, sum)
+        } else {
+            let n = driver.count_table_rows(schema, table, None).await.unwrap_or(0);
+            (n, None)
         };
         let post_sql = if driver.dialect() == "postgres" {
             identity_resync(driver, &from, &cols)
@@ -231,6 +258,17 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
             }
         }
 
+        if opts.checksum {
+            if written == total {
+                bw.set_checksum(ti, checksum);
+            } else {
+                // Only a table outside the snapshot (non-transactional engine)
+                // can change between the two reads.
+                progress.warning(&format!(
+                    "{table}: {total} rows when checksummed, {written} when read; it changed during the backup, checksum dropped"
+                ));
+            }
+        }
         progress.table_done(table, written);
     }
 
@@ -361,6 +399,11 @@ mod tests {
                     if req.sql.contains("sqlite_master") {
                         continue;
                     }
+                    if req.sql.starts_with("SELECT COUNT(*)") {
+                        let row = vec![Value::Int(rows.len() as i64), Value::Null];
+                        let _ = req.rows.send(Ok(vec![row])).await;
+                        continue;
+                    }
                     for c in rows.chunks(req.chunk) {
                         if req.rows.send(Ok(c.to_vec())).await.is_err() {
                             return;
@@ -430,6 +473,7 @@ mod tests {
             level: 3,
             chunk_size: 2,
             include_objects: false,
+            checksum: true,
         };
         let out = dump_tables_to_bmbak(
             &driver,
@@ -527,6 +571,8 @@ mod tests {
         let r = BmbakReader::open(Cursor::new(out)).unwrap();
         let cols: Vec<&str> = r.manifest.tables[0].columns.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(cols, ["id"]);
-        assert_eq!(driver.scans.lock().unwrap()[0], r#"SELECT "id" FROM "t""#);
+        let scans = driver.scans.lock().unwrap().clone();
+        assert_eq!(scans[0], r#"SELECT COUNT(*), NULL FROM "t""#);
+        assert_eq!(scans[1], r#"SELECT "id" FROM "t""#);
     }
 }

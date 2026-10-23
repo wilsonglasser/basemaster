@@ -151,6 +151,7 @@ pub async fn dump_schedule(
         level: sched.compression_level as i32,
         chunk_size: 1000,
         include_objects: whole_schema,
+        checksum: true,
     };
     let file = std::fs::File::create(&out_path)
         .with_context(|| format!("create {}", out_path.display()))?;

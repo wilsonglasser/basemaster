@@ -64,6 +64,10 @@ pub struct TableEntry {
     pub post_sql: String,
     pub row_count: u64,
     pub data_blocks: Vec<BlockRef>,
+    /// Server-computed hash sum of the rows (see `checksum`); None when not
+    /// taken or the engine has no hash function.
+    #[serde(default)]
+    pub checksum: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -155,6 +159,7 @@ impl<W: Write> BmbakWriter<W> {
             post_sql: post_sql.into(),
             row_count: 0,
             data_blocks: Vec::new(),
+            checksum: None,
         });
         self.tables.len() - 1
     }
@@ -187,6 +192,10 @@ impl<W: Write> BmbakWriter<W> {
         });
         entry.row_count += rows.len() as u64;
         Ok(())
+    }
+
+    pub fn set_checksum(&mut self, table: usize, checksum: Option<String>) {
+        self.tables[table].checksum = checksum;
     }
 
     pub fn add_object(&mut self, object: ObjectEntry) {

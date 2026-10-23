@@ -16,6 +16,7 @@ use std::io::{Read, Seek};
 use anyhow::{bail, Context, Result};
 use basemaster_core::Driver;
 
+use crate::checksum::{verify_tables, TableCheck};
 use crate::container::{BmbakReader, ObjectEntry, ObjectKind, TableEntry};
 use crate::sql_export::{drop_object_sql, value_to_sql, Dialect};
 
@@ -44,6 +45,9 @@ pub struct RestoreOptions {
     /// MySQL: drop `DEFINER=` from views/routines/triggers so they belong to
     /// the restoring user, who may lack SET_USER_ID to create them for another.
     pub strip_definer: bool,
+    /// Recompute every table's row count and checksum on the target at the
+    /// end and fail when one differs from the backup.
+    pub verify: bool,
 }
 
 impl Default for RestoreOptions {
@@ -56,6 +60,7 @@ impl Default for RestoreOptions {
             disable_fk_checks: true,
             target_schema: None,
             strip_definer: false,
+            verify: true,
         }
     }
 }
@@ -65,10 +70,26 @@ pub struct RestoreStats {
     pub tables: u64,
     pub rows: u64,
     pub objects: u64,
+    /// Tables whose count (and checksum, when the backup has one) matched.
+    pub verified: u64,
 }
 
 fn dialect_of(driver: &dyn Driver) -> Dialect {
     Dialect::parse(driver.dialect()).unwrap_or(Dialect::Mysql)
+}
+
+pub fn describe_mismatch(c: &TableCheck) -> String {
+    if c.expected_rows != c.actual_rows {
+        format!("{}: {} rows in the backup, {} in the database", c.table, c.expected_rows, c.actual_rows)
+    } else {
+        format!(
+            "{}: same {} rows, content checksum {} in the backup vs {} in the database",
+            c.table,
+            c.actual_rows,
+            c.expected_sum.as_deref().unwrap_or("-"),
+            c.actual_sum.as_deref().unwrap_or("-")
+        )
+    }
 }
 
 fn qualified(schema: Option<&str>, name: &str, driver: &dyn Driver) -> String {
@@ -264,6 +285,17 @@ pub async fn restore_from_bmbak<R: Read + Seek>(
     }
 
     session_post(driver, opts).await;
+
+    if opts.verify && !cancelled() {
+        let checks = verify_tables(driver, &tables, opts.target_schema.as_deref()).await?;
+        let bad: Vec<String> = checks.iter().filter(|c| !c.ok()).map(describe_mismatch).collect();
+        if !bad.is_empty() {
+            bail!("restored data differs from the backup:
+  {}", bad.join("
+  "));
+        }
+        stats.verified = checks.len() as u64;
+    }
     Ok(stats)
 }
 
@@ -422,6 +454,8 @@ mod tests {
         dialect: &'static str,
         /// A statement containing one of these fails once (missing dependency).
         fail_once: Mutex<Vec<&'static str>>,
+        /// What the target "database" answers to the checksum query.
+        checksum_row: Mutex<Vec<Value>>,
     }
 
     impl RecordingDriver {
@@ -431,6 +465,7 @@ mod tests {
                 schemas: Mutex::new(Vec::new()),
                 dialect: "mysql",
                 fail_once: Mutex::new(Vec::new()),
+                checksum_row: Mutex::new(Vec::new()),
             }
         }
     }
@@ -468,8 +503,15 @@ mod tests {
         async fn list_indexes(&self, _s: &str, _t: &str) -> CoreResult<Vec<IndexInfo>> {
             unimplemented!()
         }
-        async fn query(&self, _s: Option<&str>, _sql: &str) -> CoreResult<QueryResult> {
-            unimplemented!()
+        async fn query(&self, _s: Option<&str>, sql: &str) -> CoreResult<QueryResult> {
+            self.log.lock().unwrap().push(sql.to_string());
+            Ok(QueryResult {
+                columns: vec![],
+                rows: vec![self.checksum_row.lock().unwrap().clone()],
+                source_table: None,
+                elapsed_ms: 0,
+                truncated: false,
+            })
         }
         async fn execute(&self, s: Option<&str>, sql: &str) -> CoreResult<ExecuteResult> {
             let mut fail_once = self.fail_once.lock().unwrap();
@@ -564,7 +606,7 @@ mod tests {
         let stats = restore_from_bmbak(
             &driver,
             &mut reader,
-            &RestoreOptions::default(),
+            &RestoreOptions { verify: false, ..Default::default() },
             &NoProgress,
             None,
         )
@@ -604,6 +646,7 @@ mod tests {
         let mut reader = BmbakReader::open(Cursor::new(sample_in(Some("prod")))).unwrap();
         let opts = RestoreOptions {
             target_schema: Some("scratch".into()),
+            verify: false,
             ..Default::default()
         };
         restore_from_bmbak(&driver, &mut reader, &opts, &NoProgress, None)
@@ -656,6 +699,7 @@ mod tests {
         let opts = RestoreOptions {
             target_schema: Some("scratch".into()),
             strip_definer: true,
+            verify: false,
             ..Default::default()
         };
         let stats = restore_from_bmbak(&driver, &mut reader, &opts, &NoProgress, None)
@@ -708,5 +752,43 @@ mod tests {
             "CREATE VIEW \"staging\".\"v\" AS SELECT u.id FROM \"staging\".users u \
              JOIN mypublic.x ON x.public_id = u.id WHERE '\"staging\".' <> ''"
         );
+    }
+
+    #[tokio::test]
+    async fn verify_compares_the_target_with_the_backup() {
+        let restore = |answer: Vec<Value>| async move {
+            let driver = RecordingDriver::new();
+            *driver.checksum_row.lock().unwrap() = answer;
+            let mut bytes = Cursor::new(sample_in(Some("prod")));
+            let mut reader = BmbakReader::open(&mut bytes).unwrap();
+            let r = restore_from_bmbak(&driver, &mut reader, &RestoreOptions::default(), &NoProgress, None).await;
+            let log = driver.log.lock().unwrap().clone();
+            (r, log)
+        };
+
+        let (ok, log) = restore(vec![Value::Int(2), Value::Null]).await;
+        assert_eq!(ok.unwrap().verified, 1);
+        let check = log.last().unwrap();
+        assert!(check.starts_with("SELECT COUNT(*)") && check.contains("CRC32(`name`)"), "{check}");
+        assert!(check.ends_with("FROM `prod`.`users`"), "{check}");
+
+        let (bad, _) = restore(vec![Value::Int(1), Value::Null]).await;
+        let msg = bad.unwrap_err().to_string();
+        assert!(msg.contains("users: 2 rows in the backup, 1 in the database"), "{msg}");
+    }
+
+    #[test]
+    fn checksum_mismatch_needs_a_recorded_sum() {
+        let c = |expected: Option<&str>, actual: Option<&str>| TableCheck {
+            table: "t".into(),
+            expected_rows: 3,
+            actual_rows: 3,
+            expected_sum: expected.map(String::from),
+            actual_sum: actual.map(String::from),
+        };
+        assert!(c(Some("10"), Some("10")).ok());
+        assert!(!c(Some("10"), Some("11")).ok());
+        // old backups / SQLite: count only
+        assert!(c(None, Some("11")).ok());
     }
 }

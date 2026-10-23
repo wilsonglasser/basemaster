@@ -83,6 +83,7 @@ async fn sqlite_dump_restore_roundtrip() {
         level: 5,
         chunk_size: 2, // force multiple blocks
         include_objects: true,
+        checksum: true,
     };
     let bytes = dump_tables_to_bmbak(
         &src,
