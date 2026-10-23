@@ -311,7 +311,7 @@ impl Driver for PostgresDriver {
         // includes indexes + TOAST (comparable to DATA+INDEX in MySQL).
         let rows = sqlx::query(
             "SELECT c.relname,
-                    c.relkind,
+                    c.relkind::text,
                     c.reltuples::BIGINT AS row_estimate,
                     pg_total_relation_size(c.oid)::BIGINT AS size_bytes,
                     obj_description(c.oid, 'pg_class') AS comment
