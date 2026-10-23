@@ -240,7 +240,10 @@ impl StderrProgress {
             return;
         }
         st.0 = std::time::Instant::now();
-        let pct = if total > 0 { format!(" ({}%)", done.min(total) * 100 / total) } else { String::new() };
+        let pct = (done.min(total) * 100)
+            .checked_div(total)
+            .map(|p| format!(" ({p}%)"))
+            .unwrap_or_default();
         let line = format!("  {table}: {done}/{total} rows{pct}");
         if self.tty {
             eprint!("\r{line:<width$}", width = st.1);
