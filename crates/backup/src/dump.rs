@@ -3,16 +3,16 @@
 //! share one code path. Progress is reported through a trait the caller
 //! implements (the GUI emits Tauri events; the CLI prints to stdout).
 //!
-//! v1 uses OFFSET pagination ordered by the primary key, one zstd block per
-//! page. The parallel/keyset/deferred-index machinery in the GUI transfer
-//! engine is a later optimization, not a prerequisite for a correct backup.
+//! Every table is read inside one [`Snapshot`](basemaster_core::Snapshot), so
+//! the file is a single point in time even while the database takes writes,
+//! and each table is one streamed `SELECT` (no OFFSET pages, which skip or
+//! repeat rows under writes and slow down the deeper they go). Metadata (DDL,
+//! row counts for progress) still goes through the pool.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{Context, Result};
-use basemaster_core::driver::{OrderBy, PageOptions, SortDir};
-use basemaster_core::schema::Column;
+use anyhow::{anyhow, Context, Result};
 use basemaster_core::Driver;
 
 use crate::container::{BmbakWriter, ColumnMeta};
@@ -36,7 +36,7 @@ pub struct DumpToBmbakOptions {
     pub app_version: String,
     /// zstd level for blocks + manifest.
     pub level: i32,
-    /// Rows fetched per page = rows per block.
+    /// Rows per block.
     pub chunk_size: u64,
 }
 
@@ -51,23 +51,50 @@ impl Default for DumpToBmbakOptions {
     }
 }
 
-fn type_hint(c: &Column) -> String {
+fn type_hint(c: &basemaster_core::Column) -> String {
     format!("{:?}", c.column_type)
 }
 
-/// Pick a deterministic ORDER BY so OFFSET pagination is stable: primary key if
-/// present, else the first column.
-fn order_column(cols: &[Column]) -> Option<String> {
-    cols.iter()
-        .find(|c| c.is_primary_key)
-        .or_else(|| cols.first())
-        .map(|c| c.name.clone())
+/// Parents before children, so a restore that can't switch FK checks off
+/// (Postgres without superuser) creates and fills tables in file order.
+/// Tables caught in a cycle keep their relative order at the end.
+async fn fk_order(driver: &dyn Driver, schema: &str, tables: &[String]) -> Result<Vec<String>> {
+    let mut parents: Vec<Vec<usize>> = Vec::with_capacity(tables.len());
+    for (i, t) in tables.iter().enumerate() {
+        let fks = driver
+            .list_foreign_keys(schema, t)
+            .await
+            .map_err(|e| anyhow!("foreign keys of {schema}.{t}: {e}"))?;
+        parents.push(
+            fks.iter()
+                .filter(|fk| fk.ref_schema.as_deref().is_none_or(|s| s == schema))
+                .filter_map(|fk| tables.iter().position(|x| *x == fk.ref_table))
+                .filter(|&p| p != i)
+                .collect(),
+        );
+    }
+    let mut done = vec![false; tables.len()];
+    let mut out = Vec::with_capacity(tables.len());
+    while out.len() < tables.len() {
+        let before = out.len();
+        for i in 0..tables.len() {
+            if !done[i] && parents[i].iter().all(|&p| done[p]) {
+                done[i] = true;
+                out.push(tables[i].clone());
+            }
+        }
+        if out.len() == before {
+            out.extend((0..tables.len()).filter(|&i| !done[i]).map(|i| tables[i].clone()));
+            break;
+        }
+    }
+    Ok(out)
 }
 
 /// Dump `tables` of `schema` into `writer` as a `.bmbak`. Returns the finished
 /// writer (e.g. the `File`/`Cursor`). Cancellation is cooperative: if `cancel`
-/// flips to true between pages, the dump stops and the partial file is finished
-/// cleanly (still a valid container, just fewer rows).
+/// flips to true between blocks, the dump stops and the partial file is
+/// finished cleanly (still a valid container, just fewer rows).
 pub async fn dump_tables_to_bmbak<W: Write + Send>(
     driver: &dyn Driver,
     schema: &str,
@@ -87,22 +114,39 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
         opts.level,
     )?;
 
-    let schema_opt = if schema.is_empty() {
+    // SQLite has no schemas; the CLI passes the file path here.
+    let sqlite = driver.dialect() == "sqlite";
+    let schema_opt = if schema.is_empty() || sqlite {
         None
     } else {
         Some(schema.to_string())
     };
-    let chunk = opts.chunk_size.max(1);
+    let chunk = opts.chunk_size.max(1) as usize;
 
-    for table in tables {
+    let tables = fk_order(driver, schema, tables).await?;
+    let snapshot = driver
+        .open_snapshot()
+        .await
+        .map_err(|e| anyhow!("open snapshot: {e}"))?;
+
+    'tables: for table in &tables {
         if cancelled() {
             break;
         }
 
-        let cols = driver
+        // Generated columns are recomputed by the server; inserting them back
+        // is rejected, so they stay out of the backup.
+        let generated = driver
+            .list_generated_columns(schema, table)
+            .await
+            .map_err(|e| anyhow!("generated columns of {schema}.{table}: {e}"))?;
+        let cols: Vec<_> = driver
             .describe_table(schema, table)
             .await
-            .with_context(|| format!("describe {schema}.{table}"))?;
+            .with_context(|| format!("describe {schema}.{table}"))?
+            .into_iter()
+            .filter(|c| !generated.contains(&c.name))
+            .collect();
         let col_metas: Vec<ColumnMeta> = cols
             .iter()
             .map(|c| ColumnMeta {
@@ -116,7 +160,7 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
         let pre_sql = match driver.get_table_ddl(schema, table).await {
             Ok(ddl) => ddl,
             Err(basemaster_core::Error::Unsupported(_)) => String::new(),
-            Err(e) => return Err(anyhow::anyhow!("DDL of {schema}.{table}: {e}")),
+            Err(e) => return Err(anyhow!("DDL of {schema}.{table}: {e}")),
         };
         let total = driver
             .count_table_rows(schema, table, None)
@@ -124,46 +168,31 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
             .unwrap_or(0);
 
         progress.table_started(table, total);
-
-        let order_by = order_column(&cols).map(|column| OrderBy {
-            column,
-            direction: SortDir::Asc,
-        });
-
         let ti = bw.begin_table(schema_opt.clone(), table.clone(), col_metas, pre_sql, String::new());
 
-        let mut offset = 0u64;
+        let select_list = cols
+            .iter()
+            .map(|c| driver.quote_ident(&c.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let from = match &schema_opt {
+            Some(s) => format!("{}.{}", driver.quote_ident(s), driver.quote_ident(table)),
+            None => driver.quote_ident(table),
+        };
+        let mut rows = snapshot
+            .scan(&format!("SELECT {select_list} FROM {from}"), chunk)
+            .await
+            .map_err(|e| anyhow!("read {schema}.{table}: {e}"))?;
+
         let mut written = 0u64;
-        loop {
-            if cancelled() {
-                break;
-            }
-            let page = driver
-                .select_table_page(
-                    schema,
-                    table,
-                    &PageOptions {
-                        limit: chunk,
-                        offset,
-                        order_by: order_by.clone(),
-                        filter_tree: None,
-                    },
-                )
-                .await
-                .with_context(|| format!("select page {schema}.{table} @ {offset}"))?;
-
-            let n = page.rows.len() as u64;
-            if n == 0 {
-                break;
-            }
-            bw.write_block(ti, &page.rows)?;
-            written += n;
-            offset += n;
+        while let Some(block) = rows.recv().await {
+            let block = block.map_err(|e| anyhow!("read {schema}.{table}: {e}"))?;
+            bw.write_block(ti, &block)?;
+            written += block.len() as u64;
             progress.rows_written(table, written, total);
-
-            // Short page = last page.
-            if n < chunk {
-                break;
+            if cancelled() {
+                // Dropping the receiver ends the snapshot.
+                break 'tables;
             }
         }
 
@@ -178,18 +207,38 @@ mod tests {
     use super::*;
     use crate::container::BmbakReader;
     use async_trait::async_trait;
-    use basemaster_core::driver::{ExecuteResult, QueryResult};
+    use basemaster_core::driver::{ExecuteResult, PageOptions, QueryResult, ScanRequest, Snapshot};
     use basemaster_core::error::Result as CoreResult;
-    use basemaster_core::schema::{Column, ColumnType, IndexInfo, SchemaInfo, TableInfo};
+    use basemaster_core::schema::{
+        Column, ColumnType, ForeignKeyInfo, IndexInfo, SchemaInfo, TableInfo,
+    };
     use basemaster_core::value::Value;
     use basemaster_core::connection::ConnectionConfig;
     use std::io::Cursor;
 
-    /// Minimal in-memory driver: one table with fixed columns + rows.
+    /// Minimal in-memory driver: every table has the same columns + rows.
     struct MockDriver {
         table: String,
         columns: Vec<Column>,
         rows: Vec<Vec<Value>>,
+        /// (child, parent) foreign keys.
+        fks: Vec<(&'static str, &'static str)>,
+        generated: Vec<String>,
+        /// Every SQL the snapshot was asked to scan.
+        scans: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl MockDriver {
+        fn new(table: &str, columns: Vec<Column>, rows: Vec<Vec<Value>>) -> Self {
+            MockDriver {
+                table: table.into(),
+                columns,
+                rows,
+                fks: vec![],
+                generated: vec![],
+                scans: Default::default(),
+            }
+        }
     }
 
     fn col(name: &str, pk: bool) -> Column {
@@ -239,6 +288,41 @@ mod tests {
         async fn execute(&self, _s: Option<&str>, _sql: &str) -> CoreResult<ExecuteResult> {
             unimplemented!()
         }
+        async fn list_foreign_keys(&self, _s: &str, t: &str) -> CoreResult<Vec<ForeignKeyInfo>> {
+            Ok(self
+                .fks
+                .iter()
+                .filter(|(child, _)| *child == t)
+                .map(|(_, parent)| ForeignKeyInfo {
+                    name: format!("fk_{t}"),
+                    columns: vec!["id".into()],
+                    ref_schema: None,
+                    ref_table: parent.to_string(),
+                    ref_columns: vec!["id".into()],
+                    on_update: None,
+                    on_delete: None,
+                })
+                .collect())
+        }
+        async fn list_generated_columns(&self, _s: &str, _t: &str) -> CoreResult<Vec<String>> {
+            Ok(self.generated.clone())
+        }
+        async fn open_snapshot(&self) -> CoreResult<Snapshot> {
+            let rows = self.rows.clone();
+            let scans = self.scans.clone();
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<ScanRequest>(1);
+            tokio::spawn(async move {
+                while let Some(req) = rx.recv().await {
+                    scans.lock().unwrap().push(req.sql.clone());
+                    for c in rows.chunks(req.chunk) {
+                        if req.rows.send(Ok(c.to_vec())).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+            Ok(Snapshot::new(tx))
+        }
         async fn get_table_ddl(&self, _s: &str, t: &str) -> CoreResult<String> {
             Ok(format!("CREATE TABLE \"{t}\" (id, name);"))
         }
@@ -254,22 +338,9 @@ mod tests {
             &self,
             _s: &str,
             _t: &str,
-            opts: &PageOptions,
+            _o: &PageOptions,
         ) -> CoreResult<QueryResult> {
-            let start = opts.offset as usize;
-            let end = (start + opts.limit as usize).min(self.rows.len());
-            let rows = if start >= self.rows.len() {
-                vec![]
-            } else {
-                self.rows[start..end].to_vec()
-            };
-            Ok(QueryResult {
-                columns: self.columns.iter().map(|c| c.name.clone()).collect(),
-                rows,
-                source_table: None,
-                elapsed_ms: 0,
-                truncated: false,
-            })
+            unimplemented!("the dump reads through the snapshot")
         }
         async fn update_cell(
             &self,
@@ -305,11 +376,7 @@ mod tests {
         let rows: Vec<Vec<Value>> = (1..=5)
             .map(|i| vec![Value::Int(i), Value::String(format!("n{i}"))])
             .collect();
-        let driver = MockDriver {
-            table: "users".into(),
-            columns: vec![col("id", true), col("name", false)],
-            rows,
-        };
+        let driver = MockDriver::new("users", vec![col("id", true), col("name", false)], rows);
         let opts = DumpToBmbakOptions {
             created_at: "2026-06-01T00:00:00Z".into(),
             app_version: "0.6.7".into(),
@@ -347,11 +414,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_stops_early() {
         let rows: Vec<Vec<Value>> = (1..=10).map(|i| vec![Value::Int(i)]).collect();
-        let driver = MockDriver {
-            table: "t".into(),
-            columns: vec![col("id", true)],
-            rows,
-        };
+        let driver = MockDriver::new("t", vec![col("id", true)], rows);
         let flag = AtomicBool::new(true); // already cancelled
         let out = dump_tables_to_bmbak(
             &driver,
@@ -368,5 +431,54 @@ mod tests {
         // still a valid container, just no tables dumped
         let r = BmbakReader::open(Cursor::new(out)).unwrap();
         assert_eq!(r.manifest.tables.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn parents_are_dumped_before_children() {
+        let mut driver = MockDriver::new("x", vec![col("id", true)], vec![vec![Value::Int(1)]]);
+        // orders -> users, items -> orders, self-reference on users
+        driver.fks = vec![("orders", "users"), ("items", "orders"), ("users", "users")];
+        let tables: Vec<String> = ["items", "orders", "users", "logs"].map(String::from).into();
+        let out = dump_tables_to_bmbak(
+            &driver,
+            "main",
+            &tables,
+            &DumpToBmbakOptions::default(),
+            Cursor::new(Vec::new()),
+            &NoProgress,
+            None,
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        let r = BmbakReader::open(Cursor::new(out)).unwrap();
+        let names: Vec<&str> = r.manifest.tables.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["users", "logs", "orders", "items"]);
+    }
+
+    #[tokio::test]
+    async fn generated_columns_are_left_out() {
+        let mut driver = MockDriver::new(
+            "t",
+            vec![col("id", true), col("total", false)],
+            vec![vec![Value::Int(1)]],
+        );
+        driver.generated = vec!["total".into()];
+        let out = dump_tables_to_bmbak(
+            &driver,
+            "main",
+            std::slice::from_ref(&driver.table),
+            &DumpToBmbakOptions::default(),
+            Cursor::new(Vec::new()),
+            &NoProgress,
+            None,
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        let r = BmbakReader::open(Cursor::new(out)).unwrap();
+        let cols: Vec<&str> = r.manifest.tables[0].columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(cols, ["id"]);
+        assert_eq!(driver.scans.lock().unwrap().as_slice(), [r#"SELECT "id" FROM "t""#]);
     }
 }
