@@ -228,7 +228,15 @@ basemaster-cli guide                        # full cheat sheet for scripts/agent
 
 Output is JSON when piped and an aligned table on a terminal (`-o json|ndjson|csv|table`). Exit codes: `0` ok, `1` error (including a guardrail block), `3` app not running, `4` bad token. Port and token are read from the app's settings and the OS keyring; override with `--port`/`--token` or `BASEMASTER_MCP_PORT`/`BASEMASTER_MCP_TOKEN` (for example from inside WSL).
 
-The `backup`, `restore` and `schedule` subcommands run standalone (no app needed), e.g. on a server.
+The `backup`, `restore` and `schedule` subcommands run standalone (no app needed), e.g. on a server. Every release also attaches static `basemaster-cli` builds for Linux x64 and ARM64 (`basemaster-cli-<tag>-<arch>-unknown-linux-musl.tar.gz`) for servers without the desktop app.
+
+```bash
+basemaster-cli backup  --dsn mysql://user:pass@host/prod --out prod.bmbak
+basemaster-cli restore --dsn mysql://user:pass@host/prod_copy -i prod.bmbak   # lands in prod_copy
+basemaster-cli restore --dsn mysql://user:pass@host/ -s prod_copy -i prod.bmbak  # same, explicit
+```
+
+`restore` drops and recreates every table in the backup (`--no-drop` / `--no-create` to skip). The target is `--schema`, else the database in the DSN / connection on MySQL, else the schema recorded in the backup; the first line it prints names it.
 
 ### Shortcuts
 
