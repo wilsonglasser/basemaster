@@ -1,12 +1,14 @@
-//! BaseMaster headless CLI: backup / restore / list schedules without a GUI.
+//! BaseMaster CLI. Two halves:
 //!
-//! Built on `basemaster-backup` + the driver crates only — no Tauri, no webkit
-//! — so it runs on a bare Linux server. Connection source is either a stored
-//! profile (`--conn NAME`, reads the local SQLite + OS keyring) or a DSN
-//! (`--dsn mysql://user:pass@host/db`) which needs nothing installed.
-//!
-//! SSH-tunnel connections aren't supported here yet; use a DSN to the
-//! already-reachable host (e.g. run the CLI on the box behind the tunnel).
+//! - Scripting commands (`query`, `tables`, `export`, `transfer`, ...) talk to
+//!   the MCP server of the running GUI, so they reuse its open connections,
+//!   tunnels and guardrails. See `remote.rs` and `basemaster-cli guide`.
+//! - Backup / restore / schedule run standalone on `basemaster-backup` + the
+//!   driver crates (no Tauri), e.g. on a bare server. Connection source is a
+//!   stored profile (`--conn NAME`, local SQLite + OS keyring) or a DSN.
+//!   SSH tunnels aren't supported standalone; use a DSN to a reachable host.
+
+mod remote;
 
 use std::io::{Cursor, Write};
 use std::sync::Arc;
@@ -30,19 +32,28 @@ use basemaster_backup::os_schedule::{self, Cadence, TaskSpec};
 use basemaster_backup::schedule::run_and_record;
 
 #[derive(Parser)]
-#[command(name = "basemaster-cli", version, about = "BaseMaster backup CLI")]
+#[command(
+    name = "basemaster-cli",
+    version,
+    about = "BaseMaster from the shell: query, explore and transfer through the running app, plus standalone backups.",
+    after_help = "Run `basemaster-cli guide` for script/agent-oriented examples."
+)]
 struct Cli {
+    #[command(flatten)]
+    global: remote::Global,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Dump a database to a .bmbak (or .sql) file.
+    #[command(flatten)]
+    Remote(remote::Remote),
+    /// Dump a database to a .bmbak (or .sql) file (standalone, no app needed).
     Backup(BackupArgs),
-    /// Restore a .bmbak into a database.
+    /// Restore a .bmbak into a database (standalone).
     Restore(RestoreArgs),
-    /// List scheduled backups stored locally.
+    /// Scheduled backups (standalone).
     Schedule {
         #[command(subcommand)]
         action: ScheduleAction,
@@ -62,11 +73,9 @@ enum ScheduleAction {
     Rm { id: String },
 }
 
+/// Runs against the global -c/--conn stored connection.
 #[derive(clap::Args)]
 struct ScheduleAddArgs {
-    /// Stored connection name the backup runs against.
-    #[arg(long)]
-    conn: String,
     /// Human label for the routine.
     #[arg(long)]
     name: String,
@@ -109,12 +118,10 @@ enum OutFormat {
 
 #[derive(clap::Args)]
 struct ConnArgs {
-    /// Stored connection name (reads local SQLite + keyring).
-    #[arg(long, conflicts_with = "dsn")]
-    conn: Option<String>,
     /// Connection string, e.g. mysql://user:pass@host:3306/db or
-    /// postgres://... or sqlite:///abs/path.db
-    #[arg(long, conflicts_with = "conn")]
+    /// postgres://... or sqlite:///abs/path.db. Without it the global
+    /// -c/--conn stored profile is used (local SQLite + keyring).
+    #[arg(long)]
     dsn: Option<String>,
 }
 
@@ -180,14 +187,14 @@ fn make_driver(kind: &str) -> Option<Arc<dyn Driver>> {
 }
 
 /// Resolve a `(driver, config)` from either a stored profile or a DSN.
-async fn resolve_connection(args: &ConnArgs) -> Result<(Arc<dyn Driver>, ConnectionConfig)> {
+async fn resolve_connection(
+    args: &ConnArgs,
+    conn: Option<&str>,
+) -> Result<(Arc<dyn Driver>, ConnectionConfig)> {
     if let Some(dsn) = &args.dsn {
         return config_from_dsn(dsn);
     }
-    let name = args
-        .conn
-        .as_ref()
-        .ok_or_else(|| anyhow!("provide --conn NAME or --dsn URL"))?;
+    let name = conn.ok_or_else(|| anyhow!("provide -c/--conn NAME or --dsn URL"))?;
 
     let paths = AppPaths::resolve().context("resolve app paths")?;
     let store = Store::open(&paths.db_path())
@@ -276,8 +283,8 @@ fn uuid_nil() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
 
-async fn run_backup(args: BackupArgs) -> Result<()> {
-    let (driver, config) = resolve_connection(&args.conn).await?;
+async fn run_backup(args: BackupArgs, conn: Option<&str>) -> Result<()> {
+    let (driver, config) = resolve_connection(&args.conn, conn).await?;
     driver
         .connect(&config)
         .await
@@ -350,8 +357,8 @@ async fn run_backup(args: BackupArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_restore(args: RestoreArgs) -> Result<()> {
-    let (driver, config) = resolve_connection(&args.conn).await?;
+async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
+    let (driver, config) = resolve_connection(&args.conn, conn).await?;
     driver
         .connect(&config)
         .await
@@ -411,7 +418,8 @@ fn ext_of(f: OutFormat) -> &'static str {
     }
 }
 
-async fn run_schedule_add(a: ScheduleAddArgs) -> Result<()> {
+async fn run_schedule_add(a: ScheduleAddArgs, conn: Option<&str>) -> Result<()> {
+    let conn = conn.ok_or_else(|| anyhow!("provide -c/--conn NAME"))?;
     let cadence = match (a.every_minutes, &a.daily_at) {
         (Some(m), _) => Cadence::EveryMinutes(m),
         (_, Some(s)) => {
@@ -432,8 +440,8 @@ async fn run_schedule_add(a: ScheduleAddArgs) -> Result<()> {
         .list()
         .await?
         .into_iter()
-        .find(|p| p.name.eq_ignore_ascii_case(&a.conn))
-        .ok_or_else(|| anyhow!("no stored connection named '{}'", a.conn))?;
+        .find(|p| p.name.eq_ignore_ascii_case(conn))
+        .ok_or_else(|| anyhow!("no stored connection named '{conn}'"))?;
 
     let scopes = serde_json::json!([{ "schema": a.schema, "tables": [] }]).to_string();
     let draft = basemaster_store::ScheduledBackupDraft {
@@ -492,12 +500,20 @@ async fn run_schedule_run(id: &str) -> Result<()> {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    let conn = cli.global.conn.as_deref();
     let result = match cli.command {
-        Command::Backup(a) => run_backup(a).await,
-        Command::Restore(a) => run_restore(a).await,
+        Command::Remote(cmd) => match remote::run(&cli.global, cmd).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(e.exit_code());
+            }
+        },
+        Command::Backup(a) => run_backup(a, conn).await,
+        Command::Restore(a) => run_restore(a, conn).await,
         Command::Schedule { action } => match action {
             ScheduleAction::List => run_schedule_list().await,
-            ScheduleAction::Add(a) => run_schedule_add(a).await,
+            ScheduleAction::Add(a) => run_schedule_add(a, conn).await,
             ScheduleAction::Run { id } => run_schedule_run(&id).await,
             ScheduleAction::Rm { id } => run_schedule_rm(&id).await,
         },

@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lib]
+name = "basemaster_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "basemaster-cli"
 path = "src/main.rs"
@@ -19,7 +23,10 @@ basemaster-driver-sqlite = { path = "../driver-sqlite" }
 anyhow.workspace = true
 chrono.workspace = true
 tokio.workspace = true
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 url = "2"
 uuid.workspace = true
 serde_json.workspace = true
+# Plain-HTTP client for the GUI's local MCP server (127.0.0.1 only, so no TLS).
+ureq = { version = "3", default-features = false, features = ["json"] }
+base64 = "0.22"
