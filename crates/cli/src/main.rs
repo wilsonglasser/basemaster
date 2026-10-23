@@ -198,16 +198,91 @@ struct VerifyArgs {
 }
 
 /// Prints one line per table to stderr.
-struct StderrProgress;
+/// Progress on stderr. On a terminal the current table's line updates in
+/// place; otherwise (cron, log files) a line every 10 s, so a big table
+/// doesn't look stuck and the log stays short.
+struct StderrProgress {
+    tty: bool,
+    /// Last update time and the width of the in-place line to blank out.
+    state: std::sync::Mutex<(std::time::Instant, usize)>,
+}
+
+impl StderrProgress {
+    fn new() -> Self {
+        use std::io::IsTerminal;
+        StderrProgress {
+            tty: std::io::stderr().is_terminal(),
+            state: std::sync::Mutex::new((std::time::Instant::now(), 0)),
+        }
+    }
+
+    fn start(&self, table: &str, total: u64) {
+        let mut st = self.state.lock().unwrap();
+        st.0 = std::time::Instant::now();
+        if self.tty {
+            let line = format!("  {table}: 0/{total} rows");
+            eprint!("{line}");
+            st.1 = line.len();
+        } else {
+            eprintln!("  {table}: {total} rows…");
+        }
+    }
+
+    fn rows(&self, table: &str, done: u64, total: u64) {
+        let mut st = self.state.lock().unwrap();
+        let every = std::time::Duration::from_millis(if self.tty { 250 } else { 10_000 });
+        if st.0.elapsed() < every {
+            return;
+        }
+        st.0 = std::time::Instant::now();
+        let pct = if total > 0 { format!(" ({}%)", done.min(total) * 100 / total) } else { String::new() };
+        let line = format!("  {table}: {done}/{total} rows{pct}");
+        if self.tty {
+            eprint!("\r{line:<width$}", width = st.1);
+            st.1 = line.len();
+        } else {
+            eprintln!("{line}");
+        }
+    }
+
+    /// Ends the in-place line, then prints `line` on its own.
+    fn line(&self, line: &str) {
+        let mut st = self.state.lock().unwrap();
+        if self.tty && st.1 > 0 {
+            eprint!("\r{:width$}\r", "", width = st.1);
+            st.1 = 0;
+        }
+        eprintln!("{line}");
+    }
+}
+
 impl Progress for StderrProgress {
     fn table_started(&self, table: &str, total: u64) {
-        eprintln!("  {table}: {total} rows…");
+        self.start(table, total);
+    }
+    fn rows_written(&self, table: &str, done: u64, total: u64) {
+        self.rows(table, done, total);
     }
     fn table_done(&self, table: &str, rows: u64) {
-        eprintln!("  {table}: done ({rows} rows)");
+        self.line(&format!("  {table}: done ({rows} rows)"));
     }
     fn objects_done(&self, count: usize) {
-        eprintln!("  {count} view(s) / routine(s) / trigger(s)");
+        self.line(&format!("  {count} view(s) / routine(s) / trigger(s)"));
+    }
+    fn warning(&self, message: &str) {
+        self.line(&format!("  warning: {message}"));
+    }
+}
+
+impl basemaster_backup::restore::Progress for StderrProgress {
+    fn table_started(&self, table: &str, total: u64) {
+        self.start(table, total);
+    }
+    fn rows_restored(&self, table: &str, done: u64, total: u64) {
+        self.rows(table, done, total);
+    }
+    fn table_done(&self, table: &str, rows: u64) {
+        self.line(&format!("  {table}: restored {rows} rows"));
     }
 }
 
@@ -357,7 +432,7 @@ async fn run_backup(args: BackupArgs, conn: Option<&str>) -> Result<()> {
         OutFormat::Bmbak => {
             let file = std::fs::File::create(&args.out)
                 .with_context(|| format!("create {}", args.out))?;
-            dump_tables_to_bmbak(driver.as_ref(), &schema, &tables, &opts, file, &StderrProgress, None)
+            dump_tables_to_bmbak(driver.as_ref(), &schema, &tables, &opts, file, &StderrProgress::new(), None)
                 .await?;
         }
         OutFormat::Sql => {
@@ -368,7 +443,7 @@ async fn run_backup(args: BackupArgs, conn: Option<&str>) -> Result<()> {
                 &tables,
                 &opts,
                 Cursor::new(Vec::new()),
-                &StderrProgress,
+                &StderrProgress::new(),
                 None,
             )
             .await?
@@ -433,13 +508,8 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
         ..Default::default()
     };
 
-    struct P;
-    impl basemaster_backup::restore::Progress for P {
-        fn table_done(&self, table: &str, rows: u64) {
-            eprintln!("  {table}: restored {rows} rows");
-        }
-    }
-    let stats = restore_from_bmbak(driver.as_ref(), &mut reader, &opts, &P, None).await?;
+    let progress = StderrProgress::new();
+    let stats = restore_from_bmbak(driver.as_ref(), &mut reader, &opts, &progress, None).await?;
     let _ = driver.disconnect().await;
     println!(
         "Restored {} table(s), {} rows, {} view(s) / routine(s) / trigger(s)",
@@ -603,7 +673,7 @@ async fn run_schedule_run(id: &str) -> Result<()> {
     let uuid: uuid::Uuid = id.parse().context("invalid schedule id")?;
     let paths = AppPaths::resolve()?;
     let store = Store::open(&paths.db_path()).await?;
-    let file = run_and_record(&store, uuid, &|k| make_driver(k), &StderrProgress).await?;
+    let file = run_and_record(&store, uuid, &|k| make_driver(k), &StderrProgress::new()).await?;
     println!("Backup done: {file}");
     Ok(())
 }
