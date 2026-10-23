@@ -30,7 +30,8 @@ fn get_str(row: &MySqlRow, idx: usize) -> Option<String> {
 use basemaster_core::{
     Column as BmColumn, ColumnType, ConnectionConfig, Driver, Error, ExecuteResult, Filter,
     FilterNode, FilterOp, ForeignKeyInfo, GroupOp, IndexInfo, PageOptions, QueryResult, Result,
-    SchemaInfo, SchemaSnapshot, SortDir, TableInfo, TableKind, TableOptions, TlsMode, Value,
+    SchemaInfo, SchemaSnapshot, Snapshot, SortDir, TableInfo, TableKind, TableOptions, TlsMode,
+    Value,
 };
 
 mod value_decode;
@@ -549,6 +550,11 @@ impl Driver for MysqlDriver {
         batch_on_pool(pool, schema.map(str::to_string), pre.to_vec(), statements.to_vec()).await
     }
 
+    async fn open_snapshot(&self) -> Result<Snapshot> {
+        let pool = self.pool().await?;
+        snapshot_on_pool(pool).await
+    }
+
     async fn cancel_by_marker(&self, marker: &str) -> Result<()> {
         let pool = self.pool().await?;
         // Processlist.Info contains the SQL with our /* marker */ comment
@@ -854,6 +860,50 @@ async fn batch_on_pool(
     })
     .await
     .map_err(|e| Error::Sql(format!("batch task join: {}", e)))?
+}
+
+/// Worker behind `open_snapshot`: one connection with a consistent-snapshot
+/// transaction serving every scan, same spawn_blocking + block_on shape as
+/// `batch_on_pool`.
+async fn snapshot_on_pool(pool: MySqlPool) -> Result<Snapshot> {
+    use futures_util::StreamExt;
+    let (req_tx, mut req_rx) = tokio::sync::mpsc::channel::<basemaster_core::ScanRequest>(1);
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        handle.block_on(async move {
+            let mut conn = match pool.acquire().await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(Error::Sql(e.to_string())));
+                    return;
+                }
+            };
+            // net_write_timeout: the server drops a streamed result when the
+            // client stalls past it (default 60s), e.g. writing to a slow disk.
+            let begin = "SET SESSION net_write_timeout = 3600;                          SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;                          START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY";
+            if let Err(e) = sqlx::raw_sql(begin).execute(&mut *conn).await {
+                let _ = ready_tx.send(Err(Error::Sql(e.to_string())));
+                return;
+            }
+            let _ = ready_tx.send(Ok(()));
+            while let Some(req) = req_rx.recv().await {
+                let rows = sqlx::raw_sql(&req.sql)
+                    .fetch(&mut *conn)
+                    .map(|r| r.map(|row| decode_row(&row)).map_err(|e| Error::Sql(e.to_string())));
+                if !basemaster_core::driver::pump_rows(rows, &req).await {
+                    break;
+                }
+            }
+            // Closed rather than returned: the open transaction and the
+            // session timeout must not leak into the pool.
+            let _ = conn.close().await;
+        })
+    });
+    ready_rx
+        .await
+        .map_err(|_| Error::Sql("snapshot worker exited".into()))??;
+    Ok(Snapshot::new(req_tx))
 }
 
 /// Keepalive loop: every 30s sends SELECT 1 on a pool connection.

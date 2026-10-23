@@ -320,6 +320,16 @@ pub trait Driver: Send + Sync {
         })
     }
 
+    /// Opens a read-only, repeatable-read transaction on a connection taken
+    /// out of the pool for the life of the returned [`Snapshot`], so every
+    /// scan sees the database as of this call (backups under concurrent
+    /// writes).
+    async fn open_snapshot(&self) -> Result<Snapshot> {
+        Err(crate::Error::Unsupported(
+            "open_snapshot não implementado pelo driver".into(),
+        ))
+    }
+
     /// Total COUNT(*) of table rows, optionally filtered by `filter_tree`.
     /// Default ignores the filter (raw COUNT(*)) — drivers that want
     /// filtered counts must override and parametrize the WHERE clause.
@@ -407,6 +417,74 @@ pub trait Driver: Send + Sync {
         }
         Ok(q)
     }
+}
+
+/// Rows of one [`Snapshot::scan`] delivered in chunks.
+pub type RowChunks = tokio::sync::mpsc::Receiver<Result<Vec<Vec<Value>>>>;
+
+/// One scan handed to a driver's snapshot worker.
+pub struct ScanRequest {
+    pub sql: String,
+    pub chunk: usize,
+    pub rows: tokio::sync::mpsc::Sender<Result<Vec<Vec<Value>>>>,
+}
+
+/// Handle to a driver worker that owns one connection with an open snapshot
+/// transaction. A channel instead of a `Txn`-style trait object: the worker
+/// owns the connection in a `'static` task, which sidesteps the sqlx HRTB
+/// wall, and streaming needs backpressure anyway. Dropping the handle ends
+/// the transaction and closes the connection.
+pub struct Snapshot {
+    requests: tokio::sync::mpsc::Sender<ScanRequest>,
+}
+
+impl Snapshot {
+    pub fn new(requests: tokio::sync::mpsc::Sender<ScanRequest>) -> Self {
+        Snapshot { requests }
+    }
+
+    /// Streams the rows of `sql` in chunks of up to `chunk` rows. Read the
+    /// receiver to the end before the next scan; dropping it aborts the
+    /// snapshot.
+    pub async fn scan(&self, sql: &str, chunk: usize) -> Result<RowChunks> {
+        // Two chunks in flight: decoding overlaps with the consumer's
+        // compression without buffering the table.
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        self.requests
+            .send(ScanRequest { sql: sql.to_string(), chunk: chunk.max(1), rows: tx })
+            .await
+            .map_err(|_| crate::Error::Sql("snapshot connection closed".into()))?;
+        Ok(rx)
+    }
+}
+
+/// Worker side of a scan: forwards `rows` to the consumer in chunks. Returns
+/// false when the scan failed or the consumer hung up; the worker then ends
+/// the snapshot.
+pub async fn pump_rows<S>(mut rows: S, req: &ScanRequest) -> bool
+where
+    S: futures_util::Stream<Item = Result<Vec<Value>>> + Unpin,
+{
+    use futures_util::StreamExt;
+    let mut buf = Vec::with_capacity(req.chunk);
+    while let Some(row) = rows.next().await {
+        match row {
+            Ok(r) => {
+                buf.push(r);
+                if buf.len() >= req.chunk {
+                    let full = std::mem::replace(&mut buf, Vec::with_capacity(req.chunk));
+                    if req.rows.send(Ok(full)).await.is_err() {
+                        return false;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = req.rows.send(Err(e)).await;
+                return false;
+            }
+        }
+    }
+    buf.is_empty() || req.rows.send(Ok(buf)).await.is_ok()
 }
 
 /// Boxed future that resolves to a boxed `Txn`. Type alias exists to keep

@@ -15,8 +15,8 @@ use tokio::sync::RwLock;
 use basemaster_core::{
     Column as BmColumn, ColumnType, ConnectionConfig, Driver, Error, ExecuteResult,
     Filter, FilterNode, FilterOp, ForeignKeyInfo, GroupOp, IndexInfo, PageOptions,
-    QueryResult, Result, SchemaInfo, SortDir, TableInfo, TableKind, TableOptions, TlsMode,
-    Value,
+    QueryResult, Result, SchemaInfo, Snapshot, SortDir, TableInfo, TableKind, TableOptions,
+    TlsMode, Value,
 };
 
 mod value_decode;
@@ -79,6 +79,47 @@ fn quote_ident_raw(ident: &str) -> String {
 /// `async_trait` `Send`/HRTB wall on the `&mut *tx` executor borrow — see the
 /// MySQL/SQLite drivers' `batch_on_pool` for the full rationale. The import
 /// counts logical statements itself, so the returned count is unused (0).
+/// Worker behind `open_snapshot`: one connection with a repeatable-read
+/// transaction serving every scan, same spawn_blocking + block_on
+/// shape as `batch_on_pool`.
+async fn snapshot_on_pool(pool: PgPool) -> Result<Snapshot> {
+    use futures_util::StreamExt;
+    let (req_tx, mut req_rx) = tokio::sync::mpsc::channel::<basemaster_core::ScanRequest>(1);
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        handle.block_on(async move {
+            let mut conn = match pool.acquire().await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(Error::Sql(e.to_string())));
+                    return;
+                }
+            };
+            if let Err(e) = sqlx::raw_sql("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *conn).await {
+                let _ = ready_tx.send(Err(Error::Sql(e.to_string())));
+                return;
+            }
+            let _ = ready_tx.send(Ok(()));
+            while let Some(req) = req_rx.recv().await {
+                let rows = sqlx::query(&req.sql)
+                    .fetch(&mut *conn)
+                    .map(|r| r.map(|row| decode_row(&row)).map_err(|e| Error::Sql(e.to_string())));
+                if !basemaster_core::driver::pump_rows(rows, &req).await {
+                    break;
+                }
+            }
+            // Closed rather than returned: the open transaction must not leak
+            // into the pool.
+            let _ = conn.close().await;
+        })
+    });
+    ready_rx
+        .await
+        .map_err(|_| Error::Sql("snapshot worker exited".into()))??;
+    Ok(Snapshot::new(req_tx))
+}
+
 async fn batch_on_pool(
     pool: PgPool,
     schema: Option<String>,
@@ -561,6 +602,11 @@ impl Driver for PostgresDriver {
     ) -> Result<u64> {
         let pool = self.pool().await?;
         batch_on_pool(pool, schema.map(str::to_string), pre.to_vec(), statements.to_vec()).await
+    }
+
+    async fn open_snapshot(&self) -> Result<Snapshot> {
+        let pool = self.pool().await?;
+        snapshot_on_pool(pool).await
     }
 
     async fn cancel_by_marker(&self, marker: &str) -> Result<()> {

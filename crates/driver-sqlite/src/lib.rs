@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use basemaster_core::{
     Column as BmColumn, ColumnType, ConnectionConfig, Driver, Error, ExecuteResult,
     Filter, FilterNode, FilterOp, ForeignKeyInfo, GroupOp, IndexInfo, PageOptions,
-    QueryResult, Result, SchemaInfo, SortDir, TableInfo, TableKind, Value,
+    QueryResult, Result, SchemaInfo, Snapshot, SortDir, TableInfo, TableKind, Value,
 };
 
 pub struct SqliteDriver {
@@ -299,6 +299,11 @@ impl Driver for SqliteDriver {
         batch_on_pool(pool, pre.to_vec(), statements.to_vec()).await
     }
 
+    async fn open_snapshot(&self) -> Result<Snapshot> {
+        let pool = self.pool().await?;
+        snapshot_on_pool(pool).await
+    }
+
     async fn update_cell(
         &self,
         _schema: &str,
@@ -517,6 +522,50 @@ impl Driver for SqliteDriver {
 /// `begin_txn`). The escape hatch: run the tx future via `Handle::block_on`,
 /// which has NO `Send` requirement, inside a `spawn_blocking` thread (so
 /// blocking the current runtime worker is not an issue).
+/// Worker behind `open_snapshot`: one connection holding a read
+/// transaction for every scan, same spawn_blocking + block_on
+/// shape as `batch_on_pool`.
+async fn snapshot_on_pool(pool: SqlitePool) -> Result<Snapshot> {
+    use futures_util::StreamExt;
+    let (req_tx, mut req_rx) = tokio::sync::mpsc::channel::<basemaster_core::ScanRequest>(1);
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        handle.block_on(async move {
+            let mut conn = match pool.acquire().await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(Error::Sql(e.to_string())));
+                    return;
+                }
+            };
+            // Deferred BEGIN: the read snapshot starts at the first SELECT. In
+            // rollback-journal mode it holds a shared lock, so writers wait
+            // until the backup ends.
+            if let Err(e) = sqlx::raw_sql("BEGIN").execute(&mut *conn).await {
+                let _ = ready_tx.send(Err(Error::Sql(e.to_string())));
+                return;
+            }
+            let _ = ready_tx.send(Ok(()));
+            while let Some(req) = req_rx.recv().await {
+                let rows = sqlx::raw_sql(&req.sql)
+                    .fetch(&mut *conn)
+                    .map(|r| r.map(|row| decode_row(&row)).map_err(|e| Error::Sql(e.to_string())));
+                if !basemaster_core::driver::pump_rows(rows, &req).await {
+                    break;
+                }
+            }
+            // Closed rather than returned: the open transaction must not leak
+            // into the pool.
+            let _ = conn.close().await;
+        })
+    });
+    ready_rx
+        .await
+        .map_err(|_| Error::Sql("snapshot worker exited".into()))??;
+    Ok(Snapshot::new(req_tx))
+}
+
 async fn batch_on_pool(pool: SqlitePool, pre: Vec<String>, statements: Vec<String>) -> Result<u64> {
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
