@@ -37,6 +37,9 @@ pub struct RestoreOptions {
     pub max_statement_bytes: usize,
     /// SET FOREIGN_KEY_CHECKS=0 / session DEFER for the load (dialect aware).
     pub disable_fk_checks: bool,
+    /// Restore into this schema instead of the one recorded in the backup.
+    /// None keeps the recorded one.
+    pub target_schema: Option<String>,
 }
 
 impl Default for RestoreOptions {
@@ -47,6 +50,7 @@ impl Default for RestoreOptions {
             hex_blob: true,
             max_statement_bytes: 1024 * 1024,
             disable_fk_checks: true,
+            target_schema: None,
         }
     }
 }
@@ -61,13 +65,50 @@ fn dialect_of(driver: &dyn Driver) -> Dialect {
     Dialect::parse(driver.dialect()).unwrap_or(Dialect::Mysql)
 }
 
-fn table_ref(t: &TableEntry, driver: &dyn Driver) -> String {
-    match &t.schema {
+fn table_ref(schema: Option<&str>, t: &TableEntry, driver: &dyn Driver) -> String {
+    match schema {
         Some(s) if !s.is_empty() => {
             format!("{}.{}", driver.quote_ident(s), driver.quote_ident(&t.name))
         }
         _ => driver.quote_ident(&t.name),
     }
+}
+
+/// The dumped DDL can qualify names with the source schema (Postgres always
+/// does, MySQL for FK references), which would recreate tables in the source.
+/// Plain text replace of the quoted `"src".` prefix: a string literal holding
+/// that exact sequence would be rewritten too, acceptable for DDL.
+fn retarget_ddl(sql: &str, from: Option<&str>, to: Option<&str>, driver: &dyn Driver) -> String {
+    match (from, to) {
+        (Some(f), Some(t)) if !f.is_empty() && f != t => sql.replace(
+            &format!("{}.", driver.quote_ident(f)),
+            &format!("{}.", driver.quote_ident(t)),
+        ),
+        _ => sql.to_string(),
+    }
+}
+
+/// Runs one restore statement. The MySQL driver executes on a pool, so a
+/// standalone `SET FOREIGN_KEY_CHECKS=0` lands on some other connection and
+/// tables created before their FK parent fail; the toggle has to travel in the
+/// same multi-statement batch, and is switched back so the pooled connection
+/// isn't left with checks off.
+async fn exec(
+    driver: &dyn Driver,
+    schema: Option<&str>,
+    sql: &str,
+    opts: &RestoreOptions,
+) -> basemaster_core::error::Result<()> {
+    let sql = sql.trim_end().trim_end_matches(';');
+    if opts.disable_fk_checks && dialect_of(driver) == Dialect::Mysql {
+        let wrapped = format!(
+            "SET FOREIGN_KEY_CHECKS=0, UNIQUE_CHECKS=0; {sql}; SET FOREIGN_KEY_CHECKS=1, UNIQUE_CHECKS=1"
+        );
+        driver.execute(schema, &wrapped).await?;
+    } else {
+        driver.execute(schema, sql).await?;
+    }
+    Ok(())
 }
 
 async fn session_pre(driver: &dyn Driver, opts: &RestoreOptions) {
@@ -76,7 +117,7 @@ async fn session_pre(driver: &dyn Driver, opts: &RestoreOptions) {
     }
     // best-effort; ignore errors (privilege / unsupported)
     let stmts: &[&str] = match dialect_of(driver) {
-        Dialect::Mysql => &["SET FOREIGN_KEY_CHECKS=0", "SET UNIQUE_CHECKS=0"],
+        Dialect::Mysql => &[],
         Dialect::Postgres => &["SET session_replication_role = replica"],
         Dialect::Sqlite => &["PRAGMA foreign_keys=OFF"],
     };
@@ -90,7 +131,7 @@ async fn session_post(driver: &dyn Driver, opts: &RestoreOptions) {
         return;
     }
     let stmts: &[&str] = match dialect_of(driver) {
-        Dialect::Mysql => &["SET FOREIGN_KEY_CHECKS=1", "SET UNIQUE_CHECKS=1"],
+        Dialect::Mysql => &[],
         Dialect::Postgres => &["SET session_replication_role = DEFAULT"],
         Dialect::Sqlite => &["PRAGMA foreign_keys=ON"],
     };
@@ -120,29 +161,29 @@ pub async fn restore_from_bmbak<R: Read + Seek>(
         if cancelled() {
             break;
         }
-        let tref = table_ref(table, driver);
+        let schema = opts.target_schema.as_deref().or(table.schema.as_deref());
+        let tref = table_ref(schema, table, driver);
 
         if opts.create_tables && !table.pre_sql.trim().is_empty() {
             if opts.drop_before_create {
-                let _ = driver
-                    .execute(table.schema.as_deref(), &format!("DROP TABLE IF EXISTS {tref}"))
-                    .await;
+                let _ = exec(driver, schema, &format!("DROP TABLE IF EXISTS {tref}"), opts).await;
             }
-            driver
-                .execute(table.schema.as_deref(), table.pre_sql.trim_end())
+            let ddl = retarget_ddl(&table.pre_sql, table.schema.as_deref(), schema, driver);
+            exec(driver, schema, &ddl, opts)
                 .await
                 .with_context(|| format!("create table {}", table.name))?;
         }
 
         progress.table_started(&table.name, table.row_count);
-        let rows = restore_table_data(driver, reader, table, &tref, opts, dialect, progress, &cancelled)
-            .await?;
+        let rows =
+            restore_table_data(driver, reader, table, schema, &tref, opts, dialect, progress, &cancelled)
+                .await?;
         stats.rows += rows;
         stats.tables += 1;
 
         if !table.post_sql.trim().is_empty() {
-            driver
-                .execute(table.schema.as_deref(), table.post_sql.trim_end())
+            let ddl = retarget_ddl(&table.post_sql, table.schema.as_deref(), schema, driver);
+            exec(driver, schema, &ddl, opts)
                 .await
                 .with_context(|| format!("post-DDL {}", table.name))?;
         }
@@ -158,6 +199,7 @@ async fn restore_table_data<R: Read + Seek>(
     driver: &dyn Driver,
     reader: &mut BmbakReader<R>,
     table: &TableEntry,
+    schema: Option<&str>,
     tref: &str,
     opts: &RestoreOptions,
     dialect: Dialect,
@@ -208,8 +250,7 @@ async fn restore_table_data<R: Read + Seek>(
             stmt_rows += 1;
 
             if stmt.len() >= opts.max_statement_bytes {
-                driver
-                    .execute(table.schema.as_deref(), &stmt)
+                exec(driver, schema, &stmt, opts)
                     .await
                     .with_context(|| format!("insert into {}", table.name))?;
                 done += stmt_rows as u64;
@@ -220,8 +261,7 @@ async fn restore_table_data<R: Read + Seek>(
         }
     }
     if stmt_rows > 0 {
-        driver
-            .execute(table.schema.as_deref(), &stmt)
+        exec(driver, schema, &stmt, opts)
             .await
             .with_context(|| format!("insert into {}", table.name))?;
         done += stmt_rows as u64;
@@ -246,6 +286,14 @@ mod tests {
     /// Records every executed statement so we can assert what the restore emits.
     struct RecordingDriver {
         log: Mutex<Vec<String>>,
+        /// Schema each statement ran under (MySQL turns it into `USE`).
+        schemas: Mutex<Vec<Option<String>>>,
+    }
+
+    impl RecordingDriver {
+        fn new() -> Self {
+            RecordingDriver { log: Mutex::new(Vec::new()), schemas: Mutex::new(Vec::new()) }
+        }
     }
 
     #[async_trait]
@@ -280,8 +328,9 @@ mod tests {
         async fn query(&self, _s: Option<&str>, _sql: &str) -> CoreResult<QueryResult> {
             unimplemented!()
         }
-        async fn execute(&self, _s: Option<&str>, sql: &str) -> CoreResult<ExecuteResult> {
+        async fn execute(&self, s: Option<&str>, sql: &str) -> CoreResult<ExecuteResult> {
             self.log.lock().unwrap().push(sql.to_string());
+            self.schemas.lock().unwrap().push(s.map(str::to_string));
             Ok(ExecuteResult {
                 rows_affected: 0,
                 last_insert_id: None,
@@ -325,6 +374,10 @@ mod tests {
     }
 
     fn sample() -> Vec<u8> {
+        sample_in(None)
+    }
+
+    fn sample_in(schema: Option<&str>) -> Vec<u8> {
         let mut w = BmbakWriter::new(
             Cursor::new(Vec::new()),
             "mysql",
@@ -337,12 +390,13 @@ mod tests {
             ColumnMeta { name: "id".into(), type_hint: "int".into() },
             ColumnMeta { name: "name".into(), type_hint: "text".into() },
         ];
+        let q = schema.map(|s| format!("`{s}`.")).unwrap_or_default();
         let t = w.begin_table(
-            None,
+            schema.map(str::to_string),
             "users",
             cols,
-            "CREATE TABLE `users` (`id` INT PRIMARY KEY, `name` TEXT)",
-            "CREATE INDEX idx_name ON `users` (`name`)",
+            format!("CREATE TABLE {q}`users` (`id` INT PRIMARY KEY, `name` TEXT)"),
+            format!("CREATE INDEX idx_name ON {q}`users` (`name`)"),
         );
         w.write_block(
             t,
@@ -357,7 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn restore_emits_expected_sql_in_order() {
-        let driver = RecordingDriver { log: Mutex::new(Vec::new()) };
+        let driver = RecordingDriver::new();
         let mut reader = BmbakReader::open(Cursor::new(sample())).unwrap();
         let stats = restore_from_bmbak(
             &driver,
@@ -374,12 +428,10 @@ mod tests {
 
         let log = driver.log.lock().unwrap().clone();
         let joined = log.join("\n");
-        // FK checks disabled first
-        assert!(log.iter().any(|s| s.contains("FOREIGN_KEY_CHECKS=0")), "{joined}");
         // drop + create before data
         let drop = log.iter().position(|s| s.contains("DROP TABLE")).unwrap();
         let create = log.iter().position(|s| s.contains("CREATE TABLE")).unwrap();
-        let insert = log.iter().position(|s| s.starts_with("INSERT INTO")).unwrap();
+        let insert = log.iter().position(|s| s.contains("INSERT INTO")).unwrap();
         let index = log.iter().position(|s| s.contains("CREATE INDEX")).unwrap();
         assert!(drop < create && create < insert && insert < index, "wrong order: {joined}");
         // multi-row insert, NULL preserved
@@ -388,8 +440,40 @@ mod tests {
             "{}",
             log[insert]
         );
-        // FK checks restored after the data load
-        let reenable = log.iter().position(|s| s.contains("FOREIGN_KEY_CHECKS=1")).unwrap();
-        assert!(reenable > insert, "FK checks must be re-enabled after load: {joined}");
+        // each statement switches FK checks off and back on in its own batch,
+        // so it holds on whichever pooled connection runs it
+        for s in &log {
+            assert!(
+                s.starts_with("SET FOREIGN_KEY_CHECKS=0") && s.ends_with("SET FOREIGN_KEY_CHECKS=1, UNIQUE_CHECKS=1"),
+                "not wrapped: {s}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn target_schema_overrides_the_recorded_one() {
+        let driver = RecordingDriver::new();
+        let mut reader = BmbakReader::open(Cursor::new(sample_in(Some("prod")))).unwrap();
+        let opts = RestoreOptions {
+            target_schema: Some("scratch".into()),
+            ..Default::default()
+        };
+        restore_from_bmbak(&driver, &mut reader, &opts, &NoProgress, None)
+            .await
+            .unwrap();
+
+        let log = driver.log.lock().unwrap().clone();
+        let joined = log.join("
+");
+        assert!(!joined.contains("prod"), "source schema leaked: {joined}");
+        for kw in ["DROP TABLE", "CREATE TABLE", "INSERT INTO", "CREATE INDEX"] {
+            let stmt = log.iter().find(|s| s.contains(kw)).unwrap();
+            assert!(stmt.contains("`scratch`.`users`"), "{kw} not retargeted: {stmt}");
+        }
+        let schemas = driver.schemas.lock().unwrap().clone();
+        assert!(
+            schemas.iter().flatten().all(|s| s == "scratch"),
+            "statement ran under another schema: {schemas:?}"
+        );
     }
 }

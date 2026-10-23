@@ -158,6 +158,10 @@ struct RestoreArgs {
     /// Input .bmbak file.
     #[arg(long, short)]
     in_file: String,
+    /// Schema / database to restore into. Defaults to the DSN / connection
+    /// database on MySQL, otherwise to the schema recorded in the backup.
+    #[arg(long, short)]
+    schema: Option<String>,
     /// Don't run the CREATE TABLE DDL; insert into existing tables.
     #[arg(long)]
     no_create: bool,
@@ -367,9 +371,38 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
     let file = std::fs::File::open(&args.in_file)
         .with_context(|| format!("open {}", args.in_file))?;
     let mut reader = BmbakReader::open(file)?;
+
+    // MySQL "database" is the schema, so the one in the DSN must win over the
+    // one recorded in the backup; on Postgres the DSN names the database and
+    // the recorded schema (e.g. `public`) still applies inside it.
+    let target_schema = match driver.dialect() {
+        "sqlite" if args.schema.is_some() => bail!("--schema doesn't apply to SQLite"),
+        "mysql" => args.schema.or(config.default_database.clone()),
+        _ => args.schema,
+    };
+    let mut recorded: Vec<&str> = reader
+        .manifest
+        .tables
+        .iter()
+        .filter_map(|t| t.schema.as_deref())
+        .collect();
+    recorded.dedup();
+    let into = target_schema
+        .as_deref()
+        .map(str::to_string)
+        .unwrap_or_else(|| recorded.join(", "));
+    if !into.is_empty() {
+        eprintln!(
+            "Restoring {} table(s) into '{into}' (backup taken from '{}')",
+            reader.manifest.tables.len(),
+            recorded.join(", ")
+        );
+    }
+
     let opts = RestoreOptions {
         create_tables: !args.no_create,
         drop_before_create: !args.no_drop,
+        target_schema,
         ..Default::default()
     };
 
