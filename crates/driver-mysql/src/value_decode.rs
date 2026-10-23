@@ -76,9 +76,17 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
             Some(v) => Value::Decimal(v),
             None => Value::Null,
         },
-        "BOOLEAN" => match tg!(bool) {
-            Some(v) => Value::Bool(v),
-            None => Value::Null,
+        // sqlx names every TINYINT with display width 1 "BOOLEAN" (signed or
+        // UNSIGNED), but apps keep codes like 2 or -1 in TINYINT(1); a bool
+        // decode turns every non-zero into 1. Decode the integer it is: u8 is
+        // only compatible with UNSIGNED columns, i8 with signed ones.
+        "BOOLEAN" => match row.try_get::<Option<u8>, _>(i) {
+            Ok(Some(v)) => Value::UInt(v as u64),
+            Ok(None) => Value::Null,
+            Err(_) => match tg!(i8) {
+                Some(v) => Value::Int(v as i64),
+                None => Value::Null,
+            },
         },
         "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT" | "ENUM" | "SET" => {
             // Columns with `_bin` collation set the BINARY flag, which makes
