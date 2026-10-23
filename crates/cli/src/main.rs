@@ -188,6 +188,10 @@ struct RestoreArgs {
     /// Skip the row count / checksum comparison at the end.
     #[arg(long)]
     no_verify: bool,
+    /// Restore even though the target already has tables (they get dropped
+    /// and recreated).
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(clap::Args)]
@@ -496,16 +500,42 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
         .filter_map(|t| t.schema.as_deref())
         .collect();
     recorded.dedup();
-    let into = target_schema
-        .as_deref()
-        .map(str::to_string)
-        .unwrap_or_else(|| recorded.join(", "));
-    if !into.is_empty() {
-        eprintln!(
-            "Restoring {} table(s) into '{into}' (backup taken from '{}')",
-            reader.manifest.tables.len(),
-            recorded.join(", ")
-        );
+    let into: Vec<String> = match &target_schema {
+        Some(s) => vec![s.clone()],
+        None => recorded.iter().map(|s| s.to_string()).collect(),
+    };
+    eprintln!(
+        "Restoring {} table(s) into {} '{}' on {} (backup taken from '{}')",
+        reader.manifest.tables.len(),
+        if driver.dialect() == "mysql" { "database" } else { "schema" },
+        into.join(", "),
+        describe_server(&config, driver.dialect()),
+        recorded.join(", ")
+    );
+
+    // Dropping is the destructive path; --no-drop / --no-create never drop.
+    if !args.no_create && !args.no_drop && !args.force {
+        let mut existing = Vec::new();
+        for s in into.iter().map(String::as_str).chain(into.is_empty().then_some("")) {
+            let tables = driver
+                .list_tables(s)
+                .await
+                .map_err(|e| anyhow!("list tables of the target: {e}"))?;
+            existing.extend(tables.into_iter().map(|t| t.name));
+        }
+        if !existing.is_empty() {
+            let replaced = reader
+                .manifest
+                .tables
+                .iter()
+                .filter(|t| existing.contains(&t.name))
+                .count();
+            bail!(
+                "the target already has {} table(s), {replaced} of which the restore would drop and \
+                 recreate; check the target above and re-run with --force to overwrite it",
+                existing.len()
+            );
+        }
     }
 
     let opts = RestoreOptions {
@@ -528,6 +558,15 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
         println!("Verified {} table(s) against the backup", stats.verified);
     }
     Ok(())
+}
+
+/// `mysql://user@host:port` for messages: never the password.
+fn describe_server(config: &ConnectionConfig, dialect: &str) -> String {
+    if dialect == "sqlite" {
+        return config.host.clone();
+    }
+    let user = if config.user.is_empty() { String::new() } else { format!("{}@", config.user) };
+    format!("{dialect}://{user}{}:{}", config.host, config.port)
 }
 
 /// MySQL "database" is the schema, so the one in the DSN wins over the one
