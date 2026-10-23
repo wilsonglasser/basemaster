@@ -25,6 +25,7 @@ chrono.workspace = true
 tokio.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 url = "2"
+percent-encoding = "2"
 uuid.workspace = true
 serde_json.workspace = true
 # Plain-HTTP client for the GUI's local MCP server (127.0.0.1 only, so no TLS).

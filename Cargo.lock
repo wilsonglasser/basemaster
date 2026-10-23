@@ -599,6 +599,7 @@ dependencies = [
  "basemaster-store",
  "chrono",
  "clap",
+ "percent-encoding",
  "serde_json",
  "tokio",
  "ureq",

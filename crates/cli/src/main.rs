@@ -122,11 +122,16 @@ enum OutFormat {
 
 #[derive(clap::Args)]
 struct ConnArgs {
-    /// Connection string, e.g. mysql://user:pass@host:3306/db or
-    /// postgres://... or sqlite:///abs/path.db. Without it the global
-    /// -c/--conn stored profile is used (local SQLite + keyring).
-    #[arg(long)]
+    /// Connection string, e.g. mysql://user@host:3306/db or postgres://...
+    /// or sqlite:///abs/path.db. Leave the password out (it would show in
+    /// `ps` and the shell history) and give it with --password-file or
+    /// BASEMASTER_PASSWORD. Without it the global -c/--conn stored profile is
+    /// used (local SQLite + keyring).
+    #[arg(long, env = "BASEMASTER_DSN", hide_env_values = true)]
     dsn: Option<String>,
+    /// File whose first line is the password for --dsn.
+    #[arg(long)]
+    password_file: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -313,7 +318,11 @@ async fn resolve_connection(
     conn: Option<&str>,
 ) -> Result<(Arc<dyn Driver>, ConnectionConfig)> {
     if let Some(dsn) = &args.dsn {
-        return config_from_dsn(dsn);
+        let (driver, mut config) = config_from_dsn(dsn)?;
+        if config.password.is_none() {
+            config.password = dsn_password(args)?;
+        }
+        return Ok((driver, config));
     }
     let name = conn.ok_or_else(|| anyhow!("provide -c/--conn NAME or --dsn URL"))?;
 
@@ -335,6 +344,16 @@ async fn resolve_connection(
     let password = basemaster_store::secrets::get_password(profile.id).ok().flatten();
     let config = profile.into_config(password);
     Ok((driver, config))
+}
+
+/// Password for a DSN that has none: --password-file (first line), else
+/// BASEMASTER_PASSWORD.
+fn dsn_password(args: &ConnArgs) -> Result<Option<String>> {
+    if let Some(path) = &args.password_file {
+        let text = std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+        return Ok(Some(text.lines().next().unwrap_or("").to_string()));
+    }
+    Ok(std::env::var("BASEMASTER_PASSWORD").ok())
 }
 
 fn config_from_dsn(dsn: &str) -> Result<(Arc<dyn Driver>, ConnectionConfig)> {
@@ -370,13 +389,16 @@ fn config_from_dsn(dsn: &str) -> Result<(Arc<dyn Driver>, ConnectionConfig)> {
         return Ok((driver, cfg));
     }
 
-    let url = url::Url::parse(dsn).with_context(|| format!("parse DSN '{dsn}'"))?;
+    // Never echo the DSN: it may carry the password.
+    let url = url::Url::parse(dsn).map_err(|e| anyhow!("invalid --dsn ({e}); expected {kind}://user@host:port/db"))?;
     let host = url.host_str().unwrap_or("localhost").to_string();
     let port = url
         .port()
         .unwrap_or(if kind == "mysql" { 3306 } else { 5432 });
-    let user = url.username().to_string();
-    let password = url.password().map(|p| p.to_string());
+    // url keeps userinfo percent-encoded: `p%40ss` in the DSN is `p@ss`.
+    let decode = |s: &str| percent_encoding::percent_decode_str(s).decode_utf8_lossy().into_owned();
+    let user = decode(url.username());
+    let password = url.password().map(decode);
     let db = url.path().trim_start_matches('/');
     let cfg = ConnectionConfig {
         id: uuid_nil(),
