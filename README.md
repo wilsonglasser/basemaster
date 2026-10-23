@@ -231,14 +231,20 @@ Output is JSON when piped and an aligned table on a terminal (`-o json|ndjson|cs
 The `backup`, `restore` and `schedule` subcommands run standalone (no app needed), e.g. on a server. Every release also attaches static `basemaster-cli` builds for Linux x64 and ARM64 (`basemaster-cli-<tag>-<arch>-unknown-linux-musl.tar.gz`) for servers without the desktop app.
 
 ```bash
-basemaster-cli backup  --dsn mysql://user:pass@host/prod --out prod.bmbak
-basemaster-cli restore --dsn mysql://user:pass@host/prod_copy -i prod.bmbak   # lands in prod_copy
-basemaster-cli restore --dsn mysql://user:pass@host/ -s prod_copy -i prod.bmbak  # same, explicit
+export BASEMASTER_PASSWORD=...          # or --password-file; keep it out of --dsn (ps, shell history)
+basemaster-cli backup  --dsn mysql://user@host/prod --out prod.bmbak
+basemaster-cli restore --dsn mysql://user@host/prod_copy -i prod.bmbak     # lands in prod_copy
+basemaster-cli restore --dsn mysql://user@host/ -s prod_copy -i prod.bmbak  # same, explicit
+basemaster-cli verify  --dsn mysql://user@host/prod_copy -i prod.bmbak     # compare without restoring
 ```
 
-`backup` reads every table inside one read-only snapshot transaction (MySQL `WITH CONSISTENT SNAPSHOT`, Postgres `REPEATABLE READ`), so the file is a single point in time even while the database takes writes, and streams each table in one `SELECT`. Backing up a whole schema (no `--tables`) also stores its views, functions, procedures and triggers.
+`--dsn` can also come from `BASEMASTER_DSN`. A DSN without a password takes it from `--password-file` (first line) or `BASEMASTER_PASSWORD`; inside a DSN, special characters must be percent-encoded (`p%40ss` for `p@ss`).
 
-`restore` drops and recreates every table in the backup, then the views, routines and triggers (`--no-drop` skips the drops; `--no-create` loads rows into existing tables and skips the objects). On Postgres the drops use `CASCADE`, which also removes views and foreign keys in other schemas that depend on those tables. The target is `--schema`, else the database in the DSN / connection on MySQL, else the schema recorded in the backup; the first line it prints names it. On MySQL, `--strip-definer` makes the restoring user the owner of those objects when it lacks `SET_USER_ID`; with binary logging on, such a user also needs `log_bin_trust_function_creators=1` to create functions.
+`backup` reads every table inside one read-only snapshot transaction (MySQL `WITH CONSISTENT SNAPSHOT`, Postgres `REPEATABLE READ`), so the file is a single point in time even while the database takes writes, and streams each table in one `SELECT`. Backing up a whole schema (no `--tables`) also stores its views, functions, procedures and triggers. MySQL tables on engines without transactions (MyISAM, MEMORY, Aria) aren't covered by the snapshot: the backup lists them in a warning, and `--lock-non-transactional` read-locks them from the snapshot start until they are read (writes to them wait meanwhile).
+
+Each table also gets a row count and a content checksum computed by the database server itself, so a value the client reads wrong can't hide. It costs one extra read of every table (about 60% more backup time); `--no-checksum` skips it and leaves only row counts to compare.
+
+`restore` names the target (database and server) first and refuses one that already has tables unless `--force`. It drops and recreates every table in the backup, then the views, routines and triggers (`--no-drop` skips the drops; `--no-create` loads rows into existing tables and skips the objects), and finally recomputes every row count and checksum on the target, failing with the tables that differ (`--no-verify` to skip; `verify` does the same check on its own). `TIMESTAMP` columns render in the session time zone, so a target server on another `time_zone` reports them as different. On Postgres the drops use `CASCADE`, which also removes views and foreign keys in other schemas that depend on those tables. The target is `--schema`, else the database in the DSN / connection on MySQL, else the schema recorded in the backup. On MySQL, `--strip-definer` makes the restoring user the owner of those objects when it lacks `SET_USER_ID`; with binary logging on, such a user also needs `log_bin_trust_function_creators=1` to create functions.
 
 ### Shortcuts
 
