@@ -608,7 +608,7 @@ impl Driver for PostgresDriver {
         batch_on_pool(pool, schema.map(str::to_string), pre.to_vec(), statements.to_vec()).await
     }
 
-    async fn open_snapshot(&self) -> Result<Snapshot> {
+    async fn open_snapshot(&self, _lock: &[(String, String)]) -> Result<Snapshot> {
         let pool = self.pool().await?;
         snapshot_on_pool(pool).await
     }

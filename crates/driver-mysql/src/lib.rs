@@ -550,9 +550,20 @@ impl Driver for MysqlDriver {
         batch_on_pool(pool, schema.map(str::to_string), pre.to_vec(), statements.to_vec()).await
     }
 
-    async fn open_snapshot(&self) -> Result<Snapshot> {
+    async fn open_snapshot(&self, lock: &[(String, String)]) -> Result<Snapshot> {
         let pool = self.pool().await?;
-        snapshot_on_pool(pool).await
+        // Locks first: tables outside transactions must already be frozen
+        // when the snapshot starts, or they'd hold rows from later on.
+        let unlock = if lock.is_empty() {
+            None
+        } else {
+            Some(lock_tables_on_pool(pool.clone(), lock).await?)
+        };
+        let snapshot = snapshot_on_pool(pool).await?;
+        Ok(match unlock {
+            Some(tx) => snapshot.with_locks(tx),
+            None => snapshot,
+        })
     }
 
     async fn cancel_by_marker(&self, marker: &str) -> Result<()> {
@@ -904,6 +915,46 @@ async fn snapshot_on_pool(pool: MySqlPool) -> Result<Snapshot> {
         .await
         .map_err(|_| Error::Sql("snapshot worker exited".into()))??;
     Ok(Snapshot::new(req_tx))
+}
+
+/// Holds `LOCK TABLES ... READ` on a second connection until the returned
+/// sender fires or is dropped. It can't live on the snapshot connection:
+/// LOCK TABLES implicitly commits the open transaction.
+async fn lock_tables_on_pool(
+    pool: MySqlPool,
+    tables: &[(String, String)],
+) -> Result<tokio::sync::oneshot::Sender<()>> {
+    let list = tables
+        .iter()
+        .map(|(s, t)| format!("`{}`.`{}` READ", escape_ident(s), escape_ident(t)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (unlock_tx, unlock_rx) = tokio::sync::oneshot::channel::<()>();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        handle.block_on(async move {
+            let mut conn = match pool.acquire().await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(Error::Sql(e.to_string())));
+                    return;
+                }
+            };
+            if let Err(e) = sqlx::raw_sql(&format!("LOCK TABLES {list}")).execute(&mut *conn).await {
+                let _ = ready_tx.send(Err(Error::Sql(format!("LOCK TABLES: {e}"))));
+                return;
+            }
+            let _ = ready_tx.send(Ok(()));
+            let _ = unlock_rx.await;
+            let _ = sqlx::raw_sql("UNLOCK TABLES").execute(&mut *conn).await;
+            let _ = conn.close().await;
+        })
+    });
+    ready_rx
+        .await
+        .map_err(|_| Error::Sql("lock worker exited".into()))??;
+    Ok(unlock_tx)
 }
 
 /// Keepalive loop: every 30s sends SELECT 1 on a pool connection.

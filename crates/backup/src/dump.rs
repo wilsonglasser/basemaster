@@ -48,6 +48,10 @@ pub struct DumpToBmbakOptions {
     /// Take the server-side checksum of every table (one extra read of each
     /// table inside the snapshot) so restore/verify can prove the copy.
     pub checksum: bool,
+    /// MySQL: hold a read lock on tables outside transactions (MyISAM...)
+    /// from the snapshot start until they're read. Without it they're read
+    /// unlocked and may not match the rest of the backup (a warning says so).
+    pub lock_non_transactional: bool,
 }
 
 impl Default for DumpToBmbakOptions {
@@ -59,12 +63,41 @@ impl Default for DumpToBmbakOptions {
             chunk_size: 1000,
             include_objects: true,
             checksum: true,
+            lock_non_transactional: false,
         }
     }
 }
 
 fn type_hint(c: &basemaster_core::Column) -> String {
     format!("{:?}", c.column_type)
+}
+
+/// MySQL tables whose engine has no transactions (MyISAM, MEMORY, ARCHIVE,
+/// Aria...): a snapshot doesn't cover them.
+async fn non_transactional(driver: &dyn Driver, schema: &str, tables: &[String]) -> Result<Vec<String>> {
+    if driver.dialect() != "mysql" {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT TABLE_NAME FROM information_schema.TABLES \
+         WHERE TABLE_SCHEMA = {} AND TABLE_TYPE = 'BASE TABLE' \
+           AND ENGINE NOT IN ('InnoDB', 'ROCKSDB', 'TokuDB', 'ndbcluster')",
+        value_to_sql(&Value::String(schema.to_string()), false, Dialect::Mysql)
+    );
+    let q = driver
+        .query(None, &sql)
+        .await
+        .map_err(|e| anyhow!("table engines of {schema}: {e}"))?;
+    let names: Vec<String> = q
+        .rows
+        .iter()
+        .filter_map(|r| match r.first() {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Bytes(b)) => String::from_utf8(b.clone()).ok(),
+            _ => None,
+        })
+        .collect();
+    Ok(tables.iter().filter(|t| names.contains(t)).cloned().collect())
 }
 
 /// Parents before children, so a restore that can't switch FK checks off
@@ -170,15 +203,36 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
     };
     let chunk = opts.chunk_size.max(1) as usize;
 
-    let tables = fk_order(driver, schema, tables).await?;
+    let mut tables = fk_order(driver, schema, tables).await?;
+    let outside = non_transactional(driver, schema, &tables).await?;
+    // Read first, so a lock on them is held as briefly as possible; they
+    // can't take part in foreign keys, so the parent-first order holds.
+    tables.sort_by_key(|t| !outside.contains(t));
+    let lock: Vec<(String, String)> = if opts.lock_non_transactional {
+        outside.iter().map(|t| (schema.to_string(), t.clone())).collect()
+    } else {
+        if !outside.is_empty() {
+            progress.warning(&format!(
+                "{} table(s) use an engine without transactions and are read outside the \
+                 snapshot, so with concurrent writes they may not match the rest: {} \
+                 (--lock-non-transactional blocks writes to them while they are read)",
+                outside.len(),
+                outside.join(", ")
+            ));
+        }
+        Vec::new()
+    };
     let snapshot = driver
-        .open_snapshot()
+        .open_snapshot(&lock)
         .await
         .map_err(|e| anyhow!("open snapshot: {e}"))?;
 
-    'tables: for table in &tables {
+    'tables: for (i, table) in tables.iter().enumerate() {
         if cancelled() {
             break;
+        }
+        if i == outside.len() {
+            snapshot.release_locks();
         }
 
         // Generated columns are recomputed by the server; inserting them back
@@ -388,7 +442,7 @@ mod tests {
         async fn list_generated_columns(&self, _s: &str, _t: &str) -> CoreResult<Vec<String>> {
             Ok(self.generated.clone())
         }
-        async fn open_snapshot(&self) -> CoreResult<Snapshot> {
+        async fn open_snapshot(&self, _lock: &[(String, String)]) -> CoreResult<Snapshot> {
             let rows = self.rows.clone();
             let scans = self.scans.clone();
             let (tx, mut rx) = tokio::sync::mpsc::channel::<ScanRequest>(1);
@@ -474,6 +528,7 @@ mod tests {
             chunk_size: 2,
             include_objects: false,
             checksum: true,
+            lock_non_transactional: false,
         };
         let out = dump_tables_to_bmbak(
             &driver,

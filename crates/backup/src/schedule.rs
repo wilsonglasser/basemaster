@@ -152,6 +152,8 @@ pub async fn dump_schedule(
         chunk_size: 1000,
         include_objects: whole_schema,
         checksum: true,
+        // No store column for it yet: schedules warn instead.
+        lock_non_transactional: false,
     };
     let file = std::fs::File::create(&out_path)
         .with_context(|| format!("create {}", out_path.display()))?;

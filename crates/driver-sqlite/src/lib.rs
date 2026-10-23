@@ -299,7 +299,7 @@ impl Driver for SqliteDriver {
         batch_on_pool(pool, pre.to_vec(), statements.to_vec()).await
     }
 
-    async fn open_snapshot(&self) -> Result<Snapshot> {
+    async fn open_snapshot(&self, _lock: &[(String, String)]) -> Result<Snapshot> {
         let pool = self.pool().await?;
         snapshot_on_pool(pool).await
     }

@@ -151,6 +151,11 @@ struct BackupArgs {
     /// restore/verify can then only compare row counts).
     #[arg(long)]
     no_checksum: bool,
+    /// MySQL: read-lock MyISAM and other non-transactional tables from the
+    /// snapshot start until they are read, so they match the rest. Writes to
+    /// them wait meanwhile; without it a warning lists them.
+    #[arg(long)]
+    lock_non_transactional: bool,
     /// zstd level for .bmbak blocks.
     #[arg(long, default_value_t = 5)]
     level: i32,
@@ -426,6 +431,7 @@ async fn run_backup(args: BackupArgs, conn: Option<&str>) -> Result<()> {
         chunk_size: args.chunk,
         include_objects: args.tables.is_empty(),
         checksum: !args.no_checksum,
+        lock_non_transactional: args.lock_non_transactional,
     };
 
     match args.format {

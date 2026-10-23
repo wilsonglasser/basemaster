@@ -324,7 +324,11 @@ pub trait Driver: Send + Sync {
     /// out of the pool for the life of the returned [`Snapshot`], so every
     /// scan sees the database as of this call (backups under concurrent
     /// writes).
-    async fn open_snapshot(&self) -> Result<Snapshot> {
+    ///
+    /// `lock` names (schema, table) pairs outside transactions (MySQL MyISAM
+    /// and friends) to hold under a read lock from before the snapshot starts
+    /// until [`Snapshot::release_locks`], so they match the snapshot too.
+    async fn open_snapshot(&self, _lock: &[(String, String)]) -> Result<Snapshot> {
         Err(crate::Error::Unsupported(
             "open_snapshot não implementado pelo driver".into(),
         ))
@@ -436,11 +440,26 @@ pub struct ScanRequest {
 /// the transaction and closes the connection.
 pub struct Snapshot {
     requests: tokio::sync::mpsc::Sender<ScanRequest>,
+    /// Signals the worker holding the table locks to release them.
+    unlock: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl Snapshot {
     pub fn new(requests: tokio::sync::mpsc::Sender<ScanRequest>) -> Self {
-        Snapshot { requests }
+        Snapshot { requests, unlock: std::sync::Mutex::new(None) }
+    }
+
+    pub fn with_locks(self, unlock: tokio::sync::oneshot::Sender<()>) -> Self {
+        *self.unlock.lock().expect("unlock mutex") = Some(unlock);
+        self
+    }
+
+    /// Lets writers back into the tables locked by `open_snapshot`; call once
+    /// they have been read. Also happens when the snapshot is dropped.
+    pub fn release_locks(&self) {
+        if let Some(tx) = self.unlock.lock().expect("unlock mutex").take() {
+            let _ = tx.send(());
+        }
     }
 
     /// Streams the rows of `sql` in chunks of up to `chunk` rows. Read the
