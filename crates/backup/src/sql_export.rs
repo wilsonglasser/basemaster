@@ -11,7 +11,7 @@ use std::io::{Read, Seek, Write};
 use anyhow::Result;
 use basemaster_core::Value;
 
-use crate::container::{BmbakReader, TableEntry};
+use crate::container::{BmbakReader, ObjectEntry, ObjectKind, TableEntry};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialect {
@@ -133,6 +133,34 @@ pub fn value_to_sql(v: &Value, hex_blob: bool, dialect: Dialect) -> String {
     }
 }
 
+fn qualified(schema: Option<&str>, name: &str, dialect: Dialect) -> String {
+    match schema {
+        Some(s) if !s.is_empty() => format!("{}.{}", dialect.quote_ident(s), dialect.quote_ident(name)),
+        _ => dialect.quote_ident(name),
+    }
+}
+
+/// `DROP ... IF EXISTS` for an object about to be recreated in `schema`.
+pub(crate) fn drop_object_sql(o: &ObjectEntry, schema: Option<&str>, dialect: Dialect) -> Option<String> {
+    let name = qualified(schema, &o.name, dialect);
+    let pg = dialect == Dialect::Postgres;
+    Some(match o.kind {
+        // Postgres routines come as CREATE OR REPLACE.
+        ObjectKind::Function | ObjectKind::Procedure if pg => return None,
+        ObjectKind::Function => format!("DROP FUNCTION IF EXISTS {name}"),
+        ObjectKind::Procedure => format!("DROP PROCEDURE IF EXISTS {name}"),
+        ObjectKind::View if pg => format!("DROP VIEW IF EXISTS {name} CASCADE"),
+        ObjectKind::View => format!("DROP VIEW IF EXISTS {name}"),
+        ObjectKind::MaterializedView => format!("DROP MATERIALIZED VIEW IF EXISTS {name} CASCADE"),
+        ObjectKind::Trigger if pg => format!(
+            "DROP TRIGGER IF EXISTS {} ON {}",
+            dialect.quote_ident(&o.name),
+            qualified(schema, o.table.as_deref()?, dialect)
+        ),
+        ObjectKind::Trigger => format!("DROP TRIGGER IF EXISTS {name}"),
+    })
+}
+
 fn table_ref(t: &TableEntry, dialect: Dialect) -> String {
     match &t.schema {
         Some(s) if !s.is_empty() => {
@@ -155,25 +183,68 @@ pub fn export_to_sql<R: Read + Seek, W: Write>(
         reader.manifest.source_engine, reader.manifest.created_at
     )?;
 
+    let mysql = opts.dialect == Dialect::Mysql;
+    if mysql {
+        writeln!(out, "SET FOREIGN_KEY_CHECKS=0;\n")?;
+    }
+    // Postgres refuses to drop a table another table's FK or a view depends on.
+    let cascade = if opts.dialect == Dialect::Postgres { " CASCADE" } else { "" };
+
     for table in &tables {
         let tref = table_ref(table, opts.dialect);
 
+        // MySQL's SHOW CREATE TABLE has no trailing `;`, Postgres' DDL does.
         if !table.pre_sql.trim().is_empty() {
             if opts.drop_before_create {
-                writeln!(out, "DROP TABLE IF EXISTS {};", tref)?;
+                writeln!(out, "DROP TABLE IF EXISTS {tref}{cascade};")?;
             }
-            writeln!(out, "{}", table.pre_sql.trim_end())?;
+            writeln!(out, "{};", table.pre_sql.trim_end().trim_end_matches(';'))?;
             writeln!(out)?;
         }
 
         write_table_data(reader, table, &tref, opts, out)?;
 
         if !table.post_sql.trim().is_empty() {
-            writeln!(out, "{}", table.post_sql.trim_end())?;
+            writeln!(out, "{};", table.post_sql.trim_end().trim_end_matches(';'))?;
             writeln!(out)?;
         }
     }
+
+    // Object DDL is engine-specific and isn't translated.
+    if Dialect::parse(&reader.manifest.source_engine) == Some(opts.dialect) {
+        write_objects(&reader.manifest.objects, opts, out)?;
+    }
+    if mysql {
+        writeln!(out, "SET FOREIGN_KEY_CHECKS=1;")?;
+    }
     out.flush()?;
+    Ok(())
+}
+
+/// Routines, then views, then triggers (same order restore uses).
+fn write_objects<W: Write>(objects: &[ObjectEntry], opts: &SqlExportOptions, out: &mut W) -> Result<()> {
+    let groups: [&[ObjectKind]; 3] = [
+        &[ObjectKind::Function, ObjectKind::Procedure],
+        &[ObjectKind::View, ObjectKind::MaterializedView],
+        &[ObjectKind::Trigger],
+    ];
+    for kinds in groups {
+        for o in objects.iter().filter(|o| kinds.contains(&o.kind)) {
+            if opts.drop_before_create {
+                if let Some(drop) = drop_object_sql(o, o.schema.as_deref(), opts.dialect) {
+                    writeln!(out, "{drop};")?;
+                }
+            }
+            let ddl = o.ddl.trim_end().trim_end_matches(';');
+            // Bodies with `;` need another delimiter for the mysql client.
+            let fenced = opts.dialect == Dialect::Mysql && o.kind != ObjectKind::View;
+            if fenced {
+                writeln!(out, "DELIMITER ;;\n{ddl};;\nDELIMITER ;\n")?;
+            } else {
+                writeln!(out, "{ddl};\n")?;
+            }
+        }
+    }
     Ok(())
 }
 

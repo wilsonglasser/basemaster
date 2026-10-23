@@ -66,6 +66,15 @@ async fn sqlite_dump_restore_roundtrip() {
     )
     .await
     .expect("insert");
+    src.execute(Some("main"), "CREATE VIEW named AS SELECT id, name FROM t WHERE name IS NOT NULL")
+        .await
+        .expect("view");
+    src.execute(
+        Some("main"),
+        "CREATE TRIGGER t_upper AFTER INSERT ON t BEGIN UPDATE t SET name = upper(name) WHERE id = new.id; END",
+    )
+    .await
+    .expect("trigger");
 
     // --- dump to .bmbak in memory ---
     let opts = DumpToBmbakOptions {
@@ -73,6 +82,7 @@ async fn sqlite_dump_restore_roundtrip() {
         app_version: "test".into(),
         level: 5,
         chunk_size: 2, // force multiple blocks
+        include_objects: true,
     };
     let bytes = dump_tables_to_bmbak(
         &src,
@@ -103,6 +113,7 @@ async fn sqlite_dump_restore_roundtrip() {
     .expect("restore");
     assert_eq!(stats.tables, 1);
     assert_eq!(stats.rows, 3);
+    assert_eq!(stats.objects, 2);
 
     // --- verify ---
     let q = dst
@@ -118,6 +129,15 @@ async fn sqlite_dump_restore_roundtrip() {
         Value::Float(f) => assert!((f - 2.5).abs() < 1e-9),
         other => panic!("expected float, got {other:?}"),
     }
+
+    // view and trigger came back and work
+    let v = dst.query(Some("main"), "SELECT COUNT(*) FROM named").await.expect("view");
+    assert_eq!(v.rows[0][0], Value::Int(2));
+    dst.execute(Some("main"), "INSERT INTO t (id, name, val) VALUES (4, 'dave', 0)")
+        .await
+        .expect("insert after restore");
+    let t = dst.query(Some("main"), "SELECT name FROM t WHERE id = 4").await.expect("trigger");
+    assert_eq!(t.rows[0][0], Value::String("DAVE".into()));
 
     let _ = dst.disconnect().await;
     let _ = std::fs::remove_file(&src_path);

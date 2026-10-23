@@ -3,7 +3,8 @@
 //! v1 path: per table run `pre_sql` (CREATE, primary key only when the dump
 //! deferred indexes), stream blocks as multi-row INSERTs, then `post_sql`
 //! (secondary indexes / FKs / triggers). Session tuning disables FK/unique
-//! checks during load. This is same-engine restore; for cross-engine, render
+//! checks during load. Views, routines and triggers follow once every table
+//! exists. This is same-engine restore; for cross-engine, render
 //! the backup to `.sql` (see [`crate::sql_export`]) which handles translation.
 //!
 //! NOTE: true bulk load (`COPY FROM` / `LOAD DATA`) needs driver APIs not on the
@@ -12,11 +13,11 @@
 
 use std::io::{Read, Seek};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use basemaster_core::Driver;
 
-use crate::container::{BmbakReader, TableEntry};
-use crate::sql_export::{value_to_sql, Dialect};
+use crate::container::{BmbakReader, ObjectEntry, ObjectKind, TableEntry};
+use crate::sql_export::{drop_object_sql, value_to_sql, Dialect};
 
 pub trait Progress: Send + Sync {
     fn table_started(&self, _table: &str, _total_rows: u64) {}
@@ -40,6 +41,9 @@ pub struct RestoreOptions {
     /// Restore into this schema instead of the one recorded in the backup.
     /// None keeps the recorded one.
     pub target_schema: Option<String>,
+    /// MySQL: drop `DEFINER=` from views/routines/triggers so they belong to
+    /// the restoring user, who may lack SET_USER_ID to create them for another.
+    pub strip_definer: bool,
 }
 
 impl Default for RestoreOptions {
@@ -51,6 +55,7 @@ impl Default for RestoreOptions {
             max_statement_bytes: 1024 * 1024,
             disable_fk_checks: true,
             target_schema: None,
+            strip_definer: false,
         }
     }
 }
@@ -59,33 +64,93 @@ impl Default for RestoreOptions {
 pub struct RestoreStats {
     pub tables: u64,
     pub rows: u64,
+    pub objects: u64,
 }
 
 fn dialect_of(driver: &dyn Driver) -> Dialect {
     Dialect::parse(driver.dialect()).unwrap_or(Dialect::Mysql)
 }
 
-fn table_ref(schema: Option<&str>, t: &TableEntry, driver: &dyn Driver) -> String {
+fn qualified(schema: Option<&str>, name: &str, driver: &dyn Driver) -> String {
     match schema {
-        Some(s) if !s.is_empty() => {
-            format!("{}.{}", driver.quote_ident(s), driver.quote_ident(&t.name))
-        }
-        _ => driver.quote_ident(&t.name),
+        Some(s) if !s.is_empty() => format!("{}.{}", driver.quote_ident(s), driver.quote_ident(name)),
+        _ => driver.quote_ident(name),
     }
 }
 
+fn table_ref(schema: Option<&str>, t: &TableEntry, driver: &dyn Driver) -> String {
+    qualified(schema, &t.name, driver)
+}
+
 /// The dumped DDL can qualify names with the source schema (Postgres always
-/// does, MySQL for FK references), which would recreate tables in the source.
-/// Plain text replace of the quoted `"src".` prefix: a string literal holding
-/// that exact sequence would be rewritten too, acceptable for DDL.
+/// does, MySQL for FKs and cross-database references), which would recreate
+/// objects in the source. Plain text replace of the `"src".` prefix: a string
+/// literal holding that exact sequence would be rewritten too, acceptable for
+/// DDL.
 fn retarget_ddl(sql: &str, from: Option<&str>, to: Option<&str>, driver: &dyn Driver) -> String {
     match (from, to) {
-        (Some(f), Some(t)) if !f.is_empty() && f != t => sql.replace(
-            &format!("{}.", driver.quote_ident(f)),
-            &format!("{}.", driver.quote_ident(t)),
-        ),
+        (Some(f), Some(t)) if !f.is_empty() && f != t => {
+            let to = format!("{}.", driver.quote_ident(t));
+            let out = sql.replace(&format!("{}.", driver.quote_ident(f)), &to);
+            // pg_get_viewdef / pg_get_functiondef leave plain names unquoted.
+            if dialect_of(driver) == Dialect::Postgres {
+                replace_bare_qualifier(&out, f, &to)
+            } else {
+                out
+            }
+        }
         _ => sql.to_string(),
     }
+}
+
+/// Replaces `from.` where it starts an identifier, not inside a longer one.
+fn replace_bare_qualifier(sql: &str, from: &str, to: &str) -> String {
+    let pat = format!("{from}.");
+    let mut out = String::with_capacity(sql.len());
+    let mut rest = sql;
+    while let Some(i) = rest.find(&pat) {
+        out.push_str(&rest[..i]);
+        let starts_ident = out
+            .chars()
+            .last()
+            .is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '_' | '$' | '"' | '.')));
+        out.push_str(if starts_ident { to } else { &pat });
+        rest = &rest[i + pat.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Removes MySQL's `DEFINER=user@host ` from a CREATE header.
+fn strip_definer(ddl: &str) -> String {
+    let Some(start) = ddl.to_ascii_uppercase().find("DEFINER=") else {
+        return ddl.to_string();
+    };
+    let b = ddl.as_bytes();
+    // One side of user@host: quoted with ` ' " or bare (CURRENT_USER()).
+    let skip_part = |mut i: usize| -> usize {
+        if i < b.len() && matches!(b[i], b'`' | b'\'' | b'"') {
+            let q = b[i];
+            i += 1;
+            while i < b.len() && b[i] != q {
+                i += 1;
+            }
+            (i + 1).min(b.len())
+        } else {
+            while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'@' {
+                i += 1;
+            }
+            i
+        }
+    };
+    let mut i = skip_part(start + "DEFINER=".len());
+    if i < b.len() && b[i] == b'@' {
+        i = skip_part(i + 1);
+    }
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    format!("{}{}", &ddl[..start], &ddl[i..])
 }
 
 /// Runs one restore statement. The MySQL driver executes on a pool, so a
@@ -166,7 +231,10 @@ pub async fn restore_from_bmbak<R: Read + Seek>(
 
         if opts.create_tables && !table.pre_sql.trim().is_empty() {
             if opts.drop_before_create {
-                let _ = exec(driver, schema, &format!("DROP TABLE IF EXISTS {tref}"), opts).await;
+                // Postgres refuses to drop a table another table's FK or a view
+                // depends on; those come back later in this restore.
+                let cascade = if dialect == Dialect::Postgres { " CASCADE" } else { "" };
+                let _ = exec(driver, schema, &format!("DROP TABLE IF EXISTS {tref}{cascade}"), opts).await;
             }
             let ddl = retarget_ddl(&table.pre_sql, table.schema.as_deref(), schema, driver);
             exec(driver, schema, &ddl, opts)
@@ -190,8 +258,71 @@ pub async fn restore_from_bmbak<R: Read + Seek>(
         progress.table_done(&table.name, rows);
     }
 
+    if opts.create_tables && !cancelled() {
+        let objects = reader.manifest.objects.clone();
+        stats.objects = restore_objects(driver, &objects, opts).await?;
+    }
+
     session_post(driver, opts).await;
     Ok(stats)
+}
+
+/// Routines first (views may call them), then views, then triggers. A view
+/// can read a view listed after it, so each group retries until a pass
+/// creates nothing.
+async fn restore_objects(
+    driver: &dyn Driver,
+    objects: &[ObjectEntry],
+    opts: &RestoreOptions,
+) -> Result<u64> {
+    let prepared: Vec<(&ObjectEntry, Option<&str>, String)> = objects
+        .iter()
+        .map(|o| {
+            let schema = opts.target_schema.as_deref().or(o.schema.as_deref());
+            let mut ddl = retarget_ddl(&o.ddl, o.schema.as_deref(), schema, driver);
+            if opts.strip_definer {
+                ddl = strip_definer(&ddl);
+            }
+            (o, schema, ddl)
+        })
+        .collect();
+
+    if opts.drop_before_create {
+        for (o, schema, _) in &prepared {
+            if let Some(drop) = drop_object_sql(o, *schema, dialect_of(driver)) {
+                let _ = exec(driver, *schema, &drop, opts).await;
+            }
+        }
+    }
+
+    let groups: [&[ObjectKind]; 3] = [
+        &[ObjectKind::Function, ObjectKind::Procedure],
+        &[ObjectKind::View, ObjectKind::MaterializedView],
+        &[ObjectKind::Trigger],
+    ];
+    let mut created = 0;
+    for kinds in groups {
+        let mut pending: Vec<_> = prepared.iter().filter(|(o, ..)| kinds.contains(&o.kind)).collect();
+        while !pending.is_empty() {
+            let mut failed = Vec::new();
+            let mut last_err = None;
+            for p in &pending {
+                match exec(driver, p.1, &p.2, opts).await {
+                    Ok(()) => created += 1,
+                    Err(e) => {
+                        last_err = Some((p.0, e));
+                        failed.push(*p);
+                    }
+                }
+            }
+            if failed.len() == pending.len() {
+                let (o, e) = last_err.expect("every pending object failed");
+                bail!("create {:?} {}: {e}", o.kind, o.name);
+            }
+            pending = failed;
+        }
+    }
+    Ok(created)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -288,21 +419,33 @@ mod tests {
         log: Mutex<Vec<String>>,
         /// Schema each statement ran under (MySQL turns it into `USE`).
         schemas: Mutex<Vec<Option<String>>>,
+        dialect: &'static str,
+        /// A statement containing one of these fails once (missing dependency).
+        fail_once: Mutex<Vec<&'static str>>,
     }
 
     impl RecordingDriver {
         fn new() -> Self {
-            RecordingDriver { log: Mutex::new(Vec::new()), schemas: Mutex::new(Vec::new()) }
+            RecordingDriver {
+                log: Mutex::new(Vec::new()),
+                schemas: Mutex::new(Vec::new()),
+                dialect: "mysql",
+                fail_once: Mutex::new(Vec::new()),
+            }
         }
     }
 
     #[async_trait]
     impl Driver for RecordingDriver {
         fn dialect(&self) -> &'static str {
-            "mysql"
+            self.dialect
         }
         fn quote_ident(&self, ident: &str) -> String {
-            format!("`{ident}`")
+            if self.dialect == "postgres" {
+                format!("\"{ident}\"")
+            } else {
+                format!("`{ident}`")
+            }
         }
         async fn connect(&self, _c: &ConnectionConfig) -> CoreResult<()> {
             Ok(())
@@ -329,6 +472,11 @@ mod tests {
             unimplemented!()
         }
         async fn execute(&self, s: Option<&str>, sql: &str) -> CoreResult<ExecuteResult> {
+            let mut fail_once = self.fail_once.lock().unwrap();
+            if let Some(i) = fail_once.iter().position(|k| sql.contains(k)) {
+                fail_once.remove(i);
+                return Err(basemaster_core::Error::Sql("dependency missing".into()));
+            }
             self.log.lock().unwrap().push(sql.to_string());
             self.schemas.lock().unwrap().push(s.map(str::to_string));
             Ok(ExecuteResult {
@@ -474,6 +622,91 @@ mod tests {
         assert!(
             schemas.iter().flatten().all(|s| s == "scratch"),
             "statement ran under another schema: {schemas:?}"
+        );
+    }
+
+    fn object(kind: ObjectKind, name: &str, ddl: &str) -> ObjectEntry {
+        ObjectEntry {
+            schema: Some("prod".into()),
+            kind,
+            name: name.into(),
+            table: None,
+            ddl: ddl.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn objects_follow_tables_in_dependency_order() {
+        let mut w = BmbakWriter::new(Cursor::new(Vec::new()), "mysql", "", "", 3).unwrap();
+        w.begin_table(Some("prod".into()), "t", vec![], "CREATE TABLE `prod`.`t` (id INT)", "");
+        // listed before the function and view it depends on
+        w.add_object(object(
+            ObjectKind::Trigger,
+            "trg",
+            "CREATE DEFINER=`app`@`%` TRIGGER `trg` BEFORE INSERT ON `t` FOR EACH ROW SET NEW.id = 1",
+        ));
+        w.add_object(object(ObjectKind::View, "v2", "CREATE VIEW `v2` AS select * from `prod`.`v1`"));
+        w.add_object(object(ObjectKind::View, "v1", "CREATE VIEW `v1` AS select `prod`.`f`(id) from `prod`.`t`"));
+        w.add_object(object(ObjectKind::Function, "f", "CREATE FUNCTION `f`(x INT) RETURNS INT RETURN x"));
+        let bytes = w.finish().unwrap().into_inner();
+
+        let driver = RecordingDriver::new();
+        driver.fail_once.lock().unwrap().push("CREATE VIEW `v2`");
+        let mut reader = BmbakReader::open(Cursor::new(bytes)).unwrap();
+        let opts = RestoreOptions {
+            target_schema: Some("scratch".into()),
+            strip_definer: true,
+            ..Default::default()
+        };
+        let stats = restore_from_bmbak(&driver, &mut reader, &opts, &NoProgress, None)
+            .await
+            .unwrap();
+        assert_eq!(stats.objects, 4);
+
+        let log = driver.log.lock().unwrap().clone();
+        let joined = log.join("\n");
+        let pos = |needle: &str| {
+            log.iter()
+                .position(|s| s.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} missing: {joined}"))
+        };
+        assert!(pos("CREATE TABLE") < pos("CREATE FUNCTION"), "{joined}");
+        assert!(pos("CREATE FUNCTION") < pos("CREATE VIEW `v1`"), "{joined}");
+        assert!(pos("CREATE VIEW `v1`") < pos("CREATE VIEW `v2`"), "{joined}");
+        assert!(pos("CREATE VIEW `v2`") < pos("TRIGGER `trg`"), "{joined}");
+        assert!(pos("DROP VIEW IF EXISTS `scratch`.`v1`") < pos("CREATE FUNCTION"), "{joined}");
+        assert!(!joined.contains("prod"), "source schema leaked: {joined}");
+        assert!(!joined.contains("DEFINER"), "definer kept: {joined}");
+    }
+
+    #[test]
+    fn strip_definer_variants() {
+        assert_eq!(
+            strip_definer("CREATE DEFINER=`root`@`%` FUNCTION `f`() RETURNS INT RETURN 1"),
+            "CREATE FUNCTION `f`() RETURNS INT RETURN 1"
+        );
+        assert_eq!(
+            strip_definer("CREATE ALGORITHM=UNDEFINED DEFINER='a b'@'localhost' SQL SECURITY DEFINER VIEW `v` AS select 1"),
+            "CREATE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW `v` AS select 1"
+        );
+        assert_eq!(
+            strip_definer("CREATE DEFINER=CURRENT_USER() TRIGGER t"),
+            "CREATE TRIGGER t"
+        );
+        assert_eq!(strip_definer("CREATE VIEW v AS select 1"), "CREATE VIEW v AS select 1");
+    }
+
+    #[test]
+    fn postgres_retarget_handles_unquoted_qualifiers() {
+        let mut driver = RecordingDriver::new();
+        driver.dialect = "postgres";
+        let ddl = "CREATE VIEW \"public\".\"v\" AS SELECT u.id FROM public.users u \
+                   JOIN mypublic.x ON x.public_id = u.id WHERE 'public.' <> ''";
+        let out = retarget_ddl(ddl, Some("public"), Some("staging"), &driver);
+        assert_eq!(
+            out,
+            "CREATE VIEW \"staging\".\"v\" AS SELECT u.id FROM \"staging\".users u \
+             JOIN mypublic.x ON x.public_id = u.id WHERE '\"staging\".' <> ''"
         );
     }
 }

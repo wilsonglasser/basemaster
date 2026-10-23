@@ -4,6 +4,7 @@
 pub mod codec;
 pub mod container;
 pub mod dump;
+pub mod objects;
 pub mod os_schedule;
 pub mod restore;
 pub mod retention;

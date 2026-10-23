@@ -96,7 +96,11 @@ async fn snapshot_on_pool(pool: PgPool) -> Result<Snapshot> {
                     return;
                 }
             };
-            if let Err(e) = sqlx::raw_sql("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *conn).await {
+            // search_path = pg_catalog: pg_get_viewdef and friends then
+            // schema-qualify every user name, whatever the pooled default was.
+            let begin = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; \
+                         SET LOCAL search_path = pg_catalog";
+            if let Err(e) = sqlx::raw_sql(begin).execute(&mut *conn).await {
                 let _ = ready_tx.send(Err(Error::Sql(e.to_string())));
                 return;
             }

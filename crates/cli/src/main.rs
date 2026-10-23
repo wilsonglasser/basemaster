@@ -168,6 +168,10 @@ struct RestoreArgs {
     /// Don't DROP TABLE before create.
     #[arg(long)]
     no_drop: bool,
+    /// MySQL: drop DEFINER= from views, routines and triggers so they belong
+    /// to the restoring user (needed when it lacks SET_USER_ID / SUPER).
+    #[arg(long)]
+    strip_definer: bool,
 }
 
 /// Prints one line per table to stderr.
@@ -178,6 +182,9 @@ impl Progress for StderrProgress {
     }
     fn table_done(&self, table: &str, rows: u64) {
         eprintln!("  {table}: done ({rows} rows)");
+    }
+    fn objects_done(&self, count: usize) {
+        eprintln!("  {count} view(s) / routine(s) / trigger(s)");
     }
 }
 
@@ -319,6 +326,7 @@ async fn run_backup(args: BackupArgs, conn: Option<&str>) -> Result<()> {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         level: args.level,
         chunk_size: args.chunk,
+        include_objects: args.tables.is_empty(),
     };
 
     match args.format {
@@ -402,6 +410,7 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
     let opts = RestoreOptions {
         create_tables: !args.no_create,
         drop_before_create: !args.no_drop,
+        strip_definer: args.strip_definer,
         target_schema,
         ..Default::default()
     };
@@ -414,7 +423,10 @@ async fn run_restore(args: RestoreArgs, conn: Option<&str>) -> Result<()> {
     }
     let stats = restore_from_bmbak(driver.as_ref(), &mut reader, &opts, &P, None).await?;
     let _ = driver.disconnect().await;
-    println!("Restored {} table(s), {} rows", stats.tables, stats.rows);
+    println!(
+        "Restored {} table(s), {} rows, {} view(s) / routine(s) / trigger(s)",
+        stats.tables, stats.rows, stats.objects
+    );
     Ok(())
 }
 

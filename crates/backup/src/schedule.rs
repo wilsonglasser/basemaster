@@ -124,7 +124,8 @@ pub async fn dump_schedule(
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
         .unwrap_or_default();
-    let tables = if tables.is_empty() {
+    let whole_schema = tables.is_empty();
+    let tables = if whole_schema {
         driver
             .list_tables(&schema)
             .await
@@ -149,6 +150,7 @@ pub async fn dump_schedule(
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         level: sched.compression_level as i32,
         chunk_size: 1000,
+        include_objects: whole_schema,
     };
     let file = std::fs::File::create(&out_path)
         .with_context(|| format!("create {}", out_path.display()))?;

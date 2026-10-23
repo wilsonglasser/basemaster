@@ -24,6 +24,7 @@ pub trait Progress: Send + Sync {
     fn table_started(&self, _table: &str, _total_rows: u64) {}
     fn rows_written(&self, _table: &str, _done: u64, _total: u64) {}
     fn table_done(&self, _table: &str, _rows: u64) {}
+    fn objects_done(&self, _count: usize) {}
 }
 
 /// Progress sink that ignores everything.
@@ -39,6 +40,9 @@ pub struct DumpToBmbakOptions {
     pub level: i32,
     /// Rows per block.
     pub chunk_size: u64,
+    /// Also back up the schema's views, routines and triggers. Off for a
+    /// table subset: they may read tables that aren't in the file.
+    pub include_objects: bool,
 }
 
 impl Default for DumpToBmbakOptions {
@@ -48,6 +52,7 @@ impl Default for DumpToBmbakOptions {
             app_version: String::new(),
             level: 5,
             chunk_size: 1000,
+            include_objects: true,
         }
     }
 }
@@ -229,6 +234,14 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
         progress.table_done(table, written);
     }
 
+    if opts.include_objects && !cancelled() {
+        let objects = crate::objects::collect_objects(driver, &snapshot, schema).await?;
+        progress.objects_done(objects.len());
+        for o in objects {
+            bw.add_object(o);
+        }
+    }
+
     bw.finish()
 }
 
@@ -344,6 +357,10 @@ mod tests {
             tokio::spawn(async move {
                 while let Some(req) = rx.recv().await {
                     scans.lock().unwrap().push(req.sql.clone());
+                    // no views/triggers in the mock schema
+                    if req.sql.contains("sqlite_master") {
+                        continue;
+                    }
                     for c in rows.chunks(req.chunk) {
                         if req.rows.send(Ok(c.to_vec())).await.is_err() {
                             return;
@@ -412,6 +429,7 @@ mod tests {
             app_version: "0.6.7".into(),
             level: 3,
             chunk_size: 2,
+            include_objects: false,
         };
         let out = dump_tables_to_bmbak(
             &driver,
@@ -509,6 +527,6 @@ mod tests {
         let r = BmbakReader::open(Cursor::new(out)).unwrap();
         let cols: Vec<&str> = r.manifest.tables[0].columns.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(cols, ["id"]);
-        assert_eq!(driver.scans.lock().unwrap().as_slice(), [r#"SELECT "id" FROM "t""#]);
+        assert_eq!(driver.scans.lock().unwrap()[0], r#"SELECT "id" FROM "t""#);
     }
 }

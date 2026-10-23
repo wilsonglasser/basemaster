@@ -66,6 +66,28 @@ pub struct TableEntry {
     pub data_blocks: Vec<BlockRef>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectKind {
+    Function,
+    Procedure,
+    View,
+    MaterializedView,
+    Trigger,
+}
+
+/// Schema object other than a table, restored after every table.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ObjectEntry {
+    pub schema: Option<String>,
+    pub kind: ObjectKind,
+    pub name: String,
+    /// Owning table, triggers only (Postgres `DROP TRIGGER ... ON`).
+    pub table: Option<String>,
+    /// Source-engine CREATE statement, verbatim.
+    pub ddl: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Manifest {
     pub format_version: u16,
@@ -75,6 +97,9 @@ pub struct Manifest {
     pub created_at: String,
     pub app_version: String,
     pub tables: Vec<TableEntry>,
+    /// Absent in backups from before v0.7.9.
+    #[serde(default)]
+    pub objects: Vec<ObjectEntry>,
 }
 
 /// Streaming writer. Header is emitted on construction; blocks append; the
@@ -87,6 +112,7 @@ pub struct BmbakWriter<W: Write> {
     created_at: String,
     app_version: String,
     tables: Vec<TableEntry>,
+    objects: Vec<ObjectEntry>,
 }
 
 impl<W: Write> BmbakWriter<W> {
@@ -108,6 +134,7 @@ impl<W: Write> BmbakWriter<W> {
             created_at: created_at.into(),
             app_version: app_version.into(),
             tables: Vec::new(),
+            objects: Vec::new(),
         })
     }
 
@@ -162,6 +189,10 @@ impl<W: Write> BmbakWriter<W> {
         Ok(())
     }
 
+    pub fn add_object(&mut self, object: ObjectEntry) {
+        self.objects.push(object);
+    }
+
     /// Write the manifest + trailer and return the underlying writer.
     pub fn finish(mut self) -> Result<W> {
         let manifest = Manifest {
@@ -170,6 +201,7 @@ impl<W: Write> BmbakWriter<W> {
             created_at: self.created_at,
             app_version: self.app_version,
             tables: self.tables,
+            objects: self.objects,
         };
         let json = serde_json::to_vec(&manifest)?;
         let comp = zstd::stream::encode_all(json.as_slice(), self.level)
