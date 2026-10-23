@@ -238,7 +238,7 @@ basemaster-cli restore --dsn mysql://user:pass@host/ -s prod_copy -i prod.bmbak 
 
 `backup` reads every table inside one read-only snapshot transaction (MySQL `WITH CONSISTENT SNAPSHOT`, Postgres `REPEATABLE READ`), so the file is a single point in time even while the database takes writes, and streams each table in one `SELECT`. Backing up a whole schema (no `--tables`) also stores its views, functions, procedures and triggers.
 
-`restore` drops and recreates every table in the backup (`--no-drop` / `--no-create` to skip), then the views, routines and triggers. The target is `--schema`, else the database in the DSN / connection on MySQL, else the schema recorded in the backup; the first line it prints names it. On MySQL, `--strip-definer` makes the restoring user the owner of those objects when it lacks `SET_USER_ID`; with binary logging on, such a user also needs `log_bin_trust_function_creators=1` to create functions.
+`restore` drops and recreates every table in the backup, then the views, routines and triggers (`--no-drop` skips the drops; `--no-create` loads rows into existing tables and skips the objects). On Postgres the drops use `CASCADE`, which also removes views and foreign keys in other schemas that depend on those tables. The target is `--schema`, else the database in the DSN / connection on MySQL, else the schema recorded in the backup; the first line it prints names it. On MySQL, `--strip-definer` makes the restoring user the owner of those objects when it lacks `SET_USER_ID`; with binary logging on, such a user also needs `log_bin_trust_function_creators=1` to create functions.
 
 ### Shortcuts
 
