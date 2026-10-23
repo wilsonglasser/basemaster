@@ -106,7 +106,8 @@ Existing alternatives are either paid and closed-source (Navicat, TablePlus), El
 ### AI Integration
 - **Built-in agent** — 19 tools to inspect schemas, run queries, explain plans and edit data.
 - **12 providers** — Anthropic, OpenAI, Gemini, OpenRouter, Groq, DeepSeek, Mistral, xAI, Perplexity, Together, Fireworks, Cerebras.
-- **MCP server** — Expose your connections to external AI clients (Claude Code, Cursor) via JSON-RPC over stdio.
+- **MCP server** — Expose your connections to external AI clients (Claude Code, Cursor) over local HTTP JSON-RPC with a bearer token.
+- **`basemaster-cli`**: Ships with the app. Scripts and agents query, explore, export and transfer through the running app from a shell (JSON out, `jq`-friendly), instead of one MCP call at a time.
 
 ### UX
 - **Resizable sidebar** — Drag to adjust, state persisted.
@@ -144,6 +145,7 @@ Existing alternatives are either paid and closed-source (Navicat, TablePlus), El
 | Crate | Purpose |
 |-------|---------|
 | `basemaster` (src-tauri) | Tauri app, commands, MCP server, data transfer, import/export |
+| `cli` | `basemaster-cli`: MCP client for scripting (bundled as a sidecar) + standalone backup/restore |
 | `core` | `Driver` trait, `Value` enum, types shared across drivers |
 | `driver-mysql` | MySQL / MariaDB driver via sqlx |
 | `driver-postgres` | PostgreSQL driver via sqlx |
@@ -207,6 +209,26 @@ Code signing details (SignPath Foundation for Windows, Apple Developer for macOS
 5. **Transfer** — Connection menu → Data Transfer. Pick source/destination and tables, configure parallelism.
 6. **AI** — Settings → AI, configure provider and API key. Chat button appears in the sidebar.
 7. **Import Navicat** — File → Import `.ncx`, enter the master password if the file has one.
+
+### Command line (`basemaster-cli`)
+
+Every package ships `basemaster-cli` next to the app binary. Settings → MCP server shows its path and has an **Add to PATH** button. It talks to the running app's MCP server, so saved connections, SSH/SSM tunnels, credentials and the query guardrails are all reused; one process per command, so a loop of fifty calls costs nothing extra. This is the intended way for AI agents such as Claude Code to drive BaseMaster from a shell script instead of issuing one MCP tool call at a time.
+
+```bash
+export BASEMASTER_CONN=prod                 # or -c prod on each command
+basemaster-cli conn ls                      # saved connections
+basemaster-cli tables                       # default database; -s other_schema
+basemaster-cli describe users
+basemaster-cli query "select id, email from users limit 5" | jq '.rows[].email'
+basemaster-cli query -f report.sql -o csv > report.csv
+basemaster-cli export "select * from events" --path events.jsonl   # big results to disk
+basemaster-cli transfer --from prod --to staging --tables users,orders
+basemaster-cli guide                        # full cheat sheet for scripts/agents
+```
+
+Output is JSON when piped and an aligned table on a terminal (`-o json|ndjson|csv|table`). Exit codes: `0` ok, `1` error (including a guardrail block), `3` app not running, `4` bad token. Port and token are read from the app's settings and the OS keyring; override with `--port`/`--token` or `BASEMASTER_MCP_PORT`/`BASEMASTER_MCP_TOKEN` (for example from inside WSL).
+
+The `backup`, `restore` and `schedule` subcommands run standalone (no app needed), e.g. on a server.
 
 ### Shortcuts
 
