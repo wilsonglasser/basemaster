@@ -51,6 +51,7 @@ fn entry(schema: &str, kind: ObjectKind, name: String, table: Option<String>, dd
         name,
         table,
         ddl,
+        sql_mode: None,
     }
 }
 
@@ -82,7 +83,9 @@ async fn mysql(driver: &dyn Driver, snapshot: &Snapshot, schema: &str) -> Result
                  (needs SHOW_ROUTINE or being its definer)"
             );
         };
-        out.push(entry(schema, kind, name, None, ddl));
+        let mut e = entry(schema, kind, name, None, ddl);
+        e.sql_mode = rows.first().and_then(|r| text(r.get(1)));
+        out.push(e);
     }
 
     let views = scan_all(
@@ -120,7 +123,9 @@ async fn mysql(driver: &dyn Driver, snapshot: &Snapshot, schema: &str) -> Result
             .first()
             .and_then(|r| text(r.get(2)))
             .ok_or_else(|| anyhow!("no definition for trigger {schema}.{name}"))?;
-        out.push(entry(schema, ObjectKind::Trigger, name, table, ddl));
+        let mut e = entry(schema, ObjectKind::Trigger, name, table, ddl);
+        e.sql_mode = rows.first().and_then(|r| text(r.get(1)));
+        out.push(e);
     }
     Ok(out)
 }
@@ -241,6 +246,7 @@ async fn sqlite(snapshot: &Snapshot) -> Result<Vec<ObjectEntry>> {
                 name: text(r.get(1)).unwrap_or_default(),
                 table: if trigger { text(r.get(2)) } else { None },
                 ddl: text(r.get(3)).unwrap_or_default(),
+                sql_mode: None,
             }
         })
         .collect())

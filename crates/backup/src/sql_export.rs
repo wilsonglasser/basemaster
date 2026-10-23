@@ -12,6 +12,7 @@ use anyhow::Result;
 use basemaster_core::Value;
 
 use crate::container::{BmbakReader, ObjectEntry, ObjectKind, TableEntry};
+use crate::restore::MYSQL_LOAD_SQL_MODE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialect {
@@ -113,7 +114,10 @@ pub fn value_to_sql(v: &Value, hex_blob: bool, dialect: Dialect) -> String {
         Value::UInt(u) => u.to_string(),
         Value::Float(f) => {
             if f.is_finite() {
-                format!("{}", f)
+                // Debug is the shortest exact form and switches to an exponent
+                // for huge/tiny values; Display spells 1.79e308 out in 309
+                // digits, which MySQL parses as an overflowing DECIMAL.
+                format!("{:?}", f)
             } else {
                 "NULL".into()
             }
@@ -122,9 +126,11 @@ pub fn value_to_sql(v: &Value, hex_blob: bool, dialect: Dialect) -> String {
         Value::String(s) => quote_str(s),
         Value::Json(j) => quote_str(&j.to_string()),
         Value::Date(d) => quote_str(&d.format("%Y-%m-%d").to_string()),
-        Value::Time(t) => quote_str(&t.format("%H:%M:%S").to_string()),
-        Value::DateTime(dt) => quote_str(&dt.format("%Y-%m-%d %H:%M:%S").to_string()),
-        Value::Timestamp(ts) => quote_str(&ts.format("%Y-%m-%d %H:%M:%S").to_string()),
+        // %.f keeps fractional seconds (TIME(3), DATETIME(6)) and prints
+        // nothing when they are zero.
+        Value::Time(t) => quote_str(&t.format("%H:%M:%S%.f").to_string()),
+        Value::DateTime(dt) => quote_str(&dt.format("%Y-%m-%d %H:%M:%S%.f").to_string()),
+        Value::Timestamp(ts) => quote_str(&ts.format("%Y-%m-%d %H:%M:%S%.f").to_string()),
         // Bytes for the default (MySQL hex) path; PG/SQLite handled above.
         Value::Bytes(b) => {
             let hex: String = b.iter().map(|x| format!("{:02X}", x)).collect();
@@ -184,8 +190,13 @@ pub fn export_to_sql<R: Read + Seek, W: Write>(
     )?;
 
     let mysql = opts.dialect == Dialect::Mysql;
+    // The file is UTF-8, whatever charset the importing client defaults to;
+    // same load mode as restore (zero dates, id 0), put back at the end.
     if mysql {
-        writeln!(out, "SET FOREIGN_KEY_CHECKS=0;\n")?;
+        writeln!(
+            out,
+            "SET NAMES utf8mb4;\nSET @OLD_SQL_MODE = @@SQL_MODE, SQL_MODE = '{MYSQL_LOAD_SQL_MODE}', FOREIGN_KEY_CHECKS = 0;\n"
+        )?;
     }
     // Postgres refuses to drop a table another table's FK or a view depends on.
     let cascade = if opts.dialect == Dialect::Postgres { " CASCADE" } else { "" };
@@ -215,7 +226,7 @@ pub fn export_to_sql<R: Read + Seek, W: Write>(
         write_objects(&reader.manifest.objects, opts, out)?;
     }
     if mysql {
-        writeln!(out, "SET FOREIGN_KEY_CHECKS=1;")?;
+        writeln!(out, "SET SQL_MODE = @OLD_SQL_MODE, FOREIGN_KEY_CHECKS = 1;")?;
     }
     out.flush()?;
     Ok(())
@@ -239,7 +250,18 @@ fn write_objects<W: Write>(objects: &[ObjectEntry], opts: &SqlExportOptions, out
             // Bodies with `;` need another delimiter for the mysql client.
             let fenced = opts.dialect == Dialect::Mysql && o.kind != ObjectKind::View;
             if fenced {
-                writeln!(out, "DELIMITER ;;\n{ddl};;\nDELIMITER ;\n")?;
+                let mode = o
+                    .sql_mode
+                    .as_deref()
+                    .map(|m| value_to_sql(&Value::String(m.into()), false, Dialect::Mysql));
+                if let Some(m) = &mode {
+                    writeln!(out, "SET SQL_MODE = {m};")?;
+                }
+                writeln!(out, "DELIMITER ;;\n{ddl};;\nDELIMITER ;")?;
+                if mode.is_some() {
+                    writeln!(out, "SET SQL_MODE = '{MYSQL_LOAD_SQL_MODE}';")?;
+                }
+                writeln!(out)?;
             } else {
                 writeln!(out, "{ddl};\n")?;
             }
@@ -348,6 +370,14 @@ mod tests {
         assert_eq!(dialect_lit(b, Dialect::Sqlite), "X'ABCD'");
         // non-finite float -> NULL
         assert_eq!(dialect_lit(Value::Float(f64::NAN), Dialect::Mysql), "NULL");
+        // floats keep full precision without a 309-digit spelling
+        assert_eq!(dialect_lit(Value::Float(f64::MAX), Dialect::Mysql), "1.7976931348623157e308");
+        assert_eq!(dialect_lit(Value::Float(0.1), Dialect::Mysql), "0.1");
+        // fractional seconds survive, whole seconds stay short
+        let t = chrono::NaiveTime::from_hms_micro_opt(12, 34, 56, 789_000).unwrap();
+        assert_eq!(dialect_lit(Value::Time(t), Dialect::Mysql), "'12:34:56.789'");
+        let dt = chrono::NaiveDate::from_ymd_opt(2024, 2, 29).unwrap().and_hms_opt(23, 59, 59).unwrap();
+        assert_eq!(dialect_lit(Value::DateTime(dt), Dialect::Mysql), "'2024-02-29 23:59:59'");
     }
 
     fn sample() -> Vec<u8> {

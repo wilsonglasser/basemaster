@@ -174,26 +174,51 @@ fn strip_definer(ddl: &str) -> String {
     format!("{}{}", &ddl[..start], &ddl[i..])
 }
 
-/// Runs one restore statement. The MySQL driver executes on a pool, so a
-/// standalone `SET FOREIGN_KEY_CHECKS=0` lands on some other connection and
-/// tables created before their FK parent fail; the toggle has to travel in the
-/// same multi-statement batch, and is switched back so the pooled connection
-/// isn't left with checks off.
+/// MySQL session mode while loading, as mysqldump sets it: no strict checks
+/// (zero dates and other values the source accepted have to load) and an id
+/// of 0 stays 0 instead of drawing the next AUTO_INCREMENT.
+pub(crate) const MYSQL_LOAD_SQL_MODE: &str = "NO_AUTO_VALUE_ON_ZERO";
+
 async fn exec(
     driver: &dyn Driver,
     schema: Option<&str>,
     sql: &str,
     opts: &RestoreOptions,
 ) -> basemaster_core::error::Result<()> {
+    exec_in_mode(driver, schema, sql, opts, None).await
+}
+
+/// Runs one restore statement. The MySQL driver executes on a pool, so a
+/// standalone `SET` lands on another connection than the statement; the
+/// session settings travel in the same multi-statement batch and are put
+/// back after it, so the pooled connection isn't left altered.
+async fn exec_in_mode(
+    driver: &dyn Driver,
+    schema: Option<&str>,
+    sql: &str,
+    opts: &RestoreOptions,
+    sql_mode: Option<&str>,
+) -> basemaster_core::error::Result<()> {
     let sql = sql.trim_end().trim_end_matches(';');
-    if opts.disable_fk_checks && dialect_of(driver) == Dialect::Mysql {
-        let wrapped = format!(
-            "SET FOREIGN_KEY_CHECKS=0, UNIQUE_CHECKS=0; {sql}; SET FOREIGN_KEY_CHECKS=1, UNIQUE_CHECKS=1"
-        );
-        driver.execute(schema, &wrapped).await?;
-    } else {
+    if dialect_of(driver) != Dialect::Mysql {
         driver.execute(schema, sql).await?;
+        return Ok(());
     }
+    let mode = value_to_sql(
+        &basemaster_core::Value::String(sql_mode.unwrap_or(MYSQL_LOAD_SQL_MODE).to_string()),
+        false,
+        Dialect::Mysql,
+    );
+    let (fk_off, fk_on) = if opts.disable_fk_checks {
+        (", FOREIGN_KEY_CHECKS=0, UNIQUE_CHECKS=0", ", FOREIGN_KEY_CHECKS=1, UNIQUE_CHECKS=1")
+    } else {
+        ("", "")
+    };
+    let wrapped = format!(
+        "SET @bm_sql_mode = @@SESSION.sql_mode, SESSION sql_mode = {mode}{fk_off}; {sql}; \
+         SET SESSION sql_mode = @bm_sql_mode{fk_on}"
+    );
+    driver.execute(schema, &wrapped).await?;
     Ok(())
 }
 
@@ -339,7 +364,7 @@ async fn restore_objects(
             let mut failed = Vec::new();
             let mut last_err = None;
             for p in &pending {
-                match exec(driver, p.1, &p.2, opts).await {
+                match exec_in_mode(driver, p.1, &p.2, opts, p.0.sql_mode.as_deref()).await {
                     Ok(()) => created += 1,
                     Err(e) => {
                         last_err = Some((p.0, e));
@@ -630,13 +655,12 @@ mod tests {
             "{}",
             log[insert]
         );
-        // each statement switches FK checks off and back on in its own batch,
-        // so it holds on whichever pooled connection runs it
-        for s in &log {
-            assert!(
-                s.starts_with("SET FOREIGN_KEY_CHECKS=0") && s.ends_with("SET FOREIGN_KEY_CHECKS=1, UNIQUE_CHECKS=1"),
-                "not wrapped: {s}"
-            );
+        // each statement switches the load settings on and back off in its own
+        // batch, so they hold on whichever pooled connection runs it
+        let on = "SET @bm_sql_mode = @@SESSION.sql_mode, SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO', FOREIGN_KEY_CHECKS=0";
+        let off = "SET SESSION sql_mode = @bm_sql_mode, FOREIGN_KEY_CHECKS=1, UNIQUE_CHECKS=1";
+        for s in log.iter().filter(|s| !s.starts_with("SELECT COUNT")) {
+            assert!(s.starts_with(on) && s.ends_with(off), "not wrapped: {s}");
         }
     }
 
@@ -675,6 +699,7 @@ mod tests {
             name: name.into(),
             table: None,
             ddl: ddl.into(),
+            sql_mode: None,
         }
     }
 

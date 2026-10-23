@@ -90,6 +90,10 @@ pub struct ObjectEntry {
     pub table: Option<String>,
     /// Source-engine CREATE statement, verbatim.
     pub ddl: String,
+    /// MySQL routines/triggers keep the sql_mode they were created under; it
+    /// changes how their body behaves, so restore recreates them in it.
+    #[serde(default)]
+    pub sql_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
