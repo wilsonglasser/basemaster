@@ -98,6 +98,8 @@ jobs:
             - **macOS**: `.dmg` (Apple Silicon / Intel)
             - **Linux**: `.deb`, `.rpm`, `.AppImage`
 
+            Every package also ships `basemaster-cli` next to the app binary (Settings > MCP server shows the path and adds it to PATH).
+
             🤖 Build automatizado via GitHub Actions.
           releaseDraft: false
           prerelease: false

@@ -56,6 +56,11 @@ jobs:
       - name: TypeScript check
         run: pnpm tsc --noEmit
 
+      # tauri-build copies the externalBin sidecar and fails when it is
+      # missing, so the CLI must exist before anything compiles src-tauri.
+      - name: Build CLI sidecar
+        run: node scripts/build-cli.mjs --dev
+
       - name: Cargo check (workspace)
         run: cargo check --workspace --all-targets
 

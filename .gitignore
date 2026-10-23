@@ -29,6 +29,8 @@ Thumbs.db
 # Tauri
 src-tauri/gen/schemas/
 src-tauri/target/
+# CLI sidecar copied in by scripts/build-cli.mjs (bundle.externalBin).
+src-tauri/binaries/
 # Não fazemos build mobile — `tauri icon` gera essas pastas mas são lixo.
 src-tauri/icons/ios/
 src-tauri/icons/android/
