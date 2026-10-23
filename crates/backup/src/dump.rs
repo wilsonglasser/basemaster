@@ -13,9 +13,10 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{anyhow, Context, Result};
-use basemaster_core::Driver;
+use basemaster_core::{Driver, Value};
 
 use crate::container::{BmbakWriter, ColumnMeta};
+use crate::sql_export::{value_to_sql, Dialect};
 
 /// Caller-supplied progress sink. All methods default to no-ops so a caller can
 /// override only what it needs.
@@ -89,6 +90,29 @@ async fn fk_order(driver: &dyn Driver, schema: &str, tables: &[String]) -> Resul
         }
     }
     Ok(out)
+}
+
+/// Postgres: restored rows carry explicit ids, so each identity counter has to
+/// move past them or the next INSERT collides. One statement because the
+/// driver runs `execute` as a prepared statement.
+fn identity_resync(driver: &dyn Driver, from: &str, cols: &[basemaster_core::Column]) -> String {
+    let setvals: Vec<String> = cols
+        .iter()
+        .filter(|c| c.is_auto_increment)
+        .map(|c| {
+            // The table argument is parsed as an identifier, so it keeps its quotes.
+            let table = value_to_sql(&Value::String(from.to_string()), false, Dialect::Postgres);
+            let col = value_to_sql(&Value::String(c.name.clone()), false, Dialect::Postgres);
+            format!(
+                "setval(pg_get_serial_sequence({table}, {col}), COALESCE(MAX({}), 0) + 1, false)",
+                driver.quote_ident(&c.name)
+            )
+        })
+        .collect();
+    if setvals.is_empty() {
+        return String::new();
+    }
+    format!("SELECT {} FROM {from}", setvals.join(", "))
 }
 
 /// Dump `tables` of `schema` into `writer` as a `.bmbak`. Returns the finished
@@ -167,18 +191,24 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
             .await
             .unwrap_or(0);
 
+        let from = match &schema_opt {
+            Some(s) => format!("{}.{}", driver.quote_ident(s), driver.quote_ident(table)),
+            None => driver.quote_ident(table),
+        };
+        let post_sql = if driver.dialect() == "postgres" {
+            identity_resync(driver, &from, &cols)
+        } else {
+            String::new()
+        };
+
         progress.table_started(table, total);
-        let ti = bw.begin_table(schema_opt.clone(), table.clone(), col_metas, pre_sql, String::new());
+        let ti = bw.begin_table(schema_opt.clone(), table.clone(), col_metas, pre_sql, post_sql);
 
         let select_list = cols
             .iter()
             .map(|c| driver.quote_ident(&c.name))
             .collect::<Vec<_>>()
             .join(", ");
-        let from = match &schema_opt {
-            Some(s) => format!("{}.{}", driver.quote_ident(s), driver.quote_ident(table)),
-            None => driver.quote_ident(table),
-        };
         let mut rows = snapshot
             .scan(&format!("SELECT {select_list} FROM {from}"), chunk)
             .await
