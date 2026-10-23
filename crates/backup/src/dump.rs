@@ -111,11 +111,13 @@ pub async fn dump_tables_to_bmbak<W: Write + Send>(
             })
             .collect();
 
-        // Best-effort DDL; drivers without support return Unsupported.
-        let pre_sql = driver
-            .get_table_ddl(schema, table)
-            .await
-            .unwrap_or_default();
+        // Without DDL the backup only restores into existing tables, so a real
+        // failure must stop the dump; only "driver has no DDL support" passes.
+        let pre_sql = match driver.get_table_ddl(schema, table).await {
+            Ok(ddl) => ddl,
+            Err(basemaster_core::Error::Unsupported(_)) => String::new(),
+            Err(e) => return Err(anyhow::anyhow!("DDL of {schema}.{table}: {e}")),
+        };
         let total = driver
             .count_table_rows(schema, table, None)
             .await
