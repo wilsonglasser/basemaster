@@ -88,8 +88,10 @@ pub fn decrypt_navicat_password(hex_str: &str) -> Option<String> {
 
     let mut out = vec![0u8; cipher_bytes.len()];
     let blocks_in = cipher_bytes
-        .chunks_exact(8)
-        .map(cipher::generic_array::GenericArray::clone_from_slice)
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| cipher::generic_array::GenericArray::from(*b))
         .collect::<Vec<_>>();
     let mut blocks_out: Vec<cipher::generic_array::GenericArray<u8, cipher::consts::U8>> =
         vec![cipher::generic_array::GenericArray::default(); blocks_in.len()];
@@ -707,8 +709,10 @@ mod tests {
             bytes.push(0);
         }
         let blocks_in = bytes
-            .chunks_exact(8)
-            .map(cipher::generic_array::GenericArray::clone_from_slice)
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|b| cipher::generic_array::GenericArray::from(*b))
             .collect::<Vec<_>>();
         let mut blocks_out: Vec<cipher::generic_array::GenericArray<u8, cipher::consts::U8>> =
             vec![cipher::generic_array::GenericArray::default(); blocks_in.len()];
