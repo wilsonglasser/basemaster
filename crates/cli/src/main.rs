@@ -135,8 +135,8 @@ struct BackupArgs {
     /// Comma-separated table list. Omit to dump every table in the schema.
     #[arg(long, value_delimiter = ',')]
     tables: Vec<String>,
-    /// Output file.
-    #[arg(long, short)]
+    /// Output file. Long form only: `-o` is the global output format.
+    #[arg(long)]
     out: String,
     #[arg(long, value_enum, default_value_t = OutFormat::Bmbak)]
     format: OutFormat,
