@@ -72,9 +72,16 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
             Some(v) => Value::Float(v),
             None => Value::Null,
         },
-        "DECIMAL" | "NUMERIC" => match tg!(Decimal) {
-            Some(v) => Value::Decimal(v),
-            None => Value::Null,
+        // DECIMAL travels as its exact text in both protocols. rust_decimal
+        // holds 28 digits of scale, so DECIMAL(65,30) values that don't fit
+        // stay text instead of being rounded or dropped.
+        "DECIMAL" | "NUMERIC" => match row.try_get_unchecked::<Option<String>, _>(i) {
+            Ok(Some(s)) => match Decimal::from_str_exact(&s) {
+                Ok(d) => Value::Decimal(d),
+                Err(_) => Value::String(s),
+            },
+            Ok(None) => Value::Null,
+            Err(_) => decode_fallback(row, i),
         },
         // sqlx names every TINYINT with display width 1 "BOOLEAN" (signed or
         // UNSIGNED), but apps keep codes like 2 or -1 in TINYINT(1); a bool
@@ -130,8 +137,9 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
             Ok(Some(v)) => Value::Timestamp(v),
             _ => decode_broken_temporal(row, i, Temporal::DateTime),
         },
-        "YEAR" => match tg!(i16) {
-            Some(v) => Value::Int(v as i64),
+        // YEAR carries the UNSIGNED flag, which only u16 accepts.
+        "YEAR" => match tg!(u16) {
+            Some(v) => Value::UInt(v as u64),
             None => Value::Null,
         },
         "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" => {
@@ -148,9 +156,11 @@ fn decode_one(row: &MySqlRow, i: usize, type_name: &str) -> Value {
                 None => Value::Null,
             }
         }
-        "BIT" => match tg!(Vec<u8>) {
-            Some(v) => Value::Bytes(v),
-            None => Value::Null,
+        // BIT(n) is a big-endian byte string on the wire; `Vec<u8>` refuses
+        // the type, so read the payload unchecked.
+        "BIT" => match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
+            Ok(Some(v)) => Value::Bytes(v),
+            _ => Value::Null,
         },
         _ => decode_fallback(row, i),
     }
@@ -236,16 +246,17 @@ fn temporal_literal(buf: &[u8], kind: Temporal) -> String {
     format!("{date} {h:02}:{mi:02}:{s:02}{frac}")
 }
 
-/// When the type is unknown or the typed decode fails, try String,
-/// then raw bytes, and finally return Null.
+/// When the type is unknown or the typed decode fails, try String, then the
+/// raw payload (GEOMETRY and other types sqlx has no decoder for). Null only
+/// for a real NULL: returning Null for a value we couldn't read loses data.
 fn decode_fallback(row: &MySqlRow, i: usize) -> Value {
     if let Ok(opt) = row.try_get::<Option<String>, _>(i) {
         return opt.map(Value::String).unwrap_or(Value::Null);
     }
-    if let Ok(opt) = row.try_get::<Option<Vec<u8>>, _>(i) {
-        return opt.map(Value::Bytes).unwrap_or(Value::Null);
+    match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
+        Ok(Some(b)) => Value::Bytes(b),
+        _ => Value::Null,
     }
-    Value::Null
 }
 
 #[cfg(test)]
