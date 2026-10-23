@@ -436,8 +436,8 @@ impl Driver for PostgresDriver {
             "SELECT c.conname,
                     fns.nspname,
                     fc.relname AS ref_table,
-                    c.conupdtype,
-                    c.confdeltype,
+                    c.confupdtype::text,
+                    c.confdeltype::text,
                     a.attname AS local_col,
                     af.attname AS ref_col,
                     k.ord
