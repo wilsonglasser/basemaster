@@ -520,7 +520,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "basemaster-app"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -568,7 +568,7 @@ dependencies = [
 
 [[package]]
 name = "basemaster-backup"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "basemaster-cli"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -608,7 +608,7 @@ dependencies = [
 
 [[package]]
 name = "basemaster-core"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "basemaster-driver-mysql"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "basemaster-driver-postgres"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "basemaster-driver-sqlite"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "basemaster-store"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "basemaster-core",
