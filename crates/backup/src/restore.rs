@@ -18,7 +18,7 @@ use basemaster_core::Driver;
 
 use crate::checksum::{verify_tables, TableCheck};
 use crate::container::{BmbakReader, ObjectEntry, ObjectKind, TableEntry};
-use crate::sql_export::{drop_object_sql, value_to_sql, Dialect};
+use crate::sql_export::{drop_object_sql, mysql_object_session, mysql_session_switch, value_to_sql, Dialect};
 
 pub trait Progress: Send + Sync {
     fn table_started(&self, _table: &str, _total_rows: u64) {}
@@ -197,27 +197,38 @@ async fn exec_in_mode(
     schema: Option<&str>,
     sql: &str,
     opts: &RestoreOptions,
-    sql_mode: Option<&str>,
+    object: Option<&ObjectEntry>,
 ) -> basemaster_core::error::Result<()> {
     let sql = sql.trim_end().trim_end_matches(';');
     if dialect_of(driver) != Dialect::Mysql {
         driver.execute(schema, sql).await?;
         return Ok(());
     }
-    let mode = value_to_sql(
-        &basemaster_core::Value::String(sql_mode.unwrap_or(MYSQL_LOAD_SQL_MODE).to_string()),
-        false,
-        Dialect::Mysql,
-    );
+    let mut vars = object.map(mysql_object_session).unwrap_or_default();
+    if !vars.iter().any(|(v, _)| *v == "sql_mode") {
+        let mode = value_to_sql(
+            &basemaster_core::Value::String(MYSQL_LOAD_SQL_MODE.to_string()),
+            false,
+            Dialect::Mysql,
+        );
+        vars.insert(0, ("sql_mode", mode));
+    }
+    let (enter, leave) = mysql_session_switch(&vars);
+    if object.is_some() {
+        // A routine or trigger body sent mid-batch keeps the `;` that ends
+        // it ("RETURN 1;"), so objects run as separate statements on one
+        // pinned connection instead.
+        driver
+            .execute_batch_tx(schema, &[enter], &[sql.to_string(), leave])
+            .await?;
+        return Ok(());
+    }
     let (fk_off, fk_on) = if opts.disable_fk_checks {
         (", FOREIGN_KEY_CHECKS=0, UNIQUE_CHECKS=0", ", FOREIGN_KEY_CHECKS=1, UNIQUE_CHECKS=1")
     } else {
         ("", "")
     };
-    let wrapped = format!(
-        "SET @bm_sql_mode = @@SESSION.sql_mode, SESSION sql_mode = {mode}{fk_off}; {sql}; \
-         SET SESSION sql_mode = @bm_sql_mode{fk_on}"
-    );
+    let wrapped = format!("{enter}{fk_off}; {sql}; {leave}{fk_on}");
     driver.execute(schema, &wrapped).await?;
     Ok(())
 }
@@ -364,7 +375,7 @@ async fn restore_objects(
             let mut failed = Vec::new();
             let mut last_err = None;
             for p in &pending {
-                match exec_in_mode(driver, p.1, &p.2, opts, p.0.sql_mode.as_deref()).await {
+                match exec_in_mode(driver, p.1, &p.2, opts, Some(p.0)).await {
                     Ok(()) => created += 1,
                     Err(e) => {
                         last_err = Some((p.0, e));
@@ -700,6 +711,8 @@ mod tests {
             table: None,
             ddl: ddl.into(),
             sql_mode: None,
+            client_charset: None,
+            connection_collation: None,
         }
     }
 
@@ -815,5 +828,31 @@ mod tests {
         assert!(!c(Some("10"), Some("11")).ok());
         // old backups / SQLite: count only
         assert!(c(None, Some("11")).ok());
+    }
+
+    #[test]
+    fn object_session_keeps_charset_only_when_the_text_survives() {
+        let mut o = object(ObjectKind::Function, "f", "CREATE FUNCTION f() RETURNS INT RETURN 1");
+        o.sql_mode = Some("STRICT_TRANS_TABLES".into());
+        o.client_charset = Some("latin1".into());
+        o.connection_collation = Some("latin1_swedish_ci".into());
+        let (enter, leave) = mysql_session_switch(&mysql_object_session(&o));
+        assert_eq!(
+            enter,
+            "SET @bm_sql_mode = @@SESSION.sql_mode, @bm_character_set_client = @@SESSION.character_set_client, \
+             @bm_collation_connection = @@SESSION.collation_connection, SESSION sql_mode = 'STRICT_TRANS_TABLES', \
+             SESSION character_set_client = 'latin1', SESSION collation_connection = 'latin1_swedish_ci'"
+        );
+        assert_eq!(
+            leave,
+            "SET SESSION sql_mode = @bm_sql_mode, SESSION character_set_client = @bm_character_set_client, \
+             SESSION collation_connection = @bm_collation_connection"
+        );
+
+        // UTF-8 bytes read as latin1 would garble the body: collation only
+        o.ddl = "CREATE FUNCTION f() RETURNS TEXT RETURN 'ação'".into();
+        assert_eq!(o.creation_charset(), (None, Some("latin1_swedish_ci")));
+        o.client_charset = Some("utf8mb3".into());
+        assert_eq!(o.creation_charset(), (Some("utf8mb3"), Some("latin1_swedish_ci")));
     }
 }

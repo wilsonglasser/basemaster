@@ -232,6 +232,39 @@ pub fn export_to_sql<R: Read + Seek, W: Write>(
     Ok(())
 }
 
+/// Session variables a MySQL object is recreated under, as mysqldump does:
+/// (variable, SQL literal). sql_mode only when the backup recorded one.
+pub(crate) fn mysql_object_session(o: &ObjectEntry) -> Vec<(&'static str, String)> {
+    let lit = |v: &str| value_to_sql(&Value::String(v.to_string()), false, Dialect::Mysql);
+    let mut vars = Vec::new();
+    if let Some(m) = &o.sql_mode {
+        vars.push(("sql_mode", lit(m)));
+    }
+    let (client, collation) = o.creation_charset();
+    if let Some(c) = client {
+        vars.push(("character_set_client", lit(c)));
+    }
+    if let Some(c) = collation {
+        vars.push(("collation_connection", lit(c)));
+    }
+    vars
+}
+
+/// `SET` bodies that save + switch the variables and later put them back
+/// (`@bm_<var>`), so the session is left as it was. Empty for no variables.
+pub(crate) fn mysql_session_switch(vars: &[(&'static str, String)]) -> (String, String) {
+    if vars.is_empty() {
+        return (String::new(), String::new());
+    }
+    let save = vars.iter().map(|(v, _)| format!("@bm_{v} = @@SESSION.{v}"));
+    let set = vars.iter().map(|(v, val)| format!("SESSION {v} = {val}"));
+    let back = vars.iter().map(|(v, _)| format!("SESSION {v} = @bm_{v}"));
+    (
+        format!("SET {}", save.chain(set).collect::<Vec<_>>().join(", ")),
+        format!("SET {}", back.collect::<Vec<_>>().join(", ")),
+    )
+}
+
 /// Routines, then views, then triggers (same order restore uses).
 fn write_objects<W: Write>(objects: &[ObjectEntry], opts: &SqlExportOptions, out: &mut W) -> Result<()> {
     let groups: [&[ObjectKind]; 3] = [
@@ -247,24 +280,24 @@ fn write_objects<W: Write>(objects: &[ObjectEntry], opts: &SqlExportOptions, out
                 }
             }
             let ddl = o.ddl.trim_end().trim_end_matches(';');
-            // Bodies with `;` need another delimiter for the mysql client.
-            let fenced = opts.dialect == Dialect::Mysql && o.kind != ObjectKind::View;
-            if fenced {
-                let mode = o
-                    .sql_mode
-                    .as_deref()
-                    .map(|m| value_to_sql(&Value::String(m.into()), false, Dialect::Mysql));
-                if let Some(m) = &mode {
-                    writeln!(out, "SET SQL_MODE = {m};")?;
-                }
-                writeln!(out, "DELIMITER ;;\n{ddl};;\nDELIMITER ;")?;
-                if mode.is_some() {
-                    writeln!(out, "SET SQL_MODE = '{MYSQL_LOAD_SQL_MODE}';")?;
-                }
-                writeln!(out)?;
-            } else {
+            if opts.dialect != Dialect::Mysql {
                 writeln!(out, "{ddl};\n")?;
+                continue;
             }
+            let (enter, leave) = mysql_session_switch(&mysql_object_session(o));
+            if !enter.is_empty() {
+                writeln!(out, "{enter};")?;
+            }
+            // Bodies with `;` need another delimiter for the mysql client.
+            if o.kind == ObjectKind::View {
+                writeln!(out, "{ddl};")?;
+            } else {
+                writeln!(out, "DELIMITER ;;\n{ddl};;\nDELIMITER ;")?;
+            }
+            if !leave.is_empty() {
+                writeln!(out, "{leave};")?;
+            }
+            writeln!(out)?;
         }
     }
     Ok(())

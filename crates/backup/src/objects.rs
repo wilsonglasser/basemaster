@@ -52,7 +52,17 @@ fn entry(schema: &str, kind: ObjectKind, name: String, table: Option<String>, dd
         table,
         ddl,
         sql_mode: None,
+        client_charset: None,
+        connection_collation: None,
     }
+}
+
+/// `SHOW CREATE` puts character_set_client and collation_connection in two
+/// adjacent columns starting at `at`.
+fn with_charset(mut e: ObjectEntry, row: Option<&Vec<Value>>, at: usize) -> ObjectEntry {
+    e.client_charset = row.and_then(|r| text(r.get(at)));
+    e.connection_collation = row.and_then(|r| text(r.get(at + 1)));
+    e
 }
 
 async fn mysql(driver: &dyn Driver, snapshot: &Snapshot, schema: &str) -> Result<Vec<ObjectEntry>> {
@@ -83,7 +93,8 @@ async fn mysql(driver: &dyn Driver, snapshot: &Snapshot, schema: &str) -> Result
                  (needs SHOW_ROUTINE or being its definer)"
             );
         };
-        let mut e = entry(schema, kind, name, None, ddl);
+        // Function, sql_mode, Create Function, character_set_client, ...
+        let mut e = with_charset(entry(schema, kind, name, None, ddl), rows.first(), 3);
         e.sql_mode = rows.first().and_then(|r| text(r.get(1)));
         out.push(e);
     }
@@ -103,7 +114,8 @@ async fn mysql(driver: &dyn Driver, snapshot: &Snapshot, schema: &str) -> Result
             .first()
             .and_then(|r| text(r.get(1)))
             .ok_or_else(|| anyhow!("no definition for view {schema}.{name}"))?;
-        out.push(entry(schema, ObjectKind::View, name, None, ddl));
+        // View, Create View, character_set_client, collation_connection
+        out.push(with_charset(entry(schema, ObjectKind::View, name, None, ddl), rows.first(), 2));
     }
     order_mysql_views(&mut out, &|n: &str| driver.quote_ident(n));
 
@@ -123,7 +135,8 @@ async fn mysql(driver: &dyn Driver, snapshot: &Snapshot, schema: &str) -> Result
             .first()
             .and_then(|r| text(r.get(2)))
             .ok_or_else(|| anyhow!("no definition for trigger {schema}.{name}"))?;
-        let mut e = entry(schema, ObjectKind::Trigger, name, table, ddl);
+        // Trigger, sql_mode, SQL Original Statement, character_set_client, ...
+        let mut e = with_charset(entry(schema, ObjectKind::Trigger, name, table, ddl), rows.first(), 3);
         e.sql_mode = rows.first().and_then(|r| text(r.get(1)));
         out.push(e);
     }
@@ -247,6 +260,8 @@ async fn sqlite(snapshot: &Snapshot) -> Result<Vec<ObjectEntry>> {
                 table: if trigger { text(r.get(2)) } else { None },
                 ddl: text(r.get(3)).unwrap_or_default(),
                 sql_mode: None,
+                client_charset: None,
+                connection_collation: None,
             }
         })
         .collect())

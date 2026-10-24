@@ -94,6 +94,26 @@ pub struct ObjectEntry {
     /// changes how their body behaves, so restore recreates them in it.
     #[serde(default)]
     pub sql_mode: Option<String>,
+    /// MySQL character_set_client / collation_connection the object was
+    /// created under; string literals in its body take that collation.
+    #[serde(default)]
+    pub client_charset: Option<String>,
+    #[serde(default)]
+    pub connection_collation: Option<String>,
+}
+
+impl ObjectEntry {
+    /// (character_set_client, collation_connection) to recreate the object
+    /// under. The DDL goes to the server as UTF-8, so a non-UTF-8 client
+    /// charset only applies to plain-ASCII text; otherwise the server would
+    /// misread the body's bytes, and only the collation is kept.
+    pub fn creation_charset(&self) -> (Option<&str>, Option<&str>) {
+        let client = self
+            .client_charset
+            .as_deref()
+            .filter(|c| c.starts_with("utf8") || self.ddl.is_ascii());
+        (client, self.connection_collation.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
